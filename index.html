@@ -859,20 +859,19 @@ function renderDashboard() {
   document.getElementById('dash-ultimos').innerHTML = ultimos.length ? ultimos.map(linhaLancamento).join('') :
     `<tr><td colspan="6" style="text-align:center;color:var(--text3);padding:2rem 0">Nenhum lançamento ainda.</td></tr>`;
 
-  const pendentes = STATE.lancamentos.filter(l => !estaPago(l)).sort((a,b) => (obterVencimentoReal(a)||'').localeCompare(obterVencimentoReal(b)||''));
+  const pendentes = STATE.lancamentos.filter(l => !estaPago(l)).sort((a,b) => (a.data||'').localeCompare(b.data||''));
   const cardPendentes = document.getElementById('dash-pendentes-card');
   if (pendentes.length) {
     cardPendentes.style.display = '';
     const totalPendente = pendentes.reduce((s,l) => s + (l.tipo === 'despesa' ? l.valor : -l.valor), 0);
     document.getElementById('dash-pendentes-total').textContent = `em aberto: ${toBRL(totalPendente)}`;
     document.getElementById('dash-pendentes-list').innerHTML = pendentes.slice(0,8).map(l => {
-      const vReal = obterVencimentoReal(l) || '';
-      const [a,m,d] = vReal.split('-');
+      const [a,m,d] = (l.data||'').split('-');
       const dataFmt = a ? `${d}/${m}/${a}` : '-';
       return `<div class="pendente-row">
         <div class="pendente-info">
           <div class="pendente-desc">${l.descricao || '-'}${badgeParcelaHTML(l)}</div>
-          <div class="pendente-meta">Vence em: ${dataFmt} · ${l.categoria || '-'}</div>
+          <div class="pendente-meta">${dataFmt} · ${l.categoria || '-'}</div>
         </div>
         <div style="display:flex;align-items:center;gap:10px;flex-shrink:0">
           <div class="pendente-valor ${l.tipo==='receita'?'mv-ok':'mv-bad'}">${l.tipo==='receita'?'+':'-'} ${toBRL(l.valor)}</div>
@@ -892,6 +891,7 @@ function renderDashboard() {
       <div class="pendente-valor ${saldos[nome]>=0?'mv-ok':'mv-bad'}">${toBRL(saldos[nome])}</div>
     </div>`).join('') : `<p class="help-text">Nenhuma conta cadastrada ainda.</p>`;
 }
+
 /* ================= LANÇAMENTOS ================= */
 function popularFiltros() {
   const meses = [...new Set(STATE.lancamentos.map(l => (l.data||'').slice(0,7)))].sort().reverse();
@@ -1537,20 +1537,6 @@ function renderRecorrentes() {
 }
 
 /* ================= CÁLCULOS COMPARTILHADOS ================= */
-function obterVencimentoReal(l) {
-  if (!l.data) return '';
-  if (!l.conta) return l.data; // Se não tem conta, usa a data do lançamento
-  const c = STATE.contas.find(x => x.nome === l.conta);
-  
-  // Se for cartão, calcula a fatura correta usando o dia de fechamento e de vencimento
-  if (c && c.tipo === 'cartao') {
-    const comp = competenciaFatura(l.data, c.diaFechamento);
-    return dataCobranca(comp.ano, comp.mes, c.diaVencimento);
-  }
-  
-  // Para contas bancárias normais, o vencimento é a própria data do lançamento
-  return l.data;
-}
 function renderPaginaAtiva() {
   const ativo = document.querySelector('.nav-item.active');
   const pagina = ativo ? ativo.getAttribute('data-page') : 'dashboard';
@@ -1632,14 +1618,14 @@ function renderContasPagarReceber() {
   let pendentes = STATE.lancamentos.filter(l => !estaPago(l));
   if (tipoFiltro) pendentes = pendentes.filter(l => l.tipo === tipoFiltro);
   if (contaFiltro) pendentes = pendentes.filter(l => l.conta === contaFiltro);
-  pendentes.sort((a,b) => (obterVencimentoReal(a)||'').localeCompare(obterVencimentoReal(b)||''));
+  pendentes.sort((a,b) => (a.data||'').localeCompare(b.data||''));
 
-  const atrasados = pendentes.filter(l => (obterVencimentoReal(l)||'') < hoje);
+  const atrasados = pendentes.filter(l => (l.data||'') < hoje);
   const grupos = [
     { titulo: 'Atrasado', itens: atrasados, cor: true },
-    { titulo: 'Essa semana', itens: pendentes.filter(l => obterVencimentoReal(l) >= hoje && obterVencimentoReal(l) <= em7dias) },
-    { titulo: 'Este mês', itens: pendentes.filter(l => obterVencimentoReal(l) > em7dias && obterVencimentoReal(l) <= fimDoMes) },
-    { titulo: 'Mais pra frente', itens: pendentes.filter(l => obterVencimentoReal(l) > fimDoMes) }
+    { titulo: 'Essa semana', itens: pendentes.filter(l => l.data >= hoje && l.data <= em7dias) },
+    { titulo: 'Este mês', itens: pendentes.filter(l => l.data > em7dias && l.data <= fimDoMes) },
+    { titulo: 'Mais pra frente', itens: pendentes.filter(l => l.data > fimDoMes) }
   ];
 
   const totalPagar = pendentes.filter(l => l.tipo === 'despesa').reduce((s,l) => s+l.valor, 0);
@@ -1656,8 +1642,7 @@ function renderContasPagarReceber() {
       <div style="padding:1rem 1.25rem .5rem;font-weight:600;font-size:12.5px;${g.cor ? 'color:var(--bad)' : ''}">${g.titulo} <span class="help-text" style="font-weight:400">(${g.itens.length})</span></div>
       <div class="table-wrap"><table><thead><tr><th>Vencimento</th><th>Descrição</th><th>Categoria</th><th>Conta</th><th style="text-align:right">Valor</th><th style="width:90px"></th></tr></thead><tbody>
         ${g.itens.map(l => {
-          const vReal = obterVencimentoReal(l) || '';
-          const [a,m,d] = vReal.split('-');
+          const [a,m,d] = (l.data||'').split('-');
           return `<tr>
             <td>${d}/${m}/${a}</td>
             <td>${l.descricao||'-'}${badgeParcelaHTML(l)}</td>
@@ -1885,10 +1870,7 @@ function exportarRelatorioPDF() {
 async function verificarVencimentos() {
   const hoje = new Date().toISOString().slice(0,10);
   const em3dias = new Date(Date.now() + 3*86400000).toISOString().slice(0,10);
-  const relevantes = STATE.lancamentos.filter(l => {
-    const vReal = obterVencimentoReal(l);
-    return !estaPago(l) && vReal && vReal <= em3dias;
-  });
+  const relevantes = STATE.lancamentos.filter(l => !estaPago(l) && l.data && l.data <= em3dias);
   atualizarSino(relevantes.length);
   if (!relevantes.length) return;
   if (typeof Notification === 'undefined') return;
@@ -1896,7 +1878,7 @@ async function verificarVencimentos() {
     let permissao = Notification.permission;
     if (permissao === 'default') permissao = await Notification.requestPermission();
     if (permissao !== 'granted') return;
-    const atrasados = relevantes.filter(l => obterVencimentoReal(l) < hoje).length;
+    const atrasados = relevantes.filter(l => l.data < hoje).length;
     const corpo = atrasados
       ? `${atrasados} lançamento(s) atrasado(s) e ${relevantes.length - atrasados} vencendo nos próximos 3 dias.`
       : `${relevantes.length} lançamento(s) vencendo nos próximos 3 dias.`;
@@ -1907,10 +1889,7 @@ function atualizarSino(qtd) {
   if (qtd === undefined) {
     const hoje = new Date().toISOString().slice(0,10);
     const em3dias = new Date(Date.now() + 3*86400000).toISOString().slice(0,10);
-    qtd = STATE.lancamentos.filter(l => {
-      const vReal = obterVencimentoReal(l);
-      return !estaPago(l) && vReal && vReal <= em3dias;
-    }).length;
+    qtd = STATE.lancamentos.filter(l => !estaPago(l) && l.data && l.data <= em3dias).length;
   }
   const badge = document.getElementById('sino-badge');
   if (qtd > 0) { badge.textContent = qtd > 99 ? '99+' : qtd; badge.style.display = ''; }
@@ -2042,6 +2021,7 @@ async function tentarBuscarOneDrive(link) {
   const estrategias = [
     u => u,                                                            // direto (funciona no Electron com webSecurity:false)
     u => u,                                                            // 2ª tentativa direta, às vezes a 1ª falha por causa de token/redirect ainda não "aquecido"
+    u => '/.netlify/functions/onedrive-proxy?url=' + encodeURIComponent(u), // proxy próprio (só existe quando hospedado na Netlify)
     u => 'https://corsproxy.io/?' + encodeURIComponent(u),
     u => 'https://api.allorigins.win/raw?url=' + encodeURIComponent(u)
   ];
