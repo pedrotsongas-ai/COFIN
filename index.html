@@ -2019,21 +2019,34 @@ function comCacheBuster(link) {
 async function tentarBuscarOneDrive(link) {
   const linkFresco = comCacheBuster(link);
   const estrategias = [
-    u => u,                                                            // direto (funciona no Electron com webSecurity:false)
-    u => u,                                                            // 2ª tentativa direta, às vezes a 1ª falha por causa de token/redirect ainda não "aquecido"
-    u => '/.netlify/functions/onedrive-proxy?url=' + encodeURIComponent(u), // proxy próprio (só existe quando hospedado na Netlify)
-    u => 'https://corsproxy.io/?' + encodeURIComponent(u),
-    u => 'https://api.allorigins.win/raw?url=' + encodeURIComponent(u)
+    { nome: 'direto', montar: u => u },                                                            // funciona no Electron com webSecurity:false
+    { nome: 'direto (2ª tentativa)', montar: u => u },                                              // às vezes a 1ª falha por causa de token/redirect ainda não "aquecido"
+    { nome: 'proxy próprio (Netlify)', montar: u => '/.netlify/functions/onedrive-proxy?url=' + encodeURIComponent(u) },
+    { nome: 'corsproxy.io', montar: u => 'https://corsproxy.io/?' + encodeURIComponent(u) },
+    { nome: 'allorigins.win', montar: u => 'https://api.allorigins.win/raw?url=' + encodeURIComponent(u) }
   ];
   let ultimoErro = null;
-  for (const montar of estrategias) {
+  for (const estrategia of estrategias) {
     try {
-      const resp = await fetch(montar(linkFresco), { cache: 'no-store' });
-      if (!resp.ok) { ultimoErro = new Error('HTTP ' + resp.status); continue; }
+      const resp = await fetch(estrategia.montar(linkFresco), { cache: 'no-store' });
+      if (!resp.ok) {
+        let detalhe = '';
+        try { detalhe = (await resp.text()).slice(0, 200); } catch (e2) { /* corpo não textual, ignora */ }
+        ultimoErro = new Error(`[${estrategia.nome}] HTTP ${resp.status}${detalhe ? ' — ' + detalhe : ''}`);
+        console.warn('Sincronização OneDrive — tentativa falhou:', ultimoErro.message);
+        continue;
+      }
       const buf = await resp.arrayBuffer();
-      if (buf.byteLength < 200) { ultimoErro = new Error('resposta vazia ou pequena demais (' + buf.byteLength + ' bytes) — provavelmente não é a planilha'); continue; }
+      if (buf.byteLength < 200) {
+        ultimoErro = new Error(`[${estrategia.nome}] resposta vazia ou pequena demais (${buf.byteLength} bytes) — provavelmente não é a planilha`);
+        console.warn('Sincronização OneDrive — tentativa falhou:', ultimoErro.message);
+        continue;
+      }
       return buf;
-    } catch (e) { ultimoErro = e; }
+    } catch (e) {
+      ultimoErro = new Error(`[${estrategia.nome}] ${e.message}`);
+      console.warn('Sincronização OneDrive — tentativa falhou:', ultimoErro.message);
+    }
   }
   throw ultimoErro || new Error('falha desconhecida');
 }
