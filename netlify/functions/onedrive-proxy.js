@@ -4,7 +4,7 @@
 // Só aceita links de domínios da Microsoft (1drv.ms, onedrive.live.com, sharepoint.com),
 // pra não virar um proxy aberto pra qualquer site.
 
-const HOSTS_PERMITIDOS = ['1drv.ms', 'onedrive.live.com', 'sharepoint.com'];
+const HOSTS_PERMITIDOS = ['1drv.ms', 'onedrive.live.com', 'api.onedrive.com', 'sharepoint.com'];
 
 // Alguns runtimes de function ainda não trazem fetch nativo — usa o global se existir,
 // senão cai pro node-fetch (dependência declarada no package.json).
@@ -50,7 +50,14 @@ exports.handler = async function (event) {
   }
 
   try {
-    const resposta = await fetchFn(destino.toString(), { redirect: 'follow' });
+    const resposta = await fetchFn(destino.toString(), {
+      redirect: 'follow',
+      headers: {
+        // Alguns links da Microsoft mostram uma página de verificação pra clientes que não parecem navegadores
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36',
+        'Accept': '*/*'
+      }
+    });
     if (!resposta.ok) {
       return { statusCode: resposta.status, headers: cabecalhosCors, body: 'A Microsoft respondeu com erro HTTP ' + resposta.status + ' ao buscar o arquivo.' };
     }
