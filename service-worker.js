@@ -1,8 +1,15 @@
-const CACHE = 'cofin-v1';
-const ASSETS = ['./', './index.html', './manifest.json'];
+const CACHE = 'cofin-v2';
+const ASSETS = ['./index.html', './manifest.json'];
 
+// Cada arquivo é guardado separadamente: se um deles falhar, os outros continuam e a instalação
+// do service worker NÃO é cancelada (um service worker que falha ao instalar impede o Chrome
+// de oferecer a opção "Instalar app").
 self.addEventListener('install', (e) => {
-  e.waitUntil(caches.open(CACHE).then((c) => c.addAll(ASSETS)));
+  e.waitUntil(
+    caches.open(CACHE).then((c) =>
+      Promise.all(ASSETS.map((url) => c.add(url).catch((err) => console.warn('SW: não consegui guardar em cache', url, err))))
+    )
+  );
   self.skipWaiting();
 });
 

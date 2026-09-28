@@ -2016,19 +2016,48 @@ function comCacheBuster(link) {
   const sep = link.includes('?') ? '&' : '?';
   return link + sep + '_cb=' + Date.now();
 }
+function converterParaLinkDireto(link) {
+  // Truque conhecido da API do OneDrive: o link de compartilhamento, codificado em base64 "url-safe"
+  // e prefixado com "u!", vira um endereço que devolve o arquivo puro — sem a página intermediária
+  // de verificação que os links curtos (1drv.ms) costumam mostrar pra quem não é um navegador comum.
+  try {
+    const base = link.split('?')[0];
+    const b64 = btoa(unescape(encodeURIComponent(base))).replace(/=+$/, '').replace(/\//g, '_').replace(/\+/g, '-');
+    return 'https://api.onedrive.com/v1.0/shares/u!' + b64 + '/root/content';
+  } catch (e) { return null; }
+}
+function pareceArquivoExcel(buf) {
+  const b = new Uint8Array(buf.slice(0, 4));
+  const zip = b[0] === 0x50 && b[1] === 0x4B;                                    // .xlsx é um ZIP ("PK")
+  const ole = b[0] === 0xD0 && b[1] === 0xCF && b[2] === 0x11 && b[3] === 0xE0;  // .xls antigo
+  return zip || ole;
+}
+function trechoDoConteudo(buf) {
+  try { return new TextDecoder().decode(buf.slice(0, 90)).replace(/\s+/g, ' ').trim(); } catch (e) { return ''; }
+}
 async function tentarBuscarOneDrive(link) {
-  const linkFresco = comCacheBuster(link);
-  const estrategias = [
-    { nome: 'direto', montar: u => u },                                                            // funciona no Electron com webSecurity:false
-    { nome: 'direto (2ª tentativa)', montar: u => u },                                              // às vezes a 1ª falha por causa de token/redirect ainda não "aquecido"
+  const ehElectron = typeof process !== 'undefined' && !!(process.versions && process.versions.electron);
+  const original = comCacheBuster(link);
+  const api = converterParaLinkDireto(link);
+  // No Electron o link original já funciona direto (sem CORS); no navegador o link da API é o mais promissor.
+  const candidatos = (ehElectron ? [original, api] : [api, original]).filter(Boolean);
+  const metodos = [
+    { nome: 'direto', montar: u => u },
     { nome: 'proxy próprio (Netlify)', montar: u => '/.netlify/functions/onedrive-proxy?url=' + encodeURIComponent(u) },
     { nome: 'corsproxy.io', montar: u => 'https://corsproxy.io/?' + encodeURIComponent(u) },
     { nome: 'allorigins.win', montar: u => 'https://api.allorigins.win/raw?url=' + encodeURIComponent(u) }
   ];
+  const estrategias = [];
+  metodos.forEach(m => candidatos.forEach(u => estrategias.push({
+    nome: m.nome + (u === api ? ' · link da API' : ' · link original'),
+    url: m.montar(u)
+  })));
+
   let ultimoErro = null;
+  let erroConteudoErrado = null; // recebeu algo, mas não era planilha — é o erro mais informativo
   for (const estrategia of estrategias) {
     try {
-      const resp = await fetch(estrategia.montar(linkFresco), { cache: 'no-store' });
+      const resp = await fetch(estrategia.url, { cache: 'no-store' });
       if (!resp.ok) {
         let detalhe = '';
         try { detalhe = (await resp.text()).slice(0, 200); } catch (e2) { /* corpo não textual, ignora */ }
@@ -2037,8 +2066,10 @@ async function tentarBuscarOneDrive(link) {
         continue;
       }
       const buf = await resp.arrayBuffer();
-      if (buf.byteLength < 200) {
-        ultimoErro = new Error(`[${estrategia.nome}] resposta vazia ou pequena demais (${buf.byteLength} bytes) — provavelmente não é a planilha`);
+      if (!pareceArquivoExcel(buf)) {
+        const trecho = trechoDoConteudo(buf);
+        ultimoErro = new Error(`[${estrategia.nome}] recebi ${buf.byteLength} bytes, mas não é uma planilha${trecho ? ' (começa com: "' + trecho + '")' : ''}`);
+        erroConteudoErrado = ultimoErro;
         console.warn('Sincronização OneDrive — tentativa falhou:', ultimoErro.message);
         continue;
       }
@@ -2048,7 +2079,7 @@ async function tentarBuscarOneDrive(link) {
       console.warn('Sincronização OneDrive — tentativa falhou:', ultimoErro.message);
     }
   }
-  throw ultimoErro || new Error('falha desconhecida');
+  throw erroConteudoErrado || ultimoErro || new Error('falha desconhecida');
 }
 async function sincronizarOneDrive() {
   const link = document.getElementById('sync-link').value.trim();
