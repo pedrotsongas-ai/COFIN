@@ -1,4 +1,4 @@
-const CACHE = 'cofin-v2';
+const CACHE = 'cofin-v3';
 const ASSETS = ['./index.html', './manifest.json'];
 
 // Cada arquivo é guardado separadamente: se um deles falhar, os outros continuam e a instalação
@@ -20,24 +20,28 @@ self.addEventListener('activate', (e) => {
   self.clients.claim();
 });
 
-// Stale-while-revalidate: responde rápido do cache e atualiza em segundo plano.
-// Só se aplica a pedidos do próprio site — chamadas pra fora (OneDrive, proxies de sincronização
-// etc.) passam direto, sem o Service Worker interferir nem tentar cachear.
+// Rede primeiro, cache só como reserva (offline). Assim, quando o app é atualizado, a versão nova
+// aparece na hora — em vez de ficar preso numa cópia antiga guardada no celular.
+// Só se aplica a pedidos do próprio site; chamadas pra fora (OneDrive, proxies) e as functions
+// da Netlify passam direto, sem o service worker interferir nem guardar nada.
 self.addEventListener('fetch', (e) => {
   if (e.request.method !== 'GET') return;
-  if (!e.request.url.startsWith(self.location.origin)) return;
+  const url = new URL(e.request.url);
+  if (url.origin !== self.location.origin) return;
+  if (url.pathname.startsWith('/.netlify/')) return;
   e.respondWith(
-    caches.match(e.request).then((cached) => {
-      const buscarEAtualizar = fetch(e.request)
-        .then((resp) => {
-          if (resp && resp.status === 200) {
-            const clone = resp.clone();
-            caches.open(CACHE).then((c) => c.put(e.request, clone));
-          }
-          return resp;
-        })
-        .catch(() => cached || Response.error());
-      return cached || buscarEAtualizar;
-    })
+    fetch(e.request)
+      .then((resp) => {
+        if (resp && resp.status === 200) {
+          const clone = resp.clone();
+          caches.open(CACHE).then((c) => c.put(e.request, clone));
+        }
+        return resp;
+      })
+      .catch(() =>
+        caches.match(e.request)
+          .then((cached) => cached || (e.request.mode === 'navigate' ? caches.match('./index.html') : undefined))
+          .then((r) => r || Response.error())
+      )
   );
 });

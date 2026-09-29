@@ -198,6 +198,7 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: var(--a
 .icon-btn.danger:hover { background: var(--bad-bg); color: var(--bad); }
 .section-title { font-size: 13px; font-weight: 600; margin-bottom: .5rem; }
 .map-table td, .map-table th { font-size: 12px; padding: 6px 8px; }
+.diag-pre { margin-top: .75rem; padding: .75rem; background: var(--surface2); border: 1px solid var(--border2); border-radius: var(--radius); font-family: var(--mono); font-size: 11px; white-space: pre-wrap; word-break: break-word; max-height: 320px; overflow: auto; color: var(--text2); }
 .help-text { font-size: 11.5px; color: var(--text3); margin-top: 4px; line-height: 1.5; }
 .hamburger-btn { display: none; }
 .sidebar-backdrop { display: none; position: fixed; inset: 0; background: rgba(0,0,0,.45); z-index: 240; }
@@ -260,6 +261,7 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: var(--a
     <div class="nav-item" data-page="config" onclick="nav('config')"><i class="ti ti-settings"></i> Categorias &amp; Contas</div>
   </div>
   <div class="sidebar-footer" id="sidebar-status">Carregando...</div>
+  <div id="app-versao" style="padding:0 1rem .75rem;font-size:10px;color:rgba(255,255,255,.4)"></div>
 </div>
 
 <div class="main">
@@ -490,6 +492,17 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: var(--a
           </div>
         </div>
       </div>
+      <div class="card">
+        <div class="card-title" style="margin-bottom:.75rem">Diagnóstico</div>
+        <div class="help-text" style="margin-bottom:.75rem">Se a sincronização ou a instalação do app falhar, use os botões abaixo e me mande um print do resultado.</div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <button class="btn btn-sm" onclick="diagnosticarPWA()"><i class="ti ti-stethoscope"></i> Verificar instalação (PWA)</button>
+          <button class="btn btn-sm" id="btn-instalar-app" style="display:none" onclick="instalarApp()"><i class="ti ti-download"></i> Instalar app</button>
+          <button class="btn btn-sm" onclick="forcarAtualizacaoApp()"><i class="ti ti-refresh"></i> Atualizar app (limpar cache)</button>
+        </div>
+        <pre id="sync-diagnostico" class="diag-pre" style="display:none"></pre>
+        <pre id="pwa-diagnostico" class="diag-pre" style="display:none"></pre>
+      </div>
     </div>
 
     <!-- CONFIG -->
@@ -674,6 +687,7 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: var(--a
 
 <script>
 /* ================= ESTADO E PERSISTÊNCIA ================= */
+const APP_VERSAO = '2026-09-28 · r3';
 const STORAGE_KEY = 'controle-financeiro-dados';
 
 let STATE = {
@@ -786,7 +800,7 @@ function toast(msg, tipo) {
   t.textContent = msg;
   t.className = 'toast show' + (tipo ? ' ' + tipo : '');
   clearTimeout(t._timer);
-  t._timer = setTimeout(() => t.classList.remove('show'), 3200);
+  t._timer = setTimeout(() => t.classList.remove('show'), tipo === 'err' ? 9000 : 3200);
 }
 function fecharModal(id) { document.getElementById(id).classList.remove('show'); }
 function abrirModal(id) { document.getElementById(id).classList.add('show'); }
@@ -2053,33 +2067,143 @@ async function tentarBuscarOneDrive(link) {
     url: m.montar(u)
   })));
 
+  const log = [];
+  let falhou = true;
   let ultimoErro = null;
   let erroConteudoErrado = null; // recebeu algo, mas não era planilha — é o erro mais informativo
-  for (const estrategia of estrategias) {
-    try {
-      const resp = await fetch(estrategia.url, { cache: 'no-store' });
-      if (!resp.ok) {
-        let detalhe = '';
-        try { detalhe = (await resp.text()).slice(0, 200); } catch (e2) { /* corpo não textual, ignora */ }
-        ultimoErro = new Error(`[${estrategia.nome}] HTTP ${resp.status}${detalhe ? ' — ' + detalhe : ''}`);
+  try {
+    for (let i = 0; i < estrategias.length; i++) {
+      const estrategia = estrategias[i];
+      const rotulo = `[${i + 1}/${estrategias.length}] ${estrategia.nome}`;
+      const ctrl = typeof AbortController !== 'undefined' ? new AbortController() : null;
+      const timer = ctrl ? setTimeout(() => ctrl.abort(), 15000) : null;
+      try {
+        const resp = await fetch(estrategia.url, { cache: 'no-store', signal: ctrl ? ctrl.signal : undefined });
+        if (!resp.ok) {
+          let detalhe = '';
+          try { detalhe = (await resp.text()).replace(/\s+/g, ' ').slice(0, 160); } catch (e2) { /* corpo não textual, ignora */ }
+          ultimoErro = new Error(`[${estrategia.nome}] HTTP ${resp.status}${detalhe ? ' — ' + detalhe : ''}`);
+          log.push(`${rotulo} → HTTP ${resp.status}${detalhe ? ' — ' + detalhe : ''}`);
+          console.warn('Sincronização OneDrive — tentativa falhou:', ultimoErro.message);
+          continue;
+        }
+        const buf = await resp.arrayBuffer();
+        if (!pareceArquivoExcel(buf)) {
+          const trecho = trechoDoConteudo(buf);
+          ultimoErro = new Error(`[${estrategia.nome}] recebi ${buf.byteLength} bytes, mas não é uma planilha${trecho ? ' (começa com: "' + trecho + '")' : ''}`);
+          erroConteudoErrado = ultimoErro;
+          log.push(`${rotulo} → recebi ${buf.byteLength} bytes que NÃO são planilha${trecho ? ': "' + trecho + '"' : ''}`);
+          console.warn('Sincronização OneDrive — tentativa falhou:', ultimoErro.message);
+          continue;
+        }
+        log.push(`${rotulo} → OK (${buf.byteLength} bytes)`);
+        falhou = false;
+        return buf;
+      } catch (e) {
+        const motivo = e && e.name === 'AbortError' ? 'demorou mais de 15s (cancelado)' : (e && e.message ? e.message : String(e));
+        ultimoErro = new Error(`[${estrategia.nome}] ${motivo}`);
+        log.push(`${rotulo} → falhou: ${motivo}`);
         console.warn('Sincronização OneDrive — tentativa falhou:', ultimoErro.message);
-        continue;
+      } finally {
+        if (timer) clearTimeout(timer);
       }
-      const buf = await resp.arrayBuffer();
-      if (!pareceArquivoExcel(buf)) {
-        const trecho = trechoDoConteudo(buf);
-        ultimoErro = new Error(`[${estrategia.nome}] recebi ${buf.byteLength} bytes, mas não é uma planilha${trecho ? ' (começa com: "' + trecho + '")' : ''}`);
-        erroConteudoErrado = ultimoErro;
-        console.warn('Sincronização OneDrive — tentativa falhou:', ultimoErro.message);
-        continue;
-      }
-      return buf;
-    } catch (e) {
-      ultimoErro = new Error(`[${estrategia.nome}] ${e.message}`);
-      console.warn('Sincronização OneDrive — tentativa falhou:', ultimoErro.message);
     }
+    throw erroConteudoErrado || ultimoErro || new Error('falha desconhecida');
+  } finally {
+    registrarDiagnosticoSync(log, falhou);
   }
-  throw erroConteudoErrado || ultimoErro || new Error('falha desconhecida');
+}
+function registrarDiagnosticoSync(linhas, falhou) {
+  const el = document.getElementById('sync-diagnostico');
+  if (!el) return;
+  el.textContent = 'Última busca no OneDrive (' + new Date().toLocaleTimeString('pt-BR') + ') · versão ' + APP_VERSAO + '\n' + linhas.join('\n');
+  el.style.display = '';
+  if (falhou && typeof el.scrollIntoView === 'function') el.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+
+/* ================= DIAGNÓSTICO / INSTALAÇÃO DO APP (PWA) ================= */
+let pwaPromptEvento = null;
+window.addEventListener('beforeinstallprompt', (e) => {
+  e.preventDefault();
+  pwaPromptEvento = e;
+  const b = document.getElementById('btn-instalar-app');
+  if (b) b.style.display = '';
+});
+async function instalarApp() {
+  if (!pwaPromptEvento) { toast('O Chrome ainda não liberou a instalação. Use "Verificar instalação (PWA)" pra ver o motivo.', 'err'); return; }
+  pwaPromptEvento.prompt();
+  try { await pwaPromptEvento.userChoice; } catch (e) { /* usuário cancelou */ }
+  pwaPromptEvento = null;
+  const b = document.getElementById('btn-instalar-app');
+  if (b) b.style.display = 'none';
+}
+async function diagnosticarPWA() {
+  const L = [];
+  const ok = (t) => L.push('✔ ' + t), no = (t) => L.push('✘ ' + t), info = (t) => L.push('• ' + t);
+  info('Versão do app: ' + APP_VERSAO);
+  info('Endereço: ' + location.href);
+  if (location.protocol === 'https:') ok('Conexão segura (https)'); else no('Não está em https — instalação e service worker não funcionam assim');
+  const linkManifest = document.querySelector('link[rel="manifest"]');
+  if (linkManifest) ok('Tag do manifest presente no HTML: ' + linkManifest.getAttribute('href')); else no('Tag <link rel="manifest"> não encontrada no HTML');
+  try {
+    const r = await fetch(linkManifest ? linkManifest.href : 'manifest.json', { cache: 'no-store' });
+    if (!r.ok) {
+      no('manifest.json respondeu HTTP ' + r.status + ' (o arquivo não está publicado no site?)');
+    } else {
+      ok('manifest.json encontrado (HTTP ' + r.status + ', ' + (r.headers && r.headers.get('content-type') || 'sem content-type') + ')');
+      const m = await r.json();
+      info('Nome: ' + (m.name || m.short_name || '(vazio)') + ' · display: ' + m.display + ' · start_url: ' + m.start_url);
+      const icones = m.icons || [];
+      if (!icones.length) no('O manifest não tem ícones');
+      for (const ic of icones) {
+        try {
+          const ri = await fetch(new URL(ic.src, r.url || location.href).href, { cache: 'no-store' });
+          if (ri.ok) ok('Ícone ' + ic.sizes + ' encontrado'); else no('Ícone ' + ic.sizes + ' → HTTP ' + ri.status + ' (' + ic.src + ' não está publicado?)');
+        } catch (e) { no('Ícone ' + ic.sizes + ' falhou: ' + e.message); }
+      }
+    }
+  } catch (e) { no('Não consegui ler o manifest: ' + e.message + ' (JSON inválido?)'); }
+  if ('serviceWorker' in navigator) {
+    try {
+      const reg = await navigator.serviceWorker.getRegistration();
+      if (!reg) {
+        no('Service worker NÃO está registrado');
+      } else {
+        const est = reg.active ? 'ativo' : reg.waiting ? 'aguardando' : reg.installing ? 'instalando' : 'estado desconhecido';
+        if (reg.active) ok('Service worker ' + est + ' (escopo ' + reg.scope + ')'); else no('Service worker ' + est + ' (escopo ' + reg.scope + ')');
+      }
+      info(navigator.serviceWorker.controller ? 'Esta página está sob controle do service worker' : 'Esta página ainda não é controlada pelo service worker (recarregue uma vez)');
+    } catch (e) { no('Erro ao consultar o service worker: ' + e.message); }
+  } else {
+    no('Este navegador não tem suporte a service worker');
+  }
+  const standalone = (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches) || navigator.standalone;
+  info(standalone ? 'Rodando como app instalado' : 'Rodando dentro do navegador');
+  info(pwaPromptEvento ? 'O Chrome liberou a instalação (aparece o botão "Instalar app")' : 'O Chrome ainda não liberou a instalação (evento beforeinstallprompt não disparou)');
+  try {
+    const rf = await fetch('/.netlify/functions/onedrive-proxy?diag=1', { cache: 'no-store' });
+    const txt = (await rf.text()).replace(/\s+/g, ' ').slice(0, 160);
+    if (rf.ok) ok('Function do proxy no ar: ' + txt); else no('Function do proxy respondeu HTTP ' + rf.status + ': ' + txt);
+  } catch (e) { info('Function do proxy indisponível aqui (' + e.message + ')'); }
+  const el = document.getElementById('pwa-diagnostico');
+  el.textContent = L.join('\n');
+  el.style.display = '';
+  if (typeof el.scrollIntoView === 'function') el.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  return L;
+}
+async function forcarAtualizacaoApp() {
+  if (!confirm('Vou limpar o cache do app e recarregar. Seus lançamentos NÃO são apagados. Continuar?')) return;
+  try {
+    if ('serviceWorker' in navigator) {
+      const regs = await navigator.serviceWorker.getRegistrations();
+      await Promise.all(regs.map(r => r.unregister()));
+    }
+    if (window.caches) {
+      const chaves = await caches.keys();
+      await Promise.all(chaves.map(k => caches.delete(k)));
+    }
+  } catch (e) { console.error(e); }
+  location.reload();
 }
 async function sincronizarOneDrive() {
   const link = document.getElementById('sync-link').value.trim();
@@ -2104,7 +2228,7 @@ async function sincronizarOneDrive() {
   } catch (e) {
     console.error(e);
     filaDeMesclagem = false;
-    toast('Erro ao buscar a planilha no OneDrive: ' + (e && e.message ? e.message : 'falha na conexão') + '. Se persistir, gere um novo link de compartilhamento no OneDrive ou use "Selecionar arquivo manualmente".', 'err');
+    toast('Erro ao buscar a planilha no OneDrive: ' + (e && e.message ? e.message : 'falha na conexão') + '. Veja o "Diagnóstico" mais abaixo nesta tela (e me mande um print) ou use "Selecionar arquivo manualmente".', 'err');
   } finally {
     btn.innerHTML = '<i class="ti ti-refresh"></i> Buscar planilha agora';
     btn.disabled = false;
@@ -2264,6 +2388,7 @@ function atualizarStatusSync() {
 document.querySelectorAll('.modal-bg').forEach(m => m.addEventListener('click', e => { if (e.target === m) m.classList.remove('show'); }));
 (async function init() {
   sincronizarIconeTema();
+  document.getElementById('app-versao').textContent = 'COFIN · versão ' + APP_VERSAO;
   await carregarDados();
   await gerarLancamentosRecorrentes();
   renderDashboard();
