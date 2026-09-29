@@ -1,18 +1,11 @@
 // Proxy simples pra contornar CORS quando o COFIN busca a planilha do OneDrive
 // de dentro de um navegador (no Electron isso nem é chamado, pois o CORS já está desligado lá).
 //
-// Só aceita links de domínios da Microsoft (1drv.ms, onedrive.live.com, sharepoint.com),
-// pra não virar um proxy aberto pra qualquer site.
+// Só aceita links de domínios da Microsoft, pra não virar um proxy aberto pra qualquer site.
+// Usa o fetch nativo do Node (as functions da Netlify rodam Node 18+), então não precisa de dependências.
 
 const HOSTS_PERMITIDOS = ['1drv.ms', 'onedrive.live.com', 'api.onedrive.com', 'sharepoint.com'];
-
-// Alguns runtimes de function ainda não trazem fetch nativo — usa o global se existir,
-// senão cai pro node-fetch (dependência declarada no package.json).
-async function obterFetch() {
-  if (typeof fetch === 'function') return fetch;
-  const mod = await import('node-fetch');
-  return mod.default;
-}
+const LIMITE_BYTES = 4.5 * 1024 * 1024; // respostas de function têm teto de ~6 MB (o base64 aumenta ~33%)
 
 exports.handler = async function (event) {
   const cabecalhosCors = {
@@ -25,7 +18,18 @@ exports.handler = async function (event) {
     return { statusCode: 204, headers: cabecalhosCors, body: '' };
   }
 
-  const url = event.queryStringParameters && event.queryStringParameters.url;
+  const params = event.queryStringParameters || {};
+
+  // ?diag=1 -> confirma que a function está no ar e em qual versão do Node ela roda
+  if (params.diag) {
+    return {
+      statusCode: 200,
+      headers: { ...cabecalhosCors, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ok: true, node: process.version, fetchDisponivel: typeof fetch === 'function' })
+    };
+  }
+
+  const url = params.url;
   if (!url) {
     return { statusCode: 400, headers: cabecalhosCors, body: 'Faltou o parâmetro url.' };
   }
@@ -42,15 +46,12 @@ exports.handler = async function (event) {
     return { statusCode: 403, headers: cabecalhosCors, body: 'Domínio não permitido neste proxy: ' + destino.hostname };
   }
 
-  let fetchFn;
-  try {
-    fetchFn = await obterFetch();
-  } catch (e) {
-    return { statusCode: 500, headers: cabecalhosCors, body: 'Não consegui carregar o fetch neste ambiente: ' + e.message };
+  if (typeof fetch !== 'function') {
+    return { statusCode: 500, headers: cabecalhosCors, body: 'Este ambiente não tem fetch (Node ' + process.version + ').' };
   }
 
   try {
-    const resposta = await fetchFn(destino.toString(), {
+    const resposta = await fetch(destino.toString(), {
       redirect: 'follow',
       headers: {
         // Alguns links da Microsoft mostram uma página de verificação pra clientes que não parecem navegadores
@@ -62,6 +63,9 @@ exports.handler = async function (event) {
       return { statusCode: resposta.status, headers: cabecalhosCors, body: 'A Microsoft respondeu com erro HTTP ' + resposta.status + ' ao buscar o arquivo.' };
     }
     const buffer = Buffer.from(await resposta.arrayBuffer());
+    if (buffer.length > LIMITE_BYTES) {
+      return { statusCode: 413, headers: cabecalhosCors, body: 'Arquivo grande demais pro proxy (' + buffer.length + ' bytes).' };
+    }
     if (buffer.length < 200) {
       return { statusCode: 502, headers: cabecalhosCors, body: 'A resposta veio vazia ou pequena demais (' + buffer.length + ' bytes) — provável página de verificação em vez do arquivo.' };
     }
@@ -75,6 +79,7 @@ exports.handler = async function (event) {
       isBase64Encoded: true
     };
   } catch (e) {
-    return { statusCode: 502, headers: cabecalhosCors, body: 'Falha ao buscar o arquivo (' + (e.name || 'Erro') + '): ' + e.message };
+    const causa = e && e.cause ? ' | causa: ' + (e.cause.code || e.cause.message) : '';
+    return { statusCode: 502, headers: cabecalhosCors, body: 'Falha ao buscar o arquivo (' + (e.name || 'Erro') + '): ' + e.message + causa };
   }
 };
