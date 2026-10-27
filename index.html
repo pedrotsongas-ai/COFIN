@@ -567,6 +567,7 @@ html.bloqueado body > *:not(#tela-bloqueio) { visibility: hidden !important; }
           <button class="btn btn-danger" id="btn-ms-desconectar" onclick="msDesconectar()" style="display:none"><i class="ti ti-plug-x"></i> Desconectar</button>
         </div>
         <div class="help-text" id="ms-arquivo-atual"></div>
+        <div class="help-text" id="ms-aovivo" style="margin-top:.25rem"></div>
         <div id="ms-escolha" style="display:none;margin-top:1rem;padding:1rem;background:var(--surface2);border-radius:var(--radius)">
           <div class="section-title">Escolher a planilha do COFIN no seu OneDrive</div>
           <div class="help-text" style="margin:0 0 .75rem">Os lançamentos que estão aqui são preservados e juntados com os do arquivo. O COFIN só aceita arquivos dele (uma aba, colunas Data/Descrição/Valor) ou vazios — nunca sobrescreve outra planilha sua.</div>
@@ -923,7 +924,7 @@ html.bloqueado body > *:not(#tela-bloqueio) { visibility: hidden !important; }
 
 <script>
 /* ================= ESTADO E PERSISTÊNCIA ================= */
-const APP_VERSAO = '2026-10-12 · r6';
+const APP_VERSAO = '2026-10-19 · r7';
 const STORAGE_KEY = 'controle-financeiro-dados';
 
 let STATE = {
@@ -1358,6 +1359,7 @@ function badgesTagsHTML(l) {
 
 /* ---- Comprovante (foto/print anexado ao lançamento) ---- */
 let comprovanteAtual = null;
+let lancEmEdicao = null; // cópia do lançamento aberto no formulário (se outro aparelho apagar o original, a edição recria)
 function renderComprovanteArea() {
   const area = document.getElementById('lanc-comprovante-area');
   area.innerHTML = comprovanteAtual
@@ -1406,6 +1408,7 @@ function abrirModalLancamento(id) {
   popularContasSelect();
   popularParcelasSelect();
   const l = id ? STATE.lancamentos.find(x => x.id === id) : null;
+  lancEmEdicao = l ? { ...l } : null;
   document.getElementById('lanc-modal-title').textContent = l ? 'Editar lançamento' : 'Novo lançamento';
   document.getElementById('lanc-id').value = l ? l.id : '';
   document.getElementById('lanc-tipo').value = l ? l.tipo : 'despesa';
@@ -1450,14 +1453,16 @@ async function salvarLancamento() {
   if (id) {
     // Edição: mexe só nesse lançamento (mantém o grupo de parcelas, se houver)
     const idx = STATE.lancamentos.findIndex(x => x.id === id);
-    const anterior = STATE.lancamentos[idx];
-    STATE.lancamentos[idx] = {
+    const anterior = idx >= 0 ? STATE.lancamentos[idx] : (lancEmEdicao && lancEmEdicao.id === id ? lancEmEdicao : { id });
+    const editado = {
       ...anterior,
       tipo, data, descricao, categoria, conta, valor: valorTotal, pago,
       comprovante: comprovanteAtual || undefined,
       tags,
       sincronizado: false
     };
+    // Se outro aparelho apagou este lançamento com o formulário aberto, salvar o recria (a sua edição vence).
+    if (idx >= 0) STATE.lancamentos[idx] = editado; else STATE.lancamentos.push(editado);
   } else if (parcelas > 1) {
     // Novo lançamento parcelado: divide o valor total em N parcelas mensais
     const grupoId = uid();
@@ -2838,6 +2843,7 @@ const MS_PKCE_CHAVE = 'cofin-ms-pkce';
 const MS_ESCOPOS = 'Files.ReadWrite offline_access User.Read';
 const MS_REDIRECT_DESKTOP = 'http://localhost';
 const GRAPH_URL = 'https://graph.microsoft.com/v1.0';
+let msThrottleAte = 0; // se a Microsoft mandar esperar (Retry-After), nenhuma sincronização automática insiste antes disso
 const MIME_XLSX = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
 
 function ehElectron() {
@@ -2947,6 +2953,7 @@ async function msConectar() {
       toast('Conectado à Microsoft.', 'ok');
       atualizarStatusMs();
       if (!msLer().arquivo) msAbrirEscolha();
+      iniciarSyncAoVivo();
     } else {
       localStorage.setItem(MS_PKCE_CHAVE, JSON.stringify({ verifier, state, redirect, em: Date.now() }));
       irParaUrl(url);
@@ -2984,9 +2991,11 @@ async function msTratarRetornoDoLogin() {
   try { history.replaceState(null, '', location.pathname + location.hash); } catch (e) {} // tira o código da barra de endereço
   try {
     await msConcluirLogin(urlRetorno, pendente);
+    if (pendente.silencioso) { toast('Sessão da Microsoft renovada.', 'ok'); return 'silencioso'; }
     toast('Conectado à Microsoft.', 'ok');
     return true;
   } catch (e) {
+    if (pendente.silencioso) return false; // não deu pra renovar sem tela: fica o botão "Reconectar", sem alarde
     toast('Não consegui conectar: ' + e.message, 'err');
     return false;
   }
@@ -2999,6 +3008,7 @@ async function msBuscarConta() {
 }
 function msDesconectar() {
   if (!confirm('Desconectar da Microsoft? O COFIN volta ao método antigo (link + Make.com). Seus lançamentos continuam aqui.')) return;
+  pararSyncAoVivo();
   const c = msLer();
   msGravar({ clientId: c.clientId, autoridade: c.autoridade });
   atualizarStatusMs();
@@ -3038,6 +3048,10 @@ function atualizarStatusMs() {
   el('ms-arquivo-atual').innerHTML = temArquivo
     ? 'Arquivo: <strong>' + escHtml(c.arquivo.nome) + '</strong> ' + escHtml(c.arquivo.caminho || '')
     : '';
+  el('ms-aovivo').textContent = !graphAtivo() ? '' :
+    socketEstado === 'conectado' ? '● Ao vivo: conectado — o que mudar em outro aparelho chega em instantes.' :
+    socketEstado === 'conectando' ? '○ Conectando ao aviso em tempo real…' :
+    'Sem aviso em tempo real agora: confiro mudanças a cada ~25 s e, ao voltar pro app, na hora.';
   el('ms-uri-web').textContent = location.protocol === 'file:' ? '(abra o site publicado para ver o endereço)' : msRedirectWeb();
   el('ms-uri-desktop').textContent = MS_REDIRECT_DESKTOP;
 }
@@ -3048,6 +3062,10 @@ async function graphFetch(caminho, opcoes, jaRenovou) {
   const op = Object.assign({}, opcoes);
   op.headers = Object.assign({ Authorization: 'Bearer ' + token }, op.headers || {});
   const resp = await fetch(caminho.startsWith('http') ? caminho : GRAPH_URL + caminho, op);
+  if ((resp.status === 429 || resp.status === 503) && resp.headers && typeof resp.headers.get === 'function') {
+    const espera = parseInt(resp.headers.get('Retry-After') || '0', 10);
+    if (espera > 0) msThrottleAte = Date.now() + Math.min(espera, 600) * 1000;
+  }
   if (resp.status === 401 && !jaRenovou) { // token recusado: força uma renovação e tenta uma vez mais
     const c = msLer();
     if (c.tokens) { c.tokens.expiraEm = 0; msGravar(c); }
@@ -3152,54 +3170,94 @@ let graphEmAndamento = false, graphPendente = false;
 // arquivo no meio do caminho (412), recomeça lendo de novo — até 3 vezes.
 async function cicloGraph() {
   const arq = msLer().arquivo;
-  let novos = 0, enviou = false;
+  const antes = new Map(STATE.lancamentos.map(l => [l.id, impressaoCanonica(l)]));
+  let enviou = false, baixou = false;
   for (let tentativa = 1; tentativa <= 3; tentativa++) {
     const meta = await graphMeta(arq);
-    let info = { linhas: [], cabecalhos: [], abas: 0 };
-    if (meta.size > 0) info = lerPlanilhaDoBuffer(await graphBaixar(arq, meta));
-    const tipo = classificarPlanilha(info);
-    if (tipo === 'multiplas') throw erroMs('ARQUIVO_INVALIDO', 'O arquivo tem mais de uma aba — não vou sobrescrevê-lo. Escolha outro ou crie um novo.');
-    if (tipo === 'estranha') throw erroMs('ARQUIVO_INVALIDO', 'O arquivo não parece ser do COFIN (colunas: ' + (info.cabecalhos.slice(0, 5).join(', ') || '—') + ') — não vou sobrescrevê-lo.');
-    if (info.linhas.length) novos += mesclarLinhasNaBase(info.linhas, detectarMapaColunas(info.cabecalhos), true).novos;
+    // Se a versão do arquivo é a mesma que já conferimos, não há o que baixar (só pode haver o que enviar).
+    const nuvemIgual = !!msLer().ultimoETag && meta.eTag === msLer().ultimoETag;
+    let info = null;
+    if (!nuvemIgual) {
+      info = { linhas: [], cabecalhos: [], abas: 0 };
+      if (meta.size > 0) info = lerPlanilhaDoBuffer(await graphBaixar(arq, meta));
+      const tipo = classificarPlanilha(info);
+      if (tipo === 'multiplas') throw erroMs('ARQUIVO_INVALIDO', 'O arquivo tem mais de uma aba — não vou sobrescrevê-lo. Escolha outro ou crie um novo.');
+      if (tipo === 'estranha') throw erroMs('ARQUIVO_INVALIDO', 'O arquivo não parece ser do COFIN (colunas: ' + (info.cabecalhos.slice(0, 5).join(', ') || '—') + ') — não vou sobrescrevê-lo.');
+      baixou = true;
+      if (info.linhas.length) mesclarLinhasNaBase(info.linhas, detectarMapaColunas(info.cabecalhos), true);
+    }
     const temPendentes = STATE.lancamentos.some(l => l.sincronizado !== true);
     const temExclusoes = STATE.excluidosPendentes.length > 0;
-    const nuvemVaziaMasTenhoDados = info.linhas.length === 0 && STATE.lancamentos.length > 0; // arquivo novo/zerado: repõe a partir daqui
-    if (!(temPendentes || temExclusoes || nuvemVaziaMasTenhoDados)) break;
+    const nuvemVaziaMasTenhoDados = !!info && info.linhas.length === 0 && STATE.lancamentos.length > 0; // arquivo novo/zerado: repõe a partir daqui
+    if (!(temPendentes || temExclusoes || nuvemVaziaMasTenhoDados)) { msAtualizar({ ultimoETag: meta.eTag }); break; }
     const instantaneo = tirarInstantaneo();
     const idsApagados = [...STATE.excluidosPendentes];
+    let novoETag = null;
     try {
-      await graphEnviar(arq, montarPlanilhaBytes(), meta.eTag);
+      novoETag = await graphEnviar(arq, montarPlanilhaBytes(), meta.eTag);
     } catch (e) {
       if (e.status === 412 && tentativa < 3) continue;
       throw e;
     }
     await concluirEnvio(instantaneo, idsApagados);
+    msAtualizar({ ultimoETag: novoETag || null }); // a versão que acabamos de gravar é "nossa": não precisa baixar de volta
     enviou = true;
     break;
   }
-  return { novos, enviou };
+  return Object.assign(contarMudancas(antes, STATE.lancamentos), { enviou, baixou });
+}
+// Comparação "de conteúdo" entre o que havia antes e o que há depois de mesclar (a ordem dos campos não conta).
+function impressaoCanonica(l) {
+  return JSON.stringify([l.id, l.tipo, l.data, l.descricao, l.categoria, l.conta, Number(l.valor), estaPago(l), (l.tags || []).join('|'),
+    l.parcelaGrupo || '', l.parcelaAtual || 0, l.parcelaTotal || 0, l.recorrenteId || '', l.transferenciaGrupo || '']);
+}
+function contarMudancas(antes, depois) {
+  let novos = 0, alterados = 0, removidos = 0;
+  const vistos = new Set();
+  depois.forEach(l => {
+    vistos.add(l.id);
+    if (!antes.has(l.id)) novos++; else if (antes.get(l.id) !== impressaoCanonica(l)) alterados++;
+  });
+  antes.forEach((_, id) => { if (!vistos.has(id)) removidos++; });
+  return { novos, alterados, removidos };
 }
 async function sincronizarGraph(silencioso) {
+  if (Date.now() < msThrottleAte) {
+    if (!silencioso) toast('A Microsoft pediu para aguardar ' + Math.ceil((msThrottleAte - Date.now()) / 1000) + ' s antes de sincronizar de novo.', 'err');
+    return null;
+  }
   if (graphEmAndamento) { graphPendente = true; return null; }
   graphEmAndamento = true;
-  atualizarIndicadorNuvem('baixando');
+  if (!silencioso) atualizarIndicadorNuvem('baixando');
   try {
     const r = await cicloGraph();
     STATE.config.lastSync = new Date().toISOString();
-    await salvarDados();
-    renderPaginaAtiva();
-    atualizarStatusSync();
-    atualizarIndicadorNuvem('ok');
-    if (!silencioso) toast('OneDrive sincronizado: ' + r.novos + ' lançamento(s) novo(s) da nuvem' + (r.enviou ? ' e suas alterações enviadas.' : '.'), 'ok');
-    else if (r.novos > 0) toast('Planilha carregada: ' + r.novos + ' lançamento(s) novo(s) da nuvem.', 'ok');
+    const mudou = !!(r.novos || r.alterados || r.removidos || r.enviou || r.baixou);
+    if (mudou || !silencioso) { // checagem silenciosa sem novidade não grava nem redesenha nada
+      await salvarDados();
+      renderPaginaAtivaQuandoLivre();
+      atualizarStatusSync();
+      atualizarIndicadorNuvem('ok');
+    }
+    const partes = [];
+    if (r.novos) partes.push('+' + r.novos + ' novo(s)');
+    if (r.alterados) partes.push(r.alterados + ' alterado(s)');
+    if (r.removidos) partes.push(r.removidos + ' removido(s)');
+    if (!silencioso) toast('OneDrive sincronizado' + (partes.length ? ': ' + partes.join(', ') : '') + (r.enviou ? (partes.length ? ' · ' : ': ') + 'suas alterações foram enviadas' : '') + '.', 'ok');
+    else if (partes.length) toast('Atualizado pela nuvem: ' + partes.join(', ') + '.', 'ok');
     return r;
   } catch (e) {
     console.warn('Sincronização com o OneDrive falhou:', e);
     atualizarIndicadorNuvem('erro');
     if (e.codigoMs === 'SESSAO_EXPIRADA') {
       atualizarStatusMs();
-      toast('Sua sessão da Microsoft expirou. Reconecte em Sincronizar OneDrive — até lá uso o método antigo.', 'err');
-      if (silencioso) salvarNaNuvemWebhook(true).catch(() => {});
+      pararSyncAoVivo();
+      // No site/celular, tenta renovar o login sozinho (sem tela); só se não der, avisa e cai pro método antigo.
+      const renovando = document.visibilityState === 'visible' ? await msReconectarSilencioso() : false;
+      if (!renovando) {
+        toast('Sua sessão da Microsoft expirou. Reconecte em Sincronizar OneDrive — até lá uso o método antigo.', 'err');
+        if (silencioso) salvarNaNuvemWebhook(true).catch(() => {});
+      }
     } else if (!silencioso || e.codigoMs === 'ARQUIVO_INVALIDO') {
       toast('Não consegui sincronizar com o OneDrive: ' + e.message, 'err');
     }
@@ -3208,6 +3266,145 @@ async function sincronizarGraph(silencioso) {
     graphEmAndamento = false;
     if (graphPendente) { graphPendente = false; sincronizarEmSegundoPlano(); }
   }
+}
+
+/* ---- Sincronização "ao vivo" ---- */
+// Enquanto o app está na tela: (1) o OneDrive avisa por WebSocket (socket.io) que algo mudou; (2) uma checagem leve de
+// versão serve de reserva (se o aviso não chegar ou cair); (3) ao voltar pro app, confere na hora. Em segundo plano o
+// celular suspende o app — isso nenhum site consegue contornar sem servidor; ao voltar, o item (3) resolve.
+const SOCKETIO_URL = 'https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.8.1/socket.io.js'; // endereço da documentação da Microsoft
+let POLL_RAPIDO_MS = 25000, POLL_LENTO_MS = 90000, SOCKET_BACKOFF_BASE_MS = 5000, NOTIFICACAO_ATRASO_MS = 800;
+let socketMs = null, socketEstado = 'parado', socketTentativas = 0, timerReconectarSocket = null, timerNotificacao = null, carregandoSocketLib = null;
+let timerPoll = null, pollFalhas = 0, ultimoRetorno = 0;
+function intervaloPoll() { return Math.min(300000, (socketEstado === 'conectado' ? POLL_LENTO_MS : POLL_RAPIDO_MS) * Math.pow(2, Math.min(pollFalhas, 4))); }
+function carregarSocketIo() {
+  if (typeof window.io === 'function') return Promise.resolve(true);
+  if (carregandoSocketLib) return carregandoSocketLib;
+  carregandoSocketLib = new Promise(resolve => {
+    const sc = document.createElement('script');
+    sc.src = SOCKETIO_URL; sc.async = true;
+    sc.onload = () => resolve(typeof window.io === 'function');
+    sc.onerror = () => { carregandoSocketLib = null; resolve(false); };
+    document.head.appendChild(sc);
+  });
+  return carregandoSocketLib;
+}
+async function iniciarSocketOneDrive() {
+  if (socketMs || !graphAtivo() || document.visibilityState !== 'visible') return;
+  socketEstado = 'conectando';
+  atualizarStatusMs();
+  try {
+    if (!(await carregarSocketIo())) throw new Error('biblioteca socket.io indisponível');
+    const j = await graphJson('/me/drive/root/subscriptions/socketIo');
+    if (!j.notificationUrl) throw new Error('a Microsoft não devolveu o endereço de notificação');
+    // reconnection:false — quem reconecta somos nós, pedindo um endereço novo (o antigo pode ter expirado)
+    const sk = window.io(j.notificationUrl, { transports: ['websocket'], reconnection: false });
+    socketMs = sk;
+    sk.on('connect', () => { socketEstado = 'conectado'; socketTentativas = 0; atualizarStatusMs(); agendarPoll(); verificarMudancaRemota().catch(() => {}); });
+    sk.on('notification', () => { // o aviso vale pro OneDrive inteiro e não diz o que mudou: junta rajadas e confere a nossa planilha
+      clearTimeout(timerNotificacao);
+      timerNotificacao = setTimeout(() => verificarMudancaRemota().catch(() => {}), NOTIFICACAO_ATRASO_MS);
+    });
+    const caiu = () => { if (socketMs !== sk) return; socketMs = null; socketEstado = 'caido'; atualizarStatusMs(); agendarPoll(); agendarReconexaoSocket(); };
+    sk.on('disconnect', caiu);
+    sk.on('connect_error', caiu);
+  } catch (e) {
+    socketMs = null; socketEstado = 'caido';
+    atualizarStatusMs(); agendarPoll(); agendarReconexaoSocket();
+  }
+}
+function agendarReconexaoSocket() {
+  clearTimeout(timerReconectarSocket);
+  if (!graphAtivo() || document.visibilityState !== 'visible') return;
+  socketTentativas++;
+  timerReconectarSocket = setTimeout(iniciarSocketOneDrive, Math.min(300000, SOCKET_BACKOFF_BASE_MS * Math.pow(2, Math.min(socketTentativas - 1, 6))));
+}
+function pararSocketOneDrive() {
+  clearTimeout(timerReconectarSocket); clearTimeout(timerNotificacao);
+  const sk = socketMs;
+  socketMs = null; socketEstado = 'parado';
+  if (sk) { try { if (sk.removeAllListeners) sk.removeAllListeners(); sk.disconnect(); } catch (e) {} }
+}
+function agendarPoll() {
+  clearTimeout(timerPoll); timerPoll = null;
+  if (!graphAtivo() || document.visibilityState !== 'visible') return;
+  timerPoll = setTimeout(async () => {
+    try { await verificarMudancaRemota(); pollFalhas = 0; } catch (e) { pollFalhas++; }
+    agendarPoll();
+  }, intervaloPoll());
+}
+// Consulta leve (só a versão do arquivo): se mudou — ou se há algo daqui pra enviar — faz o ciclo completo.
+async function verificarMudancaRemota() {
+  if (!graphAtivo() || graphEmAndamento || Date.now() < msThrottleAte) return false;
+  const c = msLer();
+  const leve = await graphJson(graphItemUrl(c.arquivo) + '?select=id,eTag');
+  const pendentes = STATE.lancamentos.some(l => l.sincronizado !== true) || STATE.excluidosPendentes.length > 0;
+  if (leve.eTag !== c.ultimoETag || pendentes) { await sincronizarGraph(true); return true; }
+  return false;
+}
+function iniciarSyncAoVivo() {
+  if (!graphAtivo()) { pararSyncAoVivo(); return; }
+  if (document.visibilityState !== 'visible') return;
+  agendarPoll();
+  iniciarSocketOneDrive();
+}
+function pararSyncAoVivo() {
+  clearTimeout(timerPoll); timerPoll = null;
+  pararSocketOneDrive();
+  atualizarStatusMs();
+}
+function aoVoltarParaOApp() {
+  const agora = Date.now();
+  if (agora - ultimoRetorno < 2000) return; // visibilitychange + focus chegam juntos
+  ultimoRetorno = agora;
+  atualizarStatusMs(); // o login pode ter terminado em outra aba/janela
+  const c = msLer();
+  if (c.expirada && !ehElectron()) { msReconectarSilencioso().catch(() => {}); return; }
+  if (!graphAtivo()) return;
+  verificarMudancaRemota().catch(() => {});
+  iniciarSyncAoVivo();
+}
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') aoVoltarParaOApp(); else pararSyncAoVivo(); });
+window.addEventListener('focus', aoVoltarParaOApp);
+window.addEventListener('online', aoVoltarParaOApp);
+window.addEventListener('storage', (e) => { if (e.key === MS_CHAVE) { atualizarStatusMs(); iniciarSyncAoVivo(); } });
+
+// Renovação do login sem tela (site/celular): a Microsoft limita esse login a 24 h. Se a sessão dela no aparelho ainda
+// vale, uma ida-e-volta rápida (prompt=none) renova; se não, volta com erro e só então aparece o botão "Reconectar".
+async function msReconectarSilencioso() {
+  const cfg = msLer();
+  if (ehElectron() || location.protocol === 'file:' || !cfg.clientId || !cfg.expirada || document.visibilityState !== 'visible') return false;
+  if (Date.now() - (cfg.ultimaTentativaSilenciosa || 0) < 10 * 60000) return false; // evita ficar indo e voltando
+  msAtualizar({ ultimaTentativaSilenciosa: Date.now() });
+  try {
+    const verifier = aleatorioB64Url(64), state = aleatorioB64Url(16), redirect = msRedirectWeb();
+    const params = { client_id: cfg.clientId, response_type: 'code', redirect_uri: redirect, response_mode: 'query', scope: MS_ESCOPOS,
+      state, code_challenge: await desafioPkce(verifier), code_challenge_method: 'S256', prompt: 'none' };
+    if (cfg.conta && cfg.conta.email) params.login_hint = cfg.conta.email;
+    localStorage.setItem(MS_PKCE_CHAVE, JSON.stringify({ verifier, state, redirect, em: Date.now(), silencioso: true }));
+    irParaUrl(msBase(cfg) + '/authorize?' + new URLSearchParams(params).toString());
+    return true;
+  } catch (e) { return false; }
+}
+
+// Só redesenha a tela quando você NÃO está no meio de um formulário (senão o redesenho zeraria o que você escolheu/digitou).
+// Os dados são atualizados na hora; só o desenho espera.
+function usuarioEditando() {
+  if (document.querySelector('.modal-bg.show')) return true;
+  const a = document.activeElement;
+  if (!a || a === document.body || !/^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName || '')) return false;
+  if (a.closest('.filters') || a.id === 'rapido-texto') return false; // filtros e lançamento rápido não são afetados pelo redesenho
+  return !!a.closest('.page.active');
+}
+let renderAdiadoTimer = null;
+function renderPaginaAtivaQuandoLivre() {
+  if (!usuarioEditando()) { renderPaginaAtiva(); return; }
+  if (renderAdiadoTimer) return;
+  renderAdiadoTimer = setInterval(() => {
+    if (usuarioEditando()) return;
+    clearInterval(renderAdiadoTimer); renderAdiadoTimer = null;
+    renderPaginaAtiva();
+  }, 1500);
 }
 
 /* ---- Escolha do arquivo ---- */
@@ -3283,12 +3480,13 @@ async function msUsarArquivo(item) {
       STATE.lancamentos = STATE.lancamentos.map(l => ({ ...l, sincronizado: false }));
       await salvarDados();
     }
-    msAtualizar({ arquivo: arq, semSessaoUpload: false });
+    msAtualizar({ arquivo: arq, semSessaoUpload: false, ultimoETag: null });
     msg.textContent = '';
     document.getElementById('ms-escolha').style.display = 'none';
     atualizarStatusMs();
     toast(tipo === 'vazia' ? 'Arquivo escolhido (está vazio — vou enviar os seus lançamentos).' : 'Arquivo escolhido. Juntando com os lançamentos daqui...', 'ok');
     await sincronizarGraph(false);
+    iniciarSyncAoVivo();
   } catch (e) { msg.textContent = 'Não consegui abrir o arquivo: ' + e.message; }
 }
 
@@ -3398,6 +3596,7 @@ async function importarBackup(file) {
   try {
     const dados = JSON.parse(texto);
     STATE = Object.assign(STATE, dados);
+    try { if (msLer().ultimoETag) msAtualizar({ ultimoETag: null }); } catch (e) {} // os dados mudaram: a próxima sincronização lê a nuvem de novo
     await salvarDados();
     renderDashboard(); renderLancamentos(); renderConfig();
     toast('Backup importado com sucesso.', 'ok');
@@ -3696,6 +3895,10 @@ function mesclarLinhasNaBase(linhas, mapa, modoSincronizacaoTotal) {
     ? STATE.lancamentos.filter(l => l.sincronizado !== true)
     : STATE.lancamentos.slice();
 
+  // Itens já sincronizados são trocados pela linha da planilha; o que só existe neste aparelho (comprovante, marca de
+  // transferência de planilhas antigas) é carregado junto, senão sumiria a cada sincronização.
+  const locaisSincronizados = new Map();
+  if (modoSincronizacaoTotal) STATE.lancamentos.forEach(l => { if (l.sincronizado === true) locaisSincronizados.set(l.id, l); });
   const idsExistentes = new Set(baseAnterior.map(l => l.id));
   const apagadosAqui = new Set(STATE.excluidosPendentes || []);
   const chavesExistentes = new Set(baseAnterior.map(l => `${l.data}|${l.descricao}|${l.valor}`));
@@ -3728,11 +3931,19 @@ function mesclarLinhasNaBase(linhas, mapa, modoSincronizacaoTotal) {
     let pago = true;
     if (mapa.status && row[mapa.status]) pago = !String(row[mapa.status]).toLowerCase().includes('pend');
 
+    const antigo = idPlanilha ? locaisSincronizados.get(idPlanilha) : null;
+    const grupoTransf = row['TransferenciaGrupo'] || (antigo && antigo.transferenciaGrupo) || '';
     novosDaPlanilha.push({
       id: idPlanilha || uid(), tipo, data, descricao,
       categoria: (mapa.categoria && row[mapa.categoria]) ? String(row[mapa.categoria]).trim() : (aplicarRegraCategorizacao(descricao) || 'Importado'),
       conta: (mapa.conta && row[mapa.conta]) ? String(row[mapa.conta]).trim() : '',
-      valor: valorNum, origem: 'onedrive', sincronizado: true, pago,
+      valor: valorNum, origem: 'onedrive',
+      sincronizado: !(grupoTransf && !row['TransferenciaGrupo']), // a planilha ainda não sabe que é transferência: reenvia pra ela aprender
+      pago,
+      ehTransferencia: grupoTransf ? true : undefined,
+      transferenciaGrupo: grupoTransf || undefined,
+      transferenciaContraparte: row['TransferenciaContraparte'] || (antigo && antigo.transferenciaContraparte) || undefined,
+      comprovante: (antigo && antigo.comprovante) || undefined,
       parcelaGrupo: row['ParcelaGrupo'] || undefined,
       parcelaAtual: row['ParcelaAtual'] ? parseInt(row['ParcelaAtual'], 10) : undefined,
       parcelaTotal: row['ParcelaTotal'] ? parseInt(row['ParcelaTotal'], 10) : undefined,
@@ -3816,16 +4027,19 @@ document.querySelectorAll('.modal-bg').forEach(m => m.addEventListener('click', 
   verificarVencimentos();
   // Não usa "await" aqui de propósito: a tela já aparece com os dados locais na hora,
   // e a planilha é carregada por cima, em segundo plano, sem travar a abertura do app.
-  sincronizarAutomaticamenteAoAbrir();
+  // Site/celular com login vencido: tenta renovar sozinho (sem tela) antes de qualquer outra coisa.
+  const renovandoLogin = (msLer().expirada && !ehElectron()) ? await msReconectarSilencioso() : false;
+  if (!renovandoLogin) sincronizarAutomaticamenteAoAbrir();
   atualizarStatusMs();
-  if (veioDoLoginMs) { nav('sync'); if (!(msLer().arquivo)) msAbrirEscolha(); }
+  if (veioDoLoginMs === true) { nav('sync'); if (!(msLer().arquivo)) msAbrirEscolha(); }
+  iniciarSyncAoVivo();
   // Service worker só faz sentido quando o app está hospedado (http/https) — em Electron (file://) isso é ignorado.
   if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost')) {
     window.addEventListener('load', () => { navigator.serviceWorker.register('service-worker.js').catch(() => {}); });
   }
 })();
 /* ================= SALVAMENTO DIRETO NA NUVEM (WEBHOOK) ================= */
-const CABECALHO_PLANILHA = ['Data','Descrição','Categoria','Tipo','Valor','Conta','Status','ID','ParcelaGrupo','ParcelaAtual','ParcelaTotal','RecorrenteID','Tags'];
+const CABECALHO_PLANILHA = ['Data','Descrição','Categoria','Tipo','Valor','Conta','Status','ID','ParcelaGrupo','ParcelaAtual','ParcelaTotal','RecorrenteID','Tags','TransferenciaGrupo','TransferenciaContraparte'];
 // "Impressão digital" do lançamento pra saber se ele mudou depois que o envio começou (ignora o que não vai pra planilha).
 function impressaoDigital(l) {
   const { sincronizado, origem, comprovante, ...resto } = l;
@@ -3848,7 +4062,9 @@ function lancamentosParaLinhas() {
       "ParcelaAtual": l.parcelaAtual || '',
       "ParcelaTotal": l.parcelaTotal || '',
       "RecorrenteID": l.recorrenteId || '',
-      "Tags": (l.tags || []).join(', ')
+      "Tags": (l.tags || []).join(', '),
+      "TransferenciaGrupo": l.transferenciaGrupo || '',
+      "TransferenciaContraparte": l.transferenciaContraparte || ''
     };
   });
 }
