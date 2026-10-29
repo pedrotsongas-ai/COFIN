@@ -1,11 +1,14 @@
-const { app, BrowserWindow, ipcMain } = require('electron');
+const { app, BrowserWindow, ipcMain, nativeImage } = require('electron');
 const path = require('path');
 
 function createWindow () {
   const win = new BrowserWindow({
     width: 1200,
     height: 800,
+    minWidth: 900,
+    minHeight: 600,
     show: false,
+    frame: false, // Janela frameless com barra integrada
     autoHideMenuBar: true,
     title: "COFIN",
     icon: path.join(__dirname, 'build', 'icon.ico'),
@@ -19,7 +22,49 @@ function createWindow () {
   win.maximize();
   win.show();
   win.loadFile('index.html');
+
+  // Notificar o renderer sobre o estado de maximização
+  win.on('maximize', () => {
+    try { win.webContents.send('win:maximized-status', true); } catch (e) {}
+  });
+  win.on('unmaximize', () => {
+    try { win.webContents.send('win:maximized-status', false); } catch (e) {}
+  });
 }
+
+// Controles da janela frameless
+ipcMain.on('win:minimize', (evento) => {
+  const win = BrowserWindow.fromWebContents(evento.sender);
+  if (win) win.minimize();
+});
+
+ipcMain.on('win:maximize', (evento) => {
+  const win = BrowserWindow.fromWebContents(evento.sender);
+  if (win) {
+    if (win.isMaximized()) win.unmaximize();
+    else win.maximize();
+  }
+});
+
+ipcMain.on('win:close', (evento) => {
+  const win = BrowserWindow.fromWebContents(evento.sender);
+  if (win) win.close();
+});
+
+ipcMain.handle('win:is-maximized', (evento) => {
+  const win = BrowserWindow.fromWebContents(evento.sender);
+  return win ? win.isMaximized() : false;
+});
+
+ipcMain.on('cofin:set-window-icon', (evento, dataUrl) => {
+  try {
+    const win = BrowserWindow.fromWebContents(evento.sender);
+    if (win && typeof dataUrl === 'string' && dataUrl.startsWith('data:image/')) {
+      const img = nativeImage.createFromDataURL(dataUrl);
+      if (!img.isEmpty()) win.setIcon(img);
+    }
+  } catch (e) {}
+});
 
 /* ================= LOGIN MICROSOFT (OAuth) =================
    Duas pontes para o index.html (que roda com nodeIntegration):

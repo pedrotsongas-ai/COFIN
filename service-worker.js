@@ -1,5 +1,5 @@
-const CACHE = 'cofin-v3';
-const ASSETS = ['./index.html', './manifest.json'];
+const CACHE = 'cofin-v4';
+const ASSETS = ['./index.html', './style.css', './app.js', './manifest.json'];
 
 // Cada arquivo é guardado separadamente: se um deles falhar, os outros continuam e a instalação
 // do service worker NÃO é cancelada (um service worker que falha ao instalar impede o Chrome
