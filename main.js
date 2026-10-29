@@ -5,6 +5,7 @@ function createWindow () {
   const win = new BrowserWindow({
     width: 1200,
     height: 800,
+    show: false,
     autoHideMenuBar: true,
     title: "COFIN",
     icon: path.join(__dirname, 'build', 'icon.ico'),
@@ -15,6 +16,8 @@ function createWindow () {
     }
   });
   
+  win.maximize();
+  win.show();
   win.loadFile('index.html');
 }
 
