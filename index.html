@@ -73,11 +73,11 @@ body { font-family: var(--font); background: var(--bg); color: var(--text); font
 /* SIDEBAR (SAAS / FINTECH REVAMP) */
 .sidebar { width: var(--sidebar-w); background: var(--surface); border-right: 1px solid var(--border); display: flex; flex-direction: column; flex-shrink: 0; transition: width .25s cubic-bezier(0.16, 1, 0.3, 1), background .15s, border-color .15s; z-index: 30; }
 .sidebar-brand { padding: .9rem .875rem; border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; gap: 8px; }
-.brand-mark { display: flex; align-items: center; gap: 10px; min-width: 0; overflow: hidden; }
+.brand-mark { display: flex; align-items: center; gap: 10px; min-width: 0; flex: 1; overflow: hidden; }
 .brand-icon { width: 32px; height: 32px; background: linear-gradient(135deg, var(--accent), var(--accent-dark)); border-radius: 8px; display: flex; align-items: center; justify-content: center; color: #fff; font-size: 15px; flex-shrink: 0; box-shadow: 0 2px 6px var(--accent-glow); }
-.brand-text { min-width: 0; white-space: nowrap; transition: opacity .15s; }
-.brand-name { font-size: 13.5px; font-weight: 700; letter-spacing: -.02em; color: var(--text); line-height: 1.2; }
-.brand-sub { font-size: 10px; color: var(--text3); letter-spacing: .04em; text-transform: uppercase; font-weight: 600; }
+.brand-text { min-width: 0; flex: 1; overflow: hidden; transition: opacity .15s; }
+.brand-name { font-size: 13.5px; font-weight: 700; letter-spacing: -.02em; color: var(--text); line-height: 1.2; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.brand-sub { font-size: 9.5px; color: var(--text3); letter-spacing: .03em; text-transform: uppercase; font-weight: 600; white-space: normal; line-height: 1.15; word-break: break-word; }
 .sidebar-collapse-btn { width: 26px; height: 26px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface2); color: var(--text3); cursor: pointer; display: flex; align-items: center; justify-content: center; flex-shrink: 0; transition: all .15s; }
 .sidebar-collapse-btn:hover { background: var(--accent-bg); color: var(--accent); border-color: var(--accent); }
 .sidebar-cta { padding: .75rem .75rem .25rem; }
@@ -156,6 +156,8 @@ body { font-family: var(--font); background: var(--bg); color: var(--text); font
 .metric-label { font-size: 11px; color: var(--text3); text-transform: uppercase; letter-spacing: .06em; font-weight: 700; margin: 0; margin-top: 4px; }
 .metric-value { font-size: 26px; font-weight: 800; letter-spacing: -.03em; line-height: 1; }
 .metric-sub { font-size: 11px; font-weight: 500; color: var(--text4); margin: 0; }
+.text-muted { color: var(--text3); }
+.text-sm { font-size: 11.5px; font-weight: 500; line-height: 1.3; display: inline-block; }
 .metric-icon { width: 36px; height: 36px; border-radius: 10px; display: flex; align-items: center; justify-content: center; font-size: 20px; flex-shrink: 0; }
 .metric-icon.mi-info { background: var(--accent-bg); color: var(--accent-text); }
 .metric-icon.mi-ok { background: var(--good-bg); color: var(--good-text); }
@@ -468,6 +470,18 @@ tr.concil-inativo { opacity: .45; cursor: not-allowed; }
 .meta-marco-label { font-size: 10.5px; font-weight: 700; color: var(--text3); white-space: nowrap; transition: color .3s ease; }
 .meta-marco.marco-atingido .meta-marco-dot { background: var(--accent); border-color: var(--surface); color: #fff; transform: scale(1.2); box-shadow: 0 0 12px var(--accent-glow), 0 0 0 2px var(--accent); }
 .meta-marco.marco-atingido .meta-marco-label { color: var(--accent-text); }
+.meta-vault-card { position: relative; overflow: hidden; border: 1px solid var(--border2); background: var(--surface); transition: transform .2s ease, box-shadow .2s ease, border-color .2s ease; }
+.meta-vault-card::before { content: ""; position: absolute; top: 0; left: 0; right: 0; height: 4px; background: linear-gradient(90deg, var(--accent), var(--good)); }
+.meta-vault-card:hover { transform: translateY(-2px); box-shadow: var(--shadow-md); border-color: var(--accent); }
+.meta-vault-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: .75rem; flex-wrap: wrap; }
+.meta-vault-identity { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.meta-vault-emblem { width: 42px; height: 42px; border-radius: 11px; background: var(--accent-bg); border: 1px solid var(--accent); color: var(--accent); display: flex; align-items: center; justify-content: center; font-size: 20px; flex-shrink: 0; box-shadow: 0 2px 8px var(--accent-glow); }
+.meta-vault-emblem.concluida { background: var(--good-bg); border-color: var(--good); color: var(--good); }
+.meta-vault-valor-wrap { display: flex; flex-direction: column; gap: 6px; margin: .25rem 0 .65rem; padding: 11px 14px; background: var(--surface2); border: 1px solid var(--border); border-radius: var(--radius-lg); }
+.meta-vault-valor-row { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+.meta-vault-valor-atual { font-size: 22px; font-weight: 800; color: var(--text); letter-spacing: -.02em; display: inline-flex; align-items: center; gap: 7px; }
+.meta-vault-valor-atual i { font-size: 18px; color: var(--good); }
+.badge-seguranca { display: inline-flex; align-items: center; gap: 5px; width: fit-content; font-size: 11.5px; font-weight: 600; color: var(--good-text); background: var(--good-bg); border: 1px solid rgba(22, 163, 74, .28); padding: 3px 10px; border-radius: 999px; }
 
 /* MODAL DE CONFIRMAÇÃO CUSTOMIZADO (#modal-confirmacao) */
 #modal-confirmacao { display: flex; position: fixed; inset: 0; background: rgba(0, 0, 0, 0.5); backdrop-filter: blur(2px); -webkit-backdrop-filter: blur(2px); z-index: 10000; align-items: center; justify-content: center; padding: 1rem; opacity: 0; visibility: hidden; pointer-events: none; transition: opacity .22s ease, visibility .22s ease; }
@@ -481,6 +495,36 @@ tr.concil-inativo { opacity: .45; cursor: not-allowed; }
 .confirm-actions .btn { flex: 1; justify-content: center; padding: 9px 14px; }
 #btn-confirm-ok { background: var(--bad); color: #fff; border-color: var(--bad); }
 #btn-confirm-ok:hover { opacity: .92; filter: brightness(.95); }
+
+/* FINTECH AVANÇADA: COFRES/CAIXINHAS, MOM, GARANTIAS & MODO VIAGEM */
+.travel-banner { display: none; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 1.5rem; background: linear-gradient(90deg, var(--accent-dark), var(--accent)); color: #fff; font-size: 13px; font-weight: 600; flex-shrink: 0; z-index: 25; box-shadow: var(--shadow-md); border-bottom: 1px solid rgba(255,255,255,.18); }
+.travel-banner.show { display: flex; }
+.travel-banner-left { display: flex; align-items: center; gap: 10px; min-width: 0; flex-wrap: wrap; }
+.travel-banner-tag { font-family: var(--mono); font-size: 11px; background: rgba(255,255,255,.2); padding: 2px 8px; border-radius: 999px; font-weight: 700; }
+.vaults-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(290px, 1fr)); gap: 1rem; margin-bottom: 12px; }
+.vault-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg); padding: 1.25rem; box-shadow: var(--shadow); display: flex; flex-direction: column; gap: 12px; position: relative; overflow: hidden; transition: transform .2s ease, box-shadow .2s ease; }
+.vault-card:hover { transform: translateY(-2px); box-shadow: var(--shadow-md); }
+.vault-card-bar { position: absolute; top: 0; left: 0; right: 0; height: 4px; }
+.vault-icon { width: 40px; height: 40px; border-radius: 10px; display: flex; align-items: center; justify-content: center; font-size: 20px; color: #fff; flex-shrink: 0; box-shadow: 0 2px 6px rgba(0,0,0,.15); }
+.vault-progress-track { height: 10px; background: var(--surface2); border-radius: 999px; overflow: hidden; border: 1px solid var(--border); }
+.vault-progress-fill { height: 100%; border-radius: 999px; transition: width .6s ease; }
+.mom-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 10px; margin-top: 1rem; padding-top: 1rem; border-top: 1px solid var(--border); }
+.mom-item { display: flex; flex-direction: column; gap: 6px; padding: 10px 12px; background: var(--surface2); border: 1px solid var(--border); border-radius: var(--radius); }
+.mom-item-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 12.5px; font-weight: 600; color: var(--text); }
+.mom-badge { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 6px; width: fit-content; }
+.mom-badge.mom-good { background: var(--good-bg); color: var(--good-text); }
+.mom-badge.mom-bad { background: var(--bad-bg); color: var(--bad-text); }
+.mom-badge.mom-neutral { background: var(--surface); color: var(--text3); border: 1px solid var(--border2); }
+.warranty-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 14px; border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--surface); margin-bottom: 8px; box-shadow: var(--shadow); flex-wrap: wrap; }
+.warranty-row.w-expiring { border-left: 4px solid var(--amber); background: var(--amber-bg); }
+.warranty-row.w-expired { border-left: 4px solid var(--bad); opacity: .82; }
+.warranty-row.w-ok { border-left: 4px solid var(--good); }
+.switch-toggle { position: relative; display: inline-flex; align-items: center; gap: 8px; cursor: pointer; user-select: none; font-size: 12.5px; font-weight: 600; color: var(--text); }
+.switch-toggle input { opacity: 0; width: 0; height: 0; position: absolute; }
+.switch-slider { width: 38px; height: 21px; background: var(--border2); border-radius: 999px; position: relative; transition: background .2s ease; flex-shrink: 0; }
+.switch-slider::after { content: ""; position: absolute; top: 2.5px; left: 3px; width: 16px; height: 16px; background: #fff; border-radius: 50%; transition: transform .2s cubic-bezier(0.34, 1.56, 0.64, 1); box-shadow: 0 1px 3px rgba(0,0,0,.25); }
+.switch-toggle input:checked + .switch-slider { background: var(--accent); }
+.switch-toggle input:checked + .switch-slider::after { transform: translateX(16px); }
 
 @media (max-width: 900px) {
   .sidebar { display: none !important; }
@@ -728,9 +772,10 @@ tr.concil-inativo { opacity: .45; cursor: not-allowed; }
       <i class="ti ti-chevron-down"></i>
     </button>
     <div class="nav-group" id="nav-group-planejamento">
-      <div class="nav-item" data-page="metas" onclick="nav('metas')" title="Metas"><i class="ti ti-target-arrow"></i> <span>Metas</span></div>
+      <div class="nav-item" data-page="metas" onclick="nav('metas')" title="Metas &amp; Cofres"><i class="ti ti-pig-money"></i> <span>Metas &amp; Cofres</span></div>
       <div class="nav-item" data-page="dividas" onclick="nav('dividas')" title="Dívidas &amp; Terceiros"><i class="ti ti-users"></i> <span>Dívidas &amp; Terceiros</span></div>
       <div class="nav-item" data-page="relatorios" onclick="nav('relatorios')" title="Relatórios"><i class="ti ti-chart-bar"></i> <span>Relatórios</span></div>
+      <div class="nav-item" onclick="abrirModalGarantias()" title="Garantias Ativas"><i class="ti ti-shield-check"></i> <span>Garantias Ativas</span></div>
     </div>
 
     <button type="button" class="nav-section" onclick="toggleNavSection('configuracoes', this)">
@@ -775,8 +820,9 @@ tr.concil-inativo { opacity: .45; cursor: not-allowed; }
     <button class="icon-btn" onclick="fecharSidebarMobile()"><i class="ti ti-x"></i></button>
   </div>
   <div class="mobile-more-grid">
+    <button type="button" class="mobile-more-item" data-page="metas" onclick="nav('metas')"><i class="ti ti-pig-money"></i> <span>Metas &amp; Cofres</span></button>
+    <button type="button" class="mobile-more-item" onclick="fecharSidebarMobile(); abrirModalGarantias()"><i class="ti ti-shield-check"></i> <span>Garantias Ativas</span></button>
     <button type="button" class="mobile-more-item" data-page="recorrentes" onclick="nav('recorrentes')"><i class="ti ti-repeat"></i> <span>Recorrentes</span></button>
-    <button type="button" class="mobile-more-item" data-page="metas" onclick="nav('metas')"><i class="ti ti-target-arrow"></i> <span>Metas</span></button>
     <button type="button" class="mobile-more-item" data-page="dividas" onclick="nav('dividas')"><i class="ti ti-users"></i> <span>Dívidas</span></button>
     <button type="button" class="mobile-more-item" data-page="relatorios" onclick="nav('relatorios')"><i class="ti ti-chart-bar"></i> <span>Relatórios</span></button>
     <button type="button" class="mobile-more-item" data-page="sync" onclick="nav('sync')"><i class="ti ti-cloud-download"></i> <span>OneDrive</span></button>
@@ -785,16 +831,22 @@ tr.concil-inativo { opacity: .45; cursor: not-allowed; }
 </div>
 
 <div class="main">
+  <div class="travel-banner" id="travel-banner">
+    <div class="travel-banner-left">
+      <span id="travel-banner-text">✈️ Modo Viagem Ativo: —</span>
+      <span class="travel-banner-tag" id="travel-banner-hashtag">#viagem</span>
+      <span style="font-size:11.5px;opacity:.9;font-weight:400">· Novos lançamentos recebem a tag automaticamente e alertas de orçamento ficam suspensos</span>
+    </div>
+    <button class="btn btn-sm" style="background:rgba(255,255,255,.16);color:#fff;border-color:rgba(255,255,255,.35);flex-shrink:0" onclick="encerrarModoViagem()"><i class="ti ti-plane-off"></i> Encerrar Viagem</button>
+  </div>
   <div class="topbar">
     <div style="display:flex;align-items:center;gap:10px;min-width:0">
       <div class="topbar-title" id="topbar-title">Dashboard</div>
     </div>
     <div class="topbar-actions">
       <button class="btn btn-sm" id="btn-busca" onclick="abrirBusca()" title="Buscar (Ctrl+K)"><i class="ti ti-search"></i></button>
-      <button class="btn btn-sm" id="btn-sino" onclick="nav('lancamentos')" title="Contas a vencer" style="position:relative">
-        <i class="ti ti-bell"></i>
-        <span id="sino-badge" style="display:none;position:absolute;top:-5px;right:-5px;background:var(--bad);color:#fff;font-size:9.5px;font-weight:700;border-radius:10px;min-width:16px;height:16px;line-height:16px;text-align:center;padding:0 3px;"></span>
-      </button>
+      <button class="btn btn-sm hide-mobile-label" id="btn-garantias-top" onclick="abrirModalGarantias()" title="Cofre de Garantias Ativas"><i class="ti ti-shield-check"></i><span class="btn-label"> Garantias</span></button>
+      <button class="btn btn-sm hide-mobile-label" id="btn-modo-viagem-top" onclick="alternarModoViagem()" title="Ativar/Desativar Modo Viagem"><i class="ti ti-plane" id="icone-modo-viagem-top"></i><span class="btn-label" id="label-modo-viagem-top"> Modo Viagem</span></button>
       <button class="btn btn-sm hide-mobile-label" id="btn-privacidade" onclick="alternarPrivacidade()" title="Ocultar/Mostrar Valores"><i class="ti ti-eye" id="icone-privacidade"></i><span class="btn-label" id="label-privacidade"> Ocultar Valores</span></button>
       <button class="btn btn-sm" id="btn-bloquear" onclick="bloquearApp()" title="Bloquear agora" style="display:none"><i class="ti ti-lock"></i></button>
       <button class="btn btn-sm" id="btn-tema" onclick="alternarTema()" title="Alternar tema claro/escuro"><i class="ti ti-moon" id="icone-tema"></i></button>
@@ -960,26 +1012,70 @@ tr.concil-inativo { opacity: .45; cursor: not-allowed; }
       </div>
     </div>
 
-    <!-- METAS FINANCEIRAS -->
-    <div id="page-metas" class="page">
+    <!-- COFRES / CAIXINHAS (VAULTS) -->
+    <div id="page-cofres" class="page">
+      <div class="help-text" style="margin-bottom:1rem">O dinheiro guardado nos Cofres sai do seu <strong>Saldo Disponível</strong> para gastos do dia a dia no Dashboard, mas continua somando normalmente no seu <strong>Patrimônio Total</strong>.</div>
+      <div class="grid4" id="cofres-kpis"></div>
       <div class="card">
-        <div class="card-title" id="meta-form-title" style="margin-bottom:.75rem">Nova meta</div>
+        <div class="card-title" id="cofre-form-title" style="margin-bottom:.75rem">Novo Cofre / Caixinha</div>
+        <input type="hidden" id="cofre-id">
+        <div class="form-row tri">
+          <div class="fg"><label>Nome do Cofre</label><input type="text" id="cofre-nome" placeholder="Ex: Reserva de Emergência, Trocar Notebook..." onkeydown="seEnviar(event, salvarCofre)"></div>
+          <div class="fg"><label>Objetivo (R$)</label><input type="text" id="cofre-objetivo" placeholder="R$ 0,00" oninput="maskMoeda(this)" onkeydown="seEnviar(event, salvarCofre)"></div>
+          <div class="fg"><label>Ícone &amp; Cor</label>
+            <select id="cofre-estilo">
+              <option value="ti-pig-money|#1A6FE0">🐷 Cofrinho (Azul)</option>
+              <option value="ti-shield-lock|#10B981">🛡️ Reserva Segura (Verde)</option>
+              <option value="ti-plane-departure|#8B5CF6">✈️ Viagem dos Sonhos (Roxo)</option>
+              <option value="ti-device-laptop|#F97316">💻 Tecnologia / Equipamentos (Laranja)</option>
+              <option value="ti-home-heart|#F43F5E">🏠 Casa / Imóvel (Rosa)</option>
+              <option value="ti-car|#06B6D4">🚗 Veículo (Ciano)</option>
+            </select>
+          </div>
+        </div>
+        <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:.5rem">
+          <button class="btn" id="cofre-cancelar-btn" onclick="cancelarEdicaoCofre()" style="display:none">Cancelar edição</button>
+          <button class="btn btn-primary" id="cofre-submit-btn" onclick="salvarCofre()"><i class="ti ti-plus"></i> Criar Cofre</button>
+        </div>
+      </div>
+      <div class="vaults-grid" id="cofres-lista"></div>
+      <div id="cofres-empty" class="empty" style="display:none">
+        <i class="ti ti-pig-off"></i>
+        <p>Nenhum cofre ou caixinha criado ainda.</p>
+        <button class="btn btn-primary btn-sm empty-cta" onclick="focarCampoCriacao('cofre-nome')"><i class="ti ti-plus"></i> Criar primeiro cofre</button>
+      </div>
+    </div>
+
+    <!-- METAS & COFRES (UNIFICADOS) -->
+    <div id="page-metas" class="page">
+      <div class="card" style="padding:.9rem 1.25rem;display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;background:linear-gradient(90deg,var(--accent-bg),var(--surface));border-color:var(--accent)">
+        <div style="display:flex;align-items:center;gap:10px">
+          <div class="meta-vault-emblem" style="width:36px;height:36px;font-size:18px"><i class="ti ti-shield-lock"></i></div>
+          <div>
+            <div style="font-size:13.5px;font-weight:700;color:var(--text)">Metas &amp; Cofres de Retenção</div>
+            <div class="help-text" style="margin:0">Cada meta funciona como um Cofre Seguro: o valor guardado é protegido do seu <strong>Saldo Disponível</strong> diário, mas continua somando no seu <strong>Patrimônio Total</strong>.</div>
+          </div>
+        </div>
+      </div>
+      <div class="grid4" id="metas-kpis"></div>
+      <div class="card">
+        <div class="card-title" id="meta-form-title" style="margin-bottom:.75rem">Nova Meta / Cofre</div>
         <input type="hidden" id="meta-id">
         <div class="form-row tri">
-          <div class="fg"><label>Nome</label><input type="text" id="meta-nome" placeholder="Ex: Reserva de emergência" onkeydown="seEnviar(event, salvarMeta)"></div>
-          <div class="fg"><label>Valor alvo</label><input type="text" id="meta-valor-alvo" placeholder="R$ 0,00" oninput="maskMoeda(this)" onkeydown="seEnviar(event, salvarMeta)"></div>
+          <div class="fg"><label>Nome da Meta / Cofre</label><input type="text" id="meta-nome" placeholder="Ex: Reserva de Emergência, Viagem..." onkeydown="seEnviar(event, salvarMeta)"></div>
+          <div class="fg"><label>Valor Alvo (Objetivo)</label><input type="text" id="meta-valor-alvo" placeholder="R$ 0,00" oninput="maskMoeda(this)" onkeydown="seEnviar(event, salvarMeta)"></div>
           <div class="fg"><label>Prazo (opcional)</label><input type="date" id="meta-prazo" onkeydown="seEnviar(event, salvarMeta)"></div>
         </div>
         <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:.5rem">
           <button class="btn" id="meta-cancelar-btn" onclick="cancelarEdicaoMeta()" style="display:none">Cancelar edição</button>
-          <button class="btn btn-primary" id="meta-submit-btn" onclick="salvarMeta()"><i class="ti ti-plus"></i> Adicionar</button>
+          <button class="btn btn-primary" id="meta-submit-btn" onclick="salvarMeta()"><i class="ti ti-plus"></i> Criar Meta / Cofre</button>
         </div>
       </div>
       <div id="metas-lista"></div>
       <div id="metas-empty" class="empty" style="display:none">
-        <i class="ti ti-target-off"></i>
-        <p>Nenhuma meta cadastrada ainda.</p>
-        <button class="btn btn-primary btn-sm empty-cta" onclick="focarCampoCriacao('meta-nome')"><i class="ti ti-plus"></i> Criar primeira meta</button>
+        <i class="ti ti-pig-off"></i>
+        <p>Nenhuma meta ou cofre cadastrado ainda.</p>
+        <button class="btn btn-primary btn-sm empty-cta" onclick="focarCampoCriacao('meta-nome')"><i class="ti ti-plus"></i> Criar primeiro cofre</button>
       </div>
     </div>
 
@@ -1045,10 +1141,14 @@ tr.concil-inativo { opacity: .45; cursor: not-allowed; }
         </div>
         <div class="grid4" id="rel-kpis"></div>
         <div class="card">
-          <div class="card-header"><div class="card-title">Gastos por categoria</div></div>
+          <div class="card-header">
+            <div class="card-title">Gastos por categoria</div>
+            <div class="metric-sub">Comparativo Inteligente (MoM): mês atual vs mês anterior</div>
+          </div>
           <div style="position:relative; height:260px; width:100%">
             <canvas id="rel-categorias-chart"></canvas>
           </div>
+          <div id="rel-categorias-mom" class="mom-list"></div>
         </div>
         <div class="card">
           <div class="card-header"><div class="card-title">Evolução do patrimônio (saldo acumulado)</div></div>
@@ -1184,6 +1284,17 @@ tr.concil-inativo { opacity: .45; cursor: not-allowed; }
 
     <!-- CONFIG -->
     <div id="page-config" class="page">
+      <div class="card">
+        <div class="card-header" style="margin-bottom:.5rem">
+          <div class="card-title">Modo Viagem (Travel Mode)</div>
+          <label class="switch-toggle">
+            <input type="checkbox" id="cfg-modo-viagem-toggle" onchange="alternarModoViagem()">
+            <span class="switch-slider"></span>
+            <span id="cfg-modo-viagem-label">Desativado</span>
+          </label>
+        </div>
+        <div class="help-text">Quando ativo, exibe um banner no topo do sistema, adiciona automaticamente a hashtag da viagem (ex: <code>#viagem_paris</code>) na descrição de novos lançamentos e ignora alertas de limite de orçamento no Simulador What-If e no Dashboard.</div>
+      </div>
       <div class="card">
         <div class="card-title" style="margin-bottom:.5rem">Aparência / Tema</div>
         <div class="help-text" style="margin-bottom:.75rem">Personalize a cor de destaque principal da interface e dos gráficos.</div>
@@ -1335,6 +1446,23 @@ tr.concil-inativo { opacity: .45; cursor: not-allowed; }
       <input type="checkbox" id="lanc-pago" style="width:16px;height:16px;accent-color:var(--accent)" checked>
       <label for="lanc-pago" style="margin:0">Já pago / recebido</label>
     </div>
+    <div class="fg" style="flex-direction:row;align-items:center;gap:8px;margin-top:.5rem">
+      <input type="checkbox" id="lanc-garantia-chk" style="width:16px;height:16px;accent-color:var(--accent)" onchange="toggleCamposGarantiaModal()">
+      <label for="lanc-garantia-chk" style="margin:0"><i class="ti ti-shield-check" style="color:var(--accent)"></i> Possui Garantia?</label>
+    </div>
+    <div id="lanc-garantia-wrap" style="display:none;margin-top:.5rem;padding:10px 12px;background:var(--surface2);border:1px solid var(--border2);border-radius:var(--radius)">
+      <div class="form-row" style="margin-bottom:0">
+        <div class="fg">
+          <label>Prazo em meses</label>
+          <input type="number" id="lanc-garantia-meses" min="1" max="120" placeholder="Ex: 12" oninput="calcularDataGarantiaPorMeses()" style="font-family:var(--font);font-size:13px;padding:8px 10px;border:1px solid var(--border2);border-radius:var(--radius);background:var(--surface);color:var(--text);width:100%">
+        </div>
+        <div class="fg">
+          <label>Ou data de término</label>
+          <input type="date" id="lanc-garantia-fim">
+        </div>
+      </div>
+      <div class="help-text" style="margin-top:4px">Itens com garantia aparecem no painel <strong>Garantias Ativas</strong> com alerta visual nos últimos 30 dias antes do vencimento.</div>
+    </div>
     <div class="fg" style="margin-top:.75rem">
       <label>Comprovante / Anexo (opcional)</label>
       <input type="file" id="lanc-comprovante-input" accept="image/*,.pdf" style="display:none" onchange="anexarComprovante(this.files[0])">
@@ -1414,10 +1542,26 @@ tr.concil-inativo { opacity: .45; cursor: not-allowed; }
       <div class="modal-title" id="prompt-titulo">Valor</div>
       <button class="modal-close" onclick="cancelarPrompt()"><i class="ti ti-x"></i></button>
     </div>
-    <div class="fg"><input type="text" id="prompt-valor" placeholder="R$ 0,00" oninput="maskMoeda(this)" onkeydown="seEnviar(event, confirmarPrompt)"></div>
+    <div class="fg"><input type="text" id="prompt-valor" placeholder="R$ 0,00" oninput="if(!window.__promptModoTexto) maskMoeda(this)" onkeydown="seEnviar(event, confirmarPrompt)"></div>
     <div class="modal-actions">
       <button class="btn" onclick="cancelarPrompt()">Cancelar</button>
       <button class="btn btn-primary" onclick="confirmarPrompt()"><i class="ti ti-check"></i> Confirmar</button>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL GARANTIAS ATIVAS (WARRANTY TRACKER) -->
+<div class="modal-bg" id="modal-garantias">
+  <div class="modal wide">
+    <div class="modal-head">
+      <div class="modal-title"><i class="ti ti-shield-check" style="color:var(--accent)"></i> Cofre de Garantias Ativas</div>
+      <button class="modal-close" onclick="fecharModal('modal-garantias')"><i class="ti ti-x"></i></button>
+    </div>
+    <div class="help-text" style="margin-bottom:.75rem">Acompanhe o prazo restante de garantia das suas compras. Itens que expiram nos próximos 30 dias recebem destaque de alerta.</div>
+    <div id="garantias-resumo-kpis" class="grid4" style="margin-bottom:1rem"></div>
+    <div id="garantias-lista" style="max-height:380px;overflow-y:auto"></div>
+    <div class="modal-actions">
+      <button class="btn" onclick="fecharModal('modal-garantias')">Fechar</button>
     </div>
   </div>
 </div>
@@ -1562,11 +1706,12 @@ let STATE = {
   recorrentes: [],
   regras: [],
   metas: [],
+  cofres: [],               // Cofres/Caixinhas (Vaults): { id, nome, icone, cor, objetivo, saldoAlocado }
   dividas: [],
   lixeira: [],              // lançamentos excluídos (recuperáveis por 30 dias)
   excluidosPendentes: [],   // IDs apagados aqui que a planilha ainda pode ter (evita ressuscitar na sincronização)
   recorrentesIgnorados: [], // 'idRecorrência|AAAA-MM' apagados de propósito (a recorrência não recria)
-  config: { lastSync: null, oneDriveLink: null }
+  config: { lastSync: null, oneDriveLink: null, modoViagem: { ativo: false, nome: '', hashtag: '' } }
 };
 let importRowsRaw = [];
 let importHeaders = [];
@@ -1582,10 +1727,13 @@ async function carregarDados() {
     (STATE.contas || []).forEach(c => { if (!c.tipo) c.tipo = 'conta'; });
     if (!STATE.regras) STATE.regras = [];
     if (!STATE.metas) STATE.metas = [];
+    if (!STATE.cofres) STATE.cofres = [];
     if (!STATE.dividas) STATE.dividas = [];
     if (!STATE.lixeira) STATE.lixeira = [];
     if (!STATE.excluidosPendentes) STATE.excluidosPendentes = [];
     if (!STATE.recorrentesIgnorados) STATE.recorrentesIgnorados = [];
+    if (!STATE.config) STATE.config = { lastSync: null, oneDriveLink: null };
+    if (!STATE.config.modoViagem) STATE.config.modoViagem = { ativo: false, nome: '', hashtag: '' };
     limparLixeira();
     if (STATE.config && STATE.config.oneDriveLink) {
       document.getElementById('sync-link').value = STATE.config.oneDriveLink;
@@ -1594,6 +1742,7 @@ async function carregarDados() {
       definirCorDestaque(STATE.config.accentColor, false);
     }
     aplicarEstadoSidebar();
+    atualizarUIModoViagem();
     document.getElementById('sidebar-status').innerHTML = '<i class="ti ti-device-floppy"></i> <span>Salvo automaticamente no PC</span>';
   } catch (e) {
     console.error("Erro ao carregar dados:", e);
@@ -1617,9 +1766,10 @@ async function salvarDados() {
 }
 
 /* ================= NAVEGAÇÃO ================= */
-const TITULOS = { dashboard:'Dashboard', lancamentos:'Lançamentos', cartoes:'Cartões & Faturas', recorrentes:'Assinaturas & Recorrentes', metas:'Metas', dividas:'Dívidas & Terceiros', relatorios:'Relatórios', sync:'Sincronizar OneDrive', config:'Categorias & Contas' };
-const PAGINAS_MAIS = new Set(['recorrentes', 'metas', 'dividas', 'relatorios', 'sync', 'config']);
+const TITULOS = { dashboard:'Dashboard', lancamentos:'Lançamentos', cartoes:'Cartões & Faturas', recorrentes:'Assinaturas & Recorrentes', cofres:'Metas & Cofres', metas:'Metas & Cofres', dividas:'Dívidas & Terceiros', relatorios:'Relatórios', sync:'Sincronizar OneDrive', config:'Categorias & Contas' };
+const PAGINAS_MAIS = new Set(['recorrentes', 'cofres', 'metas', 'dividas', 'relatorios', 'sync', 'config']);
 function nav(page) {
+  if (page === 'cofres') page = 'metas';
   document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
   document.querySelectorAll('.nav-item, .bottom-nav-item, .mobile-more-item').forEach(n => n.classList.remove('active'));
   document.getElementById('page-' + page).classList.add('active');
@@ -1751,19 +1901,154 @@ function toast(msg, tipo) {
   clearTimeout(t._timer);
   t._timer = setTimeout(() => t.classList.remove('show'), tipo === 'err' ? 9000 : 3200);
 }
-function fecharModal(id) { document.getElementById(id).classList.remove('show'); }
-function abrirModal(id) { document.getElementById(id).classList.add('show'); }
+function fecharModal(id) {
+  const el = document.getElementById(id);
+  if (el) el.classList.remove('show');
+}
+function abrirModal(id) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.classList.add('show');
+  registrarEstadoInicialModal(el);
+}
+function registrarEstadoInicialModal(modalEl) {
+  if (!modalEl) return;
+  const campos = modalEl.querySelectorAll('input, select, textarea');
+  campos.forEach(campo => {
+    if (campo.type === 'checkbox' || campo.type === 'radio') {
+      campo.dataset.initialChecked = campo.checked ? 'true' : 'false';
+    } else if (campo.type !== 'file') {
+      campo.dataset.initialValue = campo.value ?? '';
+    }
+  });
+}
+function verificarModalSujo(modalEl) {
+  if (!modalEl || modalEl.id === 'modal-confirmacao') return false;
+  if (modalEl.id === 'modal-lancamento' && (typeof comprovanteAtual !== 'undefined' && (comprovanteAtual || anexoMetaAtual))) {
+    const idEdit = document.getElementById('lanc-id')?.value;
+    if (!idEdit) return true;
+  }
+  const campos = modalEl.querySelectorAll('input, select, textarea');
+  if (!campos.length) return false;
+  for (const campo of campos) {
+    const tipo = (campo.type || '').toLowerCase();
+    if (tipo === 'hidden' || tipo === 'button' || tipo === 'submit' || tipo === 'reset' || campo.disabled) continue;
+
+    if (tipo === 'checkbox' || tipo === 'radio') {
+      const inicial = campo.dataset.initialChecked !== undefined ? (campo.dataset.initialChecked === 'true') : campo.defaultChecked;
+      if (campo.checked !== inicial) return true;
+      continue;
+    }
+
+    if (tipo === 'file') {
+      if (campo.files && campo.files.length > 0) return true;
+      continue;
+    }
+
+    const valAtual = (campo.value || '').trim();
+    const temInicial = campo.dataset.initialValue !== undefined;
+    const valInicial = temInicial ? campo.dataset.initialValue.trim() : (campo.defaultValue || '').trim();
+
+    if (campo.tagName === 'SELECT') {
+      if (temInicial && valAtual !== valInicial) return true;
+      continue;
+    }
+
+    if (tipo === 'date' || tipo === 'color') {
+      if (temInicial && valAtual !== valInicial) return true;
+      continue;
+    }
+
+    if (temInicial) {
+      if (valAtual !== valInicial) return true;
+    } else if (valAtual !== '' && valAtual !== 'R$ 0,00' && valAtual !== '0') {
+      return true;
+    }
+  }
+  return false;
+}
+function limparFormularioModal(modalEl) {
+  if (!modalEl) return;
+  const campos = modalEl.querySelectorAll('input, select, textarea');
+  campos.forEach(campo => {
+    const tipo = (campo.type || '').toLowerCase();
+    if (tipo === 'button' || tipo === 'submit' || tipo === 'reset') return;
+    if (tipo === 'hidden') {
+      campo.value = '';
+      return;
+    }
+    if (tipo === 'checkbox' || tipo === 'radio') {
+      campo.checked = campo.dataset.initialChecked !== undefined ? (campo.dataset.initialChecked === 'true') : campo.defaultChecked;
+    } else if (tipo === 'file') {
+      campo.value = '';
+    } else if (campo.tagName === 'SELECT') {
+      if (campo.dataset.initialValue !== undefined) {
+        campo.value = campo.dataset.initialValue;
+      } else if (campo.options.length > 0) {
+        campo.selectedIndex = 0;
+      }
+    } else if (tipo === 'date' || tipo === 'color') {
+      campo.value = campo.dataset.initialValue !== undefined ? campo.dataset.initialValue : campo.defaultValue;
+    } else {
+      campo.value = '';
+    }
+    delete campo.dataset.initialValue;
+    delete campo.dataset.initialChecked;
+  });
+
+  if (modalEl.id === 'modal-lancamento') {
+    if (typeof comprovanteAtual !== 'undefined') comprovanteAtual = null;
+    if (typeof anexoMetaAtual !== 'undefined') anexoMetaAtual = null;
+    if (typeof splitLinhas !== 'undefined') splitLinhas = [];
+    if (typeof atualizarUIComprovante === 'function') atualizarUIComprovante();
+    const wrapGarantia = document.getElementById('lanc-garantia-wrap');
+    if (wrapGarantia) wrapGarantia.style.display = 'none';
+    const wrapSplit = document.getElementById('lanc-split-wrap');
+    if (wrapSplit) wrapSplit.style.display = 'none';
+    const wrapRec = document.getElementById('lanc-recorrencia-wrap');
+    if (wrapRec) wrapRec.style.display = 'none';
+  } else if (modalEl.id === 'modal-simulador') {
+    const resSim = document.getElementById('simulador-resultado');
+    if (resSim) { resSim.style.display = 'none'; resSim.innerHTML = ''; }
+  }
+}
+function fecharModalEspecifico(id) {
+  if (id === 'modal-prompt') {
+    cancelarPrompt();
+  } else if (id === 'modal-import' && typeof cancelarImportacao === 'function') {
+    cancelarImportacao();
+  } else {
+    fecharModal(id);
+  }
+}
+function tentarFecharModalPorEsc(modalEl) {
+  if (!modalEl) return;
+  if (verificarModalSujo(modalEl)) {
+    abrirConfirmacao(
+      'Tem informações não guardadas. Tem a certeza que deseja fechar e cancelar as alterações?',
+      () => {
+        limparFormularioModal(modalEl);
+        fecharModalEspecifico(modalEl.id);
+      }
+    );
+  } else {
+    limparFormularioModal(modalEl);
+    fecharModalEspecifico(modalEl.id);
+  }
+}
 function seEnviar(e, fn) {
   if (e.key === 'Enter') { e.preventDefault(); fn(); }
 }
 
 /* ---- Substituto de prompt() — o Electron não implementa o diálogo nativo do navegador ---- */
 let promptResolver = null;
-function pedirValor(titulo, valorInicial) {
+function pedirValor(titulo, valorInicial, modoTexto) {
   return new Promise((resolve) => {
     promptResolver = resolve;
+    window.__promptModoTexto = !!modoTexto;
     document.getElementById('prompt-titulo').textContent = titulo;
     const input = document.getElementById('prompt-valor');
+    input.placeholder = modoTexto ? 'Ex: Paris, Eurotrip...' : 'R$ 0,00';
     input.value = valorInicial || '';
     abrirModal('modal-prompt');
     setTimeout(() => { input.focus(); input.select(); }, 50);
@@ -1771,11 +2056,13 @@ function pedirValor(titulo, valorInicial) {
 }
 function confirmarPrompt() {
   const valor = document.getElementById('prompt-valor').value;
+  window.__promptModoTexto = false;
   fecharModal('modal-prompt');
   const resolver = promptResolver; promptResolver = null;
   if (resolver) resolver(valor);
 }
 function cancelarPrompt() {
+  window.__promptModoTexto = false;
   fecharModal('modal-prompt');
   const resolver = promptResolver; promptResolver = null;
   if (resolver) resolver(null);
@@ -1907,14 +2194,15 @@ function calcularSimulacaoImpacto() {
   const baseOrcamento = orcamentoCats > 0 ? orcamentoCats : receitasMes;
   const pct = baseOrcamento > 0 ? ((valorCompra / baseOrcamento) * 100).toFixed(1).replace('.', ',') : '100,0';
   const novoSaldoMes = (receitasMes - despesasMes) - valorCompra;
-  const critico = novoSaldoMes < 0 || (baseOrcamento > 0 && (valorCompra / baseOrcamento) > 0.3);
+  const modoViagemAtivo = !!(STATE.config && STATE.config.modoViagem && STATE.config.modoViagem.ativo);
+  const critico = !modoViagemAtivo && (novoSaldoMes < 0 || (baseOrcamento > 0 && (valorCompra / baseOrcamento) > 0.3));
 
   res.style.display = 'flex';
   res.style.background = critico ? 'var(--bad-bg)' : 'var(--accent-bg)';
   res.style.borderColor = critico ? 'var(--bad-border)' : 'var(--accent)';
   res.style.color = critico ? 'var(--bad-text)' : 'var(--accent-text)';
-  res.innerHTML = `<i class="ti ${critico ? 'ti-alert-triangle' : 'ti-info-circle'}" style="font-size:18px;flex-shrink:0;margin-top:2px"></i>
-    <div>Esta compra consumirá <strong>${pct}%</strong> do seu orçamento atual${orcamentoCats > 0 ? ' (soma das metas de categorias)' : ' (receitas do mês)'} e o saldo do mês passará para <strong>${toBRL(novoSaldoMes)}</strong>.</div>`;
+  res.innerHTML = `<i class="ti ${modoViagemAtivo ? 'ti-plane' : (critico ? 'ti-alert-triangle' : 'ti-info-circle')}" style="font-size:18px;flex-shrink:0;margin-top:2px"></i>
+    <div>${modoViagemAtivo ? `<strong>Modo Viagem Ativo (${STATE.config.modoViagem.nome}):</strong> Alertas de limite de orçamento estão suspensos. ` : ''}Esta compra consumirá <strong>${pct}%</strong> do seu orçamento atual${orcamentoCats > 0 ? ' (soma das metas de categorias)' : ' (receitas do mês)'} e o saldo do mês passará para <strong>${toBRL(novoSaldoMes)}</strong>.</div>`;
 }
 function converterSimulacaoEmLancamento() {
   const valorTxt = document.getElementById('simulador-valor').value;
@@ -2003,24 +2291,35 @@ function inicializarDragDropDashboard() {
 }
 
 function renderDashboard() {
+  migrarCofresParaMetas();
   const mesAtual = hojeLocalISO().slice(0,7);
-  let receitasMes = 0, despesasMes = 0, saldoTotal = 0;
+  let receitasMes = 0, despesasMes = 0, totalReceitas = 0, totalDespesas = 0;
   STATE.lancamentos.forEach(l => {
-    const sinal = l.tipo === 'receita' ? 1 : -1;
-    saldoTotal += sinal * l.valor;
+    if (l.ehMovimentoCofre) return;
+    if (l.tipo === 'receita') totalReceitas += l.valor;
+    else totalDespesas += l.valor;
     if (l.data && l.data.slice(0,7) === mesAtual && !l.ehTransferencia) {
       if (l.tipo === 'receita') receitasMes += l.valor; else despesasMes += l.valor;
     }
   });
+  const totalGuardadoMetas = calcularTotalGuardadoMetas();
+  const patrimonioTotal = totalReceitas - totalDespesas;
+  const saldoDisponivel = (totalReceitas - totalDespesas) - totalGuardadoMetas;
   const resultadoMes = receitasMes - despesasMes;
   const mesesDoisUltimos = ultimosMeses(2);
   const taxaMesAtual = taxaPoupanca(mesesDoisUltimos[1]);
   const taxaMesAnterior = taxaPoupanca(mesesDoisUltimos[0]);
   document.getElementById('dash-kpis').innerHTML = `
     <div class="metric m-info dash-draggable" id="kpi-saldo-total" draggable="true">
-      <div class="metric-top"><div class="metric-label">Saldo total</div><div class="metric-icon mi-info"><i class="ti ti-wallet"></i></div></div>
-      <div class="metric-value ${saldoTotal>=0?'mv-ok':'mv-bad'}">${toBRL(saldoTotal)}</div>
-      <div class="metric-sub">todos os lançamentos</div>
+      <div class="metric-top"><div class="metric-label">Saldo Disponível</div><div class="metric-icon mi-info"><i class="ti ti-wallet"></i></div></div>
+      <div class="metric-value ${saldoDisponivel>=0?'mv-ok':'mv-bad'}">${toBRL(saldoDisponivel)}</div>
+      <span class="text-muted text-sm" id="dash-saldo-exclui-metas" style="${totalGuardadoMetas > 0 ? '' : 'display:none'}">${totalGuardadoMetas > 0 ? 'Exclui ' + toBRL(totalGuardadoMetas) + ' guardados em Metas' : ''}</span>
+      <div class="metric-sub" style="${totalGuardadoMetas > 0 ? 'display:none' : ''}">livre para uso diário</div>
+    </div>
+    <div class="metric m-info dash-draggable" id="kpi-patrimonio-total" draggable="true">
+      <div class="metric-top"><div class="metric-label">Patrimônio Total</div><div class="metric-icon mi-info"><i class="ti ti-pig-money"></i></div></div>
+      <div class="metric-value ${patrimonioTotal>=0?'mv-info':'mv-bad'}">${toBRL(patrimonioTotal)}</div>
+      <div class="metric-sub">${totalGuardadoMetas > 0 ? 'inclui ' + toBRL(totalGuardadoMetas) + ' retidos em Metas' : 'receitas − despesas (saldo global)'}</div>
     </div>
     <div class="metric m-ok dash-draggable" id="kpi-receitas-mes" draggable="true">
       <div class="metric-top"><div class="metric-label">Receitas no mês</div><div class="metric-icon mi-ok"><i class="ti ti-trending-up"></i></div></div>
@@ -2079,13 +2378,13 @@ function renderDashboard() {
       titulo: `Excelente! Taxa de poupança em ${fmtPct(taxaMesAtual)}`,
       texto: `Você superou a meta recomendada de 20% neste mês, poupando ${toBRL(resultadoMes)}.`
     });
-  } else if (receitasMes > 0 && despesasMes > receitasMes) {
+  } else if (!(STATE.config && STATE.config.modoViagem && STATE.config.modoViagem.ativo) && receitasMes > 0 && despesasMes > receitasMes) {
     insights.push({
       tipo: 'bad', icone: 'ti-alert-triangle',
       titulo: `Alerta: Despesas superaram as receitas no mês`,
       texto: `Os gastos deste mês estão ${toBRL(despesasMes - receitasMes)} acima das entradas registradas.`
     });
-  } else if (despesasMes > 0) {
+  } else if (!(STATE.config && STATE.config.modoViagem && STATE.config.modoViagem.ativo) && despesasMes > 0) {
     const mesPassadoKey = mesesDoisUltimos[0];
     const despMesPassado = STATE.lancamentos
       .filter(l => !l.ehTransferencia && l.tipo === 'despesa' && (l.data || '').slice(0, 7) === mesPassadoKey)
@@ -2234,10 +2533,20 @@ function badgeValorHTML(l) {
   return `<span class="badge ${l.tipo==='receita'?'badge-receita':'badge-despesa'}">${l.tipo==='receita'?'+':'-'} ${toBRL(l.valor)}</span>`;
 }
 function comprovanteIconHTML(l) {
+  let html = '';
   const temAnexo = l.comprovante || l.anexoNome || l.anexoPath;
-  if (!temAnexo) return '';
-  const titulo = l.anexoNome ? `Anexo: ${l.anexoNome}${l.anexoPath ? ' (' + l.anexoPath + ')' : ''}` : 'Ver comprovante';
-  return ` <i class="ti ti-paperclip" style="cursor:pointer;color:var(--accent)" onclick="verComprovanteLancamento('${l.id}')" title="${titulo.replace(/"/g, '&quot;')}"></i>`;
+  if (temAnexo) {
+    const titulo = l.anexoNome ? `Anexo: ${l.anexoNome}${l.anexoPath ? ' (' + l.anexoPath + ')' : ''}` : 'Ver comprovante';
+    html += ` <i class="ti ti-paperclip" style="cursor:pointer;color:var(--accent)" onclick="event.stopPropagation(); verComprovanteLancamento('${l.id}')" title="${titulo.replace(/"/g, '&quot;')}"></i>`;
+  }
+  if (l.garantiaFim) {
+    const [ga, gm, gd] = l.garantiaFim.split('-');
+    const dataGarFmt = ga ? `${gd}/${gm}/${ga}` : l.garantiaFim;
+    const diasRest = Math.ceil((new Date(l.garantiaFim + 'T23:59:59').getTime() - Date.now()) / 86400000);
+    const corGar = diasRest < 0 ? 'var(--bad)' : (diasRest <= 30 ? 'var(--amber)' : 'var(--good)');
+    html += ` <i class="ti ti-shield-check" style="cursor:pointer;color:${corGar}" onclick="event.stopPropagation(); abrirModalGarantias()" title="Garantia até ${dataGarFmt}"></i>`;
+  }
+  return html;
 }
 function linhaLancamento(l) {
   const [a,m,d] = (l.data||'').split('-');
@@ -3018,6 +3327,15 @@ function abrirModalLancamento(id) {
   comprovanteAtual = (l && l.comprovante) ? l.comprovante : null;
   anexoMetaAtual = (l && (l.anexoNome || l.anexoPath)) ? { nome: l.anexoNome || '', path: l.anexoPath || '' } : null;
   renderComprovanteArea();
+  const chkGarantia = document.getElementById('lanc-garantia-chk');
+  const inpGarMeses = document.getElementById('lanc-garantia-meses');
+  const inpGarFim = document.getElementById('lanc-garantia-fim');
+  if (chkGarantia && inpGarMeses && inpGarFim) {
+    chkGarantia.checked = !!(l && l.garantiaFim);
+    inpGarMeses.value = (l && l.garantiaMeses) ? l.garantiaMeses : '';
+    inpGarFim.value = (l && l.garantiaFim) ? l.garantiaFim : '';
+    toggleCamposGarantiaModal();
+  }
   if (l && Array.isArray(l.subTransacoes) && l.subTransacoes.length >= 2) {
     splitLinhas = l.subTransacoes.map(s => ({ categoria: s.categoria, valor: Number(s.valor) || 0 }));
     alternarSplitLancamento(true);
@@ -3043,7 +3361,7 @@ async function salvarLancamento() {
   avaliarExpressaoMoeda(document.getElementById('lanc-valor'));
   const id = document.getElementById('lanc-id').value;
   const data = document.getElementById('lanc-data').value;
-  const descricao = document.getElementById('lanc-descricao').value.trim();
+  let descricao = document.getElementById('lanc-descricao').value.trim();
   const valorTotal = moedaToNumber(document.getElementById('lanc-valor').value);
   const tipo = document.getElementById('lanc-tipo').value;
   const categoria = document.getElementById('lanc-categoria').value;
@@ -3052,6 +3370,36 @@ async function salvarLancamento() {
   const tags = parseTags(document.getElementById('lanc-tags').value);
   const parcelas = id ? 1 : (parseInt(document.getElementById('lanc-parcelas').value, 10) || 1);
   if (!data || !descricao || !valorTotal) { toast('Preencha data, descrição e valor.', 'err'); return; }
+
+  // Modo Viagem Ativo: injeta automaticamente a hashtag da viagem em novos lançamentos
+  if (!id && STATE.config && STATE.config.modoViagem && STATE.config.modoViagem.ativo && STATE.config.modoViagem.hashtag) {
+    const tagViagem = STATE.config.modoViagem.hashtag.replace(/^#/, '');
+    const regexTag = new RegExp('#' + escaparRegex(tagViagem) + '\\b', 'i');
+    if (!regexTag.test(descricao)) {
+      descricao = `${descricao} #${tagViagem}`;
+    }
+    if (!tags.some(t => t.toLowerCase() === tagViagem.toLowerCase())) {
+      tags.push(tagViagem);
+    }
+  }
+
+  // Garantia (Warranty Tracker)
+  const possuiGarantia = document.getElementById('lanc-garantia-chk') && document.getElementById('lanc-garantia-chk').checked;
+  let garantiaFim = undefined;
+  let garantiaMeses = undefined;
+  if (possuiGarantia) {
+    const mesesVal = parseInt(document.getElementById('lanc-garantia-meses').value, 10);
+    const dataFimVal = document.getElementById('lanc-garantia-fim').value;
+    if (mesesVal > 0) garantiaMeses = mesesVal;
+    if (dataFimVal) {
+      garantiaFim = dataFimVal;
+    } else if (mesesVal > 0) {
+      garantiaFim = somarMeses(data, mesesVal);
+    } else {
+      garantiaFim = somarMeses(data, 12);
+      garantiaMeses = 12;
+    }
+  }
 
   const anexoNome = anexoMetaAtual && anexoMetaAtual.nome ? anexoMetaAtual.nome : undefined;
   const anexoPath = anexoMetaAtual && anexoMetaAtual.path ? anexoMetaAtual.path : undefined;
@@ -3075,7 +3423,8 @@ async function salvarLancamento() {
         ...anterior,
         tipo, data, descricao, categoria: subTransacoes[0].categoria, conta, valor: valorTotal, pago,
         comprovante: comprovanteAtual || undefined,
-        anexoNome, anexoPath, tags, subTransacoes, parentId, sincronizado: false
+        anexoNome, anexoPath, tags, subTransacoes, parentId,
+        garantiaFim, garantiaMeses, sincronizado: false
       };
       if (idx >= 0) STATE.lancamentos[idx] = editado; else STATE.lancamentos.push(editado);
     } else {
@@ -3088,7 +3437,9 @@ async function salvarLancamento() {
           subTransacoes: idxSub === 0 ? subTransacoes : undefined,
           comprovante: idxSub === 0 ? (comprovanteAtual || undefined) : undefined,
           anexoNome: idxSub === 0 ? anexoNome : undefined,
-          anexoPath: idxSub === 0 ? anexoPath : undefined
+          anexoPath: idxSub === 0 ? anexoPath : undefined,
+          garantiaFim: idxSub === 0 ? garantiaFim : undefined,
+          garantiaMeses: idxSub === 0 ? garantiaMeses : undefined
         });
       });
     }
@@ -3114,6 +3465,7 @@ async function salvarLancamento() {
       comprovante: comprovanteAtual || undefined,
       anexoNome, anexoPath,
       tags,
+      garantiaFim, garantiaMeses,
       sincronizado: false
     };
     // Se outro aparelho apagou este lançamento com o formulário aberto, salvar o recria (a sua edição vence).
@@ -3136,7 +3488,9 @@ async function salvarLancamento() {
         tags,
         comprovante: i === 1 ? (comprovanteAtual || undefined) : undefined,
         anexoNome: i === 1 ? anexoNome : undefined,
-        anexoPath: i === 1 ? anexoPath : undefined
+        anexoPath: i === 1 ? anexoPath : undefined,
+        garantiaFim: i === 1 ? garantiaFim : undefined,
+        garantiaMeses: i === 1 ? garantiaMeses : undefined
       });
     }
     toast(`${parcelas} parcelas criadas, de ${somarMeses(data,0).split('-').reverse().join('/')} a ${somarMeses(data,parcelas-1).split('-').reverse().join('/')}.`, 'ok');
@@ -3145,7 +3499,8 @@ async function salvarLancamento() {
       id: uid(), tipo, data, descricao, categoria, conta, valor: valorTotal,
       origem: 'manual', sincronizado: false, pago, tags,
       comprovante: comprovanteAtual || undefined,
-      anexoNome, anexoPath
+      anexoNome, anexoPath,
+      garantiaFim, garantiaMeses
     });
   }
   comprovanteAtual = null;
@@ -3489,12 +3844,19 @@ async function criarLancamentoRapido() {
   const campo = document.getElementById('rapido-texto');
   const r = parseLancamentoRapido(campo.value);
   if (r.erro) { toast(r.erro, 'err'); return; }
-  const descComTags = r.tags && r.tags.length
-    ? `${r.descricao} ${r.tags.map(tg => '#' + tg.replace(/\s+/g, '_')).join(' ')}`
+  const tagsFinais = Array.isArray(r.tags) ? [...r.tags] : [];
+  if (STATE.config && STATE.config.modoViagem && STATE.config.modoViagem.ativo && STATE.config.modoViagem.hashtag) {
+    const tagViagem = STATE.config.modoViagem.hashtag.replace(/^#/, '');
+    if (!tagsFinais.some(t => t.toLowerCase() === tagViagem.toLowerCase())) {
+      tagsFinais.push(tagViagem);
+    }
+  }
+  const descComTags = tagsFinais.length
+    ? `${r.descricao} ${tagsFinais.map(tg => '#' + tg.replace(/\s+/g, '_')).join(' ')}`
     : r.descricao;
   STATE.lancamentos.push({
     id: uid(), tipo: r.tipo, data: r.data, descricao: descComTags, categoria: r.categoria, conta: r.conta,
-    valor: r.valor, origem: 'manual', sincronizado: false, pago: r.pago, tags: r.tags
+    valor: r.valor, origem: 'manual', sincronizado: false, pago: r.pago, tags: tagsFinais
   });
   campo.value = '';
   atualizarPreviewSmartAdd();
@@ -3549,12 +3911,20 @@ async function salvarTransferencia() {
 async function excluirTransferencia(grupoId) {
   const itens = STATE.lancamentos.filter(l => l.transferenciaGrupo === grupoId);
   if (!itens.length) return;
+  const movCofre = itens.find(l => l.ehMovimentoCofre && l.metaId);
+  if (movCofre) {
+    const meta = (STATE.metas || []).find(m => m.id === movCofre.metaId);
+    if (meta) {
+      const delta = movCofre.tipo === 'despesa' ? -movCofre.valor : movCofre.valor;
+      meta.valorAtual = Math.max(0, Math.round(((Number(meta.valorAtual) || 0) + delta) * 100) / 100);
+    }
+  }
   STATE.lancamentos = STATE.lancamentos.filter(l => l.transferenciaGrupo !== grupoId);
   const entradaId = registrarExclusao(itens, itens[0].descricao || 'Transferência');
   await salvarDados();
   renderPaginaAtiva(); atualizarContagemLixeira();
   sincronizarEmSegundoPlano();
-  toastDesfazer('Transferência excluída (as duas pontas).', entradaId);
+  toastDesfazer(movCofre ? 'Movimentação do cofre excluída e saldo ajustado.' : 'Transferência excluída (as duas pontas).', entradaId);
 }
 
 /* ================= CATEGORIAS / CONTAS ================= */
@@ -3616,6 +3986,7 @@ function renderConfig() {
   document.getElementById('regra-list').innerHTML = (STATE.regras || []).map((r,i) =>
     `<span class="tag">"${r.palavraChave}" → ${r.categoria}<button onclick="removerRegra(${i})"><i class="ti ti-x"></i></button></span>`).join('') || '<span class="help-text">Nenhuma regra cadastrada.</span>';
   atualizarSegurancaUI();
+  atualizarUIModoViagem();
 }
 async function adicionarCategoria() {
   const nome = document.getElementById('cat-nome').value.trim();
@@ -3932,12 +4303,12 @@ function renderPaginaAtiva() {
   if (pagina === 'lancamentos') renderLancamentos();
   else if (pagina === 'cartoes') renderCartoes();
   else if (pagina === 'recorrentes') renderRecorrentes();
+  else if (pagina === 'cofres') renderCofres();
   else if (pagina === 'metas') renderMetas();
   else if (pagina === 'dividas') renderDividas();
   else if (pagina === 'relatorios') renderRelatorios();
   else if (pagina === 'config') renderConfig();
   renderDashboard();
-  atualizarSino();
 }
 function ultimosMeses(n) {
   const base = new Date();
@@ -3973,6 +4344,7 @@ function saldoPorConta() {
   const saldos = {};
   STATE.contas.filter(c => c.tipo !== 'cartao').forEach(c => { saldos[c.nome] = 0; });
   STATE.lancamentos.forEach(l => {
+    if (l.ehMovimentoCofre) return; // retenção em Metas/Cofres já é isolada no Saldo Disponível
     if (!estaPago(l)) return; // só o que já efetivamente entrou/saiu da conta
     if (!(l.conta in saldos)) return; // conta apagada ou é cartão — não entra no saldo
     saldos[l.conta] += (l.tipo === 'receita' ? 1 : -1) * l.valor;
@@ -4011,7 +4383,8 @@ function patrimonioAcumulado(numMeses, hashtagFiltro) {
     meses.push(d.toISOString().slice(0,7));
   }
   const primeiroMes = meses[0] + '-01';
-  const baseLancs = hashtagFiltro ? STATE.lancamentos.filter(l => lancamentoTemHashtag(l, hashtagFiltro)) : STATE.lancamentos;
+  const baseLancs = (hashtagFiltro ? STATE.lancamentos.filter(l => lancamentoTemHashtag(l, hashtagFiltro)) : STATE.lancamentos)
+    .filter(l => !l.ehMovimentoCofre);
   let acumulado = baseLancs
     .filter(l => estaPago(l) && (l.data || '') < primeiroMes)
     .reduce((s,l) => s + (l.tipo === 'receita' ? 1 : -1) * l.valor, 0);
@@ -4087,9 +4460,412 @@ function renderCartoes() {
   }).join('');
 }
 
-/* ================= METAS FINANCEIRAS (GAMIFICADAS) ================= */
+/* ================= COFRES / CAIXINHAS (VAULTS) & CÁLCULO DE SALDOS ================= */
+function migrarCofresParaMetas() {
+  if (!Array.isArray(STATE.metas)) STATE.metas = [];
+  if (Array.isArray(STATE.cofres) && STATE.cofres.length > 0) {
+    STATE.cofres.forEach(c => {
+      const jaExiste = STATE.metas.some(m => m.id === c.id || (m.nome && c.nome && m.nome.toLowerCase() === c.nome.toLowerCase()));
+      if (!jaExiste) {
+        STATE.metas.push({
+          id: c.id || uid(),
+          nome: c.nome || 'Cofre',
+          valorAlvo: Number(c.objetivo) || Number(c.saldoAlocado) || 1000,
+          valorAtual: Number(c.saldoAlocado) || 0
+        });
+      } else {
+        const alvo = STATE.metas.find(m => m.id === c.id || (m.nome && c.nome && m.nome.toLowerCase() === c.nome.toLowerCase()));
+        if (alvo && (Number(c.saldoAlocado) || 0) > 0) {
+          alvo.valorAtual = Math.round(((Number(alvo.valorAtual) || 0) + (Number(c.saldoAlocado) || 0)) * 100) / 100;
+        }
+      }
+    });
+    STATE.cofres = [];
+    salvarDados();
+  }
+}
+function calcularTotalGuardadoMetas() {
+  migrarCofresParaMetas();
+  const somaMetas = (STATE.metas || []).reduce((s, m) => s + (Number(m.valorAtual) || 0), 0);
+  const somaCofres = (STATE.cofres || []).reduce((s, c) => s + (Number(c.saldoAlocado) || 0), 0);
+  return Math.round((somaMetas + somaCofres) * 100) / 100;
+}
+function calcularSaldoDisponivelGeral() {
+  let totalReceitas = 0, totalDespesas = 0;
+  STATE.lancamentos.forEach(l => {
+    if (l.ehMovimentoCofre) return;
+    if (l.tipo === 'receita') totalReceitas += (Number(l.valor) || 0);
+    else totalDespesas += (Number(l.valor) || 0);
+  });
+  const saldoTotal = totalReceitas - totalDespesas;
+  const totalAlocado = calcularTotalGuardadoMetas();
+  return { totalReceitas, totalDespesas, saldoTotal, patrimonioTotal: saldoTotal, totalAlocado, saldoDisponivel: saldoTotal - totalAlocado };
+}
+function atualizarSaldos() {
+  renderDashboard();
+  if (document.getElementById('page-metas')?.classList.contains('active')) renderMetas();
+  if (document.getElementById('page-lancamentos')?.classList.contains('active')) renderLancamentos();
+}
+function renderCofres() {
+  if (!STATE.cofres) STATE.cofres = [];
+  const lista = STATE.cofres;
+  const { saldoTotal, totalAlocado, saldoDisponivel } = calcularSaldoDisponivelGeral();
+  const totalObjetivos = lista.reduce((s, c) => s + (Number(c.objetivo) || 0), 0);
+
+  const kpisEl = document.getElementById('cofres-kpis');
+  if (kpisEl) {
+    kpisEl.innerHTML = `
+      <div class="metric m-info">
+        <div class="metric-top"><div class="metric-label">Saldo Disponível</div><div class="metric-icon mi-info"><i class="ti ti-wallet"></i></div></div>
+        <div class="metric-value ${saldoDisponivel>=0?'mv-ok':'mv-bad'}">${toBRL(saldoDisponivel)}</div>
+        <div class="metric-sub">livre para uso diário</div>
+      </div>
+      <div class="metric m-ok">
+        <div class="metric-top"><div class="metric-label">Total nos Cofres</div><div class="metric-icon mi-ok"><i class="ti ti-pig-money"></i></div></div>
+        <div class="metric-value mv-ok">${toBRL(totalAlocado)}</div>
+        <div class="metric-sub">${lista.length} cofre(s) ativo(s)</div>
+      </div>
+      <div class="metric m-info">
+        <div class="metric-top"><div class="metric-label">Patrimônio Total</div><div class="metric-icon mi-info"><i class="ti ti-building-bank"></i></div></div>
+        <div class="metric-value ${saldoTotal>=0?'mv-info':'mv-bad'}">${toBRL(saldoTotal)}</div>
+        <div class="metric-sub">disponível + cofres</div>
+      </div>
+      <div class="metric m-warn">
+        <div class="metric-top"><div class="metric-label">Soma dos Objetivos</div><div class="metric-icon mi-warn"><i class="ti ti-target-arrow"></i></div></div>
+        <div class="metric-value mv-info">${toBRL(totalObjetivos)}</div>
+        <div class="metric-sub">${totalObjetivos > 0 ? Math.min(100, (totalAlocado / totalObjetivos) * 100).toFixed(0) + '% alcançado no geral' : 'sem meta global'}</div>
+      </div>`;
+  }
+
+  const emptyEl = document.getElementById('cofres-empty');
+  const contEl = document.getElementById('cofres-lista');
+  if (emptyEl) emptyEl.style.display = lista.length ? 'none' : 'block';
+  if (!contEl) return;
+
+  contEl.innerHTML = lista.map(c => {
+    const alocado = Number(c.saldoAlocado) || 0;
+    const obj = Number(c.objetivo) || 0;
+    const pct = obj > 0 ? Math.min(100, (alocado / obj) * 100) : 0;
+    const cor = c.cor || '#1A6FE0';
+    const icone = c.icone || 'ti-pig-money';
+    return `
+      <div class="vault-card">
+        <div class="vault-card-bar" style="background:${cor}"></div>
+        <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:10px">
+          <div style="display:flex;align-items:center;gap:10px;min-width:0">
+            <div class="vault-icon" style="background:${cor}"><i class="ti ${icone}"></i></div>
+            <div style="min-width:0">
+              <div style="font-size:14px;font-weight:700;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escHtml(c.nome)}</div>
+              <div class="help-text" style="margin:0">${obj > 0 ? `Objetivo: ${toBRL(obj)} (${pct.toFixed(0)}%)` : 'Sem meta fixa'}</div>
+            </div>
+          </div>
+          <div style="display:flex;gap:4px;flex-shrink:0">
+            <button class="icon-btn" onclick="editarCofre('${c.id}')" title="Editar Cofre"><i class="ti ti-pencil"></i></button>
+            <button class="icon-btn danger" onclick="removerCofre('${c.id}')" title="Excluir Cofre"><i class="ti ti-trash"></i></button>
+          </div>
+        </div>
+        <div>
+          <div style="font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:var(--text3);font-weight:700">Saldo Alocado</div>
+          <div style="font-size:22px;font-weight:800;color:var(--text);letter-spacing:-.02em">${toBRL(alocado)}</div>
+        </div>
+        <div class="vault-progress-track">
+          <div class="vault-progress-fill" style="width:${pct}%;background:${cor}"></div>
+        </div>
+        <div style="display:flex;gap:8px;margin-top:2px">
+          <button class="btn btn-primary btn-sm" style="flex:1;justify-content:center" onclick="guardarNoCofre('${c.id}')"><i class="ti ti-arrow-down-circle"></i> Guardar</button>
+          <button class="btn btn-sm" style="flex:1;justify-content:center" onclick="resgatarDoCofre('${c.id}')" ${alocado <= 0 ? 'disabled' : ''}><i class="ti ti-arrow-up-circle"></i> Resgatar</button>
+        </div>
+      </div>`;
+  }).join('');
+}
+async function salvarCofre() {
+  if (!STATE.cofres) STATE.cofres = [];
+  const id = document.getElementById('cofre-id').value;
+  const nome = document.getElementById('cofre-nome').value.trim();
+  const objetivo = moedaToNumber(document.getElementById('cofre-objetivo').value);
+  const estilo = (document.getElementById('cofre-estilo').value || 'ti-pig-money|#1A6FE0').split('|');
+  const icone = estilo[0] || 'ti-pig-money';
+  const cor = estilo[1] || '#1A6FE0';
+  if (!nome) { toast('Informe o nome do cofre.', 'err'); return; }
+
+  if (id) {
+    const c = STATE.cofres.find(x => x.id === id);
+    if (c) Object.assign(c, { nome, objetivo, icone, cor });
+  } else {
+    STATE.cofres.push({ id: uid(), nome, icone, cor, objetivo: objetivo || 0, saldoAlocado: 0 });
+  }
+  cancelarEdicaoCofre();
+  await salvarDados();
+  renderCofres();
+  renderDashboard();
+  toast(id ? 'Cofre atualizado.' : 'Cofre criado com sucesso!', 'ok');
+}
+function editarCofre(id) {
+  const c = (STATE.cofres || []).find(x => x.id === id);
+  if (!c) return;
+  document.getElementById('cofre-id').value = c.id;
+  document.getElementById('cofre-nome').value = c.nome;
+  document.getElementById('cofre-objetivo').value = c.objetivo ? toBRL(c.objetivo).replace('R$', 'R$ ') : '';
+  const selEstilo = document.getElementById('cofre-estilo');
+  const chaveEstilo = `${c.icone || 'ti-pig-money'}|${c.cor || '#1A6FE0'}`;
+  if ([...selEstilo.options].some(o => o.value === chaveEstilo)) selEstilo.value = chaveEstilo;
+  document.getElementById('cofre-form-title').textContent = 'Editando Cofre: ' + c.nome;
+  document.getElementById('cofre-submit-btn').innerHTML = '<i class="ti ti-device-floppy"></i> Salvar alterações';
+  document.getElementById('cofre-cancelar-btn').style.display = '';
+  focarCampoCriacao('cofre-nome');
+}
+function cancelarEdicaoCofre() {
+  document.getElementById('cofre-id').value = '';
+  document.getElementById('cofre-nome').value = '';
+  document.getElementById('cofre-objetivo').value = '';
+  document.getElementById('cofre-form-title').textContent = 'Novo Cofre / Caixinha';
+  document.getElementById('cofre-submit-btn').innerHTML = '<i class="ti ti-plus"></i> Criar Cofre';
+  document.getElementById('cofre-cancelar-btn').style.display = 'none';
+}
+function removerCofre(id) {
+  const c = (STATE.cofres || []).find(x => x.id === id);
+  if (!c) return;
+  const msg = c.saldoAlocado > 0
+    ? `Remover o cofre "${c.nome}"? Os ${toBRL(c.saldoAlocado)} guardados nele voltarão automaticamente para o seu Saldo Disponível.`
+    : `Remover o cofre "${c.nome}"?`;
+  abrirConfirmacao(msg, async () => {
+    STATE.cofres = (STATE.cofres || []).filter(x => x.id !== id);
+    await salvarDados();
+    renderCofres();
+    renderDashboard();
+    toast('Cofre removido e saldo liberado.', 'ok');
+  }, 'Remover Cofre');
+}
+async function guardarNoCofre(id) {
+  const c = (STATE.cofres || []).find(x => x.id === id);
+  if (!c) return;
+  const { saldoDisponivel } = calcularSaldoDisponivelGeral();
+  const resp = await pedirValor(`Guardar no cofre "${c.nome}" (Disponível: ${toBRL(saldoDisponivel)})`);
+  if (resp === null) return;
+  const valor = moedaToNumber(resp);
+  if (!valor || valor <= 0) { toast('Informe um valor válido maior que zero.', 'err'); return; }
+  c.saldoAlocado = Math.round(((Number(c.saldoAlocado) || 0) + valor) * 100) / 100;
+  await salvarDados();
+  renderCofres();
+  renderDashboard();
+  toast(`${toBRL(valor)} guardado em "${c.nome}"!`, 'ok');
+}
+async function resgatarDoCofre(id) {
+  const c = (STATE.cofres || []).find(x => x.id === id);
+  if (!c) return;
+  const alocado = Number(c.saldoAlocado) || 0;
+  if (alocado <= 0) { toast('Este cofre não possui saldo para resgatar.', 'err'); return; }
+  const resp = await pedirValor(`Resgatar de "${c.nome}" para o Saldo Disponível (Máx: ${toBRL(alocado)})`, toBRL(alocado).replace('R$', 'R$ '));
+  if (resp === null) return;
+  const valor = moedaToNumber(resp);
+  if (!valor || valor <= 0) return;
+  if (valor > alocado + 0.009) { toast(`Valor superior ao saldo guardado no cofre (${toBRL(alocado)}).`, 'err'); return; }
+  c.saldoAlocado = Math.max(0, Math.round((alocado - valor) * 100) / 100);
+  await salvarDados();
+  renderCofres();
+  renderDashboard();
+  toast(`${toBRL(valor)} devolvido ao Saldo Disponível!`, 'ok');
+}
+
+/* ================= RASTREADOR DE GARANTIAS (WARRANTY TRACKER) ================= */
+function toggleCamposGarantiaModal() {
+  const chk = document.getElementById('lanc-garantia-chk');
+  const wrap = document.getElementById('lanc-garantia-wrap');
+  if (!chk || !wrap) return;
+  wrap.style.display = chk.checked ? 'block' : 'none';
+  if (chk.checked) {
+    const inpFim = document.getElementById('lanc-garantia-fim');
+    const inpMeses = document.getElementById('lanc-garantia-meses');
+    if (inpFim && !inpFim.value) {
+      if (inpMeses && !inpMeses.value) inpMeses.value = '12';
+      calcularDataGarantiaPorMeses();
+    }
+  }
+}
+function calcularDataGarantiaPorMeses() {
+  const inpMeses = document.getElementById('lanc-garantia-meses');
+  const inpFim = document.getElementById('lanc-garantia-fim');
+  const inpData = document.getElementById('lanc-data');
+  if (!inpMeses || !inpFim) return;
+  const meses = parseInt(inpMeses.value, 10);
+  if (!meses || meses <= 0) return;
+  const dataBase = (inpData && inpData.value) ? inpData.value : hojeLocalISO();
+  inpFim.value = somarMeses(dataBase, meses);
+}
+function abrirModalGarantias() {
+  renderGarantiasAtivas();
+  abrirModal('modal-garantias');
+}
+function renderGarantiasAtivas() {
+  const cont = document.getElementById('garantias-lista');
+  const kpis = document.getElementById('garantias-resumo-kpis');
+  if (!cont) return;
+  const hojeMs = new Date(hojeLocalISO() + 'T00:00:00').getTime();
+  const comGarantia = STATE.lancamentos
+    .filter(l => !!l.garantiaFim)
+    .map(l => {
+      const fimMs = new Date(l.garantiaFim + 'T00:00:00').getTime();
+      const diasRestantes = Math.round((fimMs - hojeMs) / 86400000);
+      return { ...l, diasRestantes };
+    })
+    .sort((a, b) => a.diasRestantes - b.diasRestantes);
+
+  const ativas = comGarantia.filter(g => g.diasRestantes >= 0);
+  const expirando30 = ativas.filter(g => g.diasRestantes <= 30);
+  const expiradas = comGarantia.filter(g => g.diasRestantes < 0);
+  const valorProtegido = ativas.reduce((s, g) => s + (Number(g.valor) || 0), 0);
+
+  if (kpis) {
+    kpis.innerHTML = `
+      <div class="metric m-ok"><div class="metric-label">Garantias Ativas</div><div class="metric-value mv-ok">${ativas.length}</div><div class="metric-sub">em vigor hoje</div></div>
+      <div class="metric ${expirando30.length ? 'm-warn' : 'm-info'}"><div class="metric-label">Expiram em ≤ 30 dias</div><div class="metric-value" style="color:${expirando30.length ? 'var(--amber)' : 'var(--accent)'}">${expirando30.length}</div><div class="metric-sub">atenção prioritária</div></div>
+      <div class="metric m-info"><div class="metric-label">Valor Protegido</div><div class="metric-value mv-info">${toBRL(valorProtegido)}</div><div class="metric-sub">em compras vigentes</div></div>
+      <div class="metric"><div class="metric-label">Vencidas</div><div class="metric-value" style="color:var(--text3)">${expiradas.length}</div><div class="metric-sub">histórico total</div></div>`;
+  }
+
+  if (!comGarantia.length) {
+    cont.innerHTML = `<div class="empty" style="padding:2rem 1rem">
+      <i class="ti ti-shield-off"></i>
+      <p>Nenhum lançamento com garantia cadastrada ainda.</p>
+      <div class="help-text">Ao criar ou editar um lançamento, marque a opção <strong>"Possui Garantia?"</strong>.</div>
+    </div>`;
+    return;
+  }
+
+  cont.innerHTML = comGarantia.map(item => {
+    const [ca, cm, cd] = (item.data || '').split('-');
+    const dataCompraFmt = ca ? `${cd}/${cm}/${ca}` : '-';
+    const [fa, fm, fd] = (item.garantiaFim || '').split('-');
+    const dataFimFmt = fa ? `${fd}/${fm}/${fa}` : item.garantiaFim;
+
+    let classeRow = 'w-ok';
+    let badgeTempo = '';
+    let iconeAlerta = '';
+
+    if (item.diasRestantes < 0) {
+      classeRow = 'w-expired';
+      const diasPassados = Math.abs(item.diasRestantes);
+      iconeAlerta = `<i class="ti ti-alert-octagon" style="color:var(--bad);font-size:18px" title="Garantia expirada"></i>`;
+      badgeTempo = `<span class="badge badge-despesa">Expirada há ${diasPassados} dia(s)</span>`;
+    } else if (item.diasRestantes <= 30) {
+      classeRow = 'w-expiring';
+      const corIcone = item.diasRestantes <= 7 ? 'var(--bad)' : 'var(--amber)';
+      iconeAlerta = `<i class="ti ti-alert-triangle" style="color:${corIcone};font-size:19px" title="Expira nos próximos 30 dias!"></i>`;
+      badgeTempo = `<span class="badge ${item.diasRestantes <= 7 ? 'badge-despesa' : 'badge-pendente'}">${item.diasRestantes === 0 ? 'Expira hoje!' : `Faltam ${item.diasRestantes} dia(s)`}</span>`;
+    } else {
+      const mesesRest = Math.floor(item.diasRestantes / 30);
+      const diasRestMod = item.diasRestantes % 30;
+      const textoRest = mesesRest > 0
+        ? `${mesesRest} mês(es)${diasRestMod > 0 ? ` e ${diasRestMod}d` : ''} (${item.diasRestantes} dias)`
+        : `${item.diasRestantes} dias restantes`;
+      iconeAlerta = `<i class="ti ti-shield-check" style="color:var(--good);font-size:18px"></i>`;
+      badgeTempo = `<span class="badge badge-pago">${textoRest}</span>`;
+    }
+
+    return `<div class="warranty-row ${classeRow}">
+      <div style="display:flex;align-items:center;gap:10px;min-width:0">
+        ${iconeAlerta}
+        <div style="min-width:0">
+          <div style="font-size:13.5px;font-weight:700;color:var(--text)">${escHtml(item.descricao || '-')}</div>
+          <div class="help-text" style="margin:0">Compra: ${dataCompraFmt} · Término da garantia: <strong>${dataFimFmt}</strong> · ${toBRL(item.valor)}</div>
+        </div>
+      </div>
+      <div style="display:flex;align-items:center;gap:8px;flex-shrink:0">
+        ${badgeTempo}
+        <button class="icon-btn" onclick="fecharModal('modal-garantias'); abrirModalLancamento('${item.id}')" title="Editar lançamento"><i class="ti ti-pencil"></i></button>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+/* ================= MODO VIAGEM (TRAVEL MODE) ================= */
+function slugViagemHashtag(nome) {
+  const limpo = removerAcentos(String(nome || '').trim().toLowerCase())
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '');
+  return 'viagem_' + (limpo || 'ativa');
+}
+function atualizarUIModoViagem() {
+  const mv = (STATE.config && STATE.config.modoViagem) ? STATE.config.modoViagem : { ativo: false, nome: '', hashtag: '' };
+  const banner = document.getElementById('travel-banner');
+  const bannerTxt = document.getElementById('travel-banner-text');
+  const bannerTag = document.getElementById('travel-banner-hashtag');
+  if (banner) banner.classList.toggle('show', !!mv.ativo);
+  if (bannerTxt && mv.ativo) bannerTxt.textContent = `✈️ Modo Viagem Ativo: ${mv.nome}`;
+  if (bannerTag && mv.ativo) bannerTag.textContent = `#${mv.hashtag}`;
+
+  const btnTop = document.getElementById('btn-modo-viagem-top');
+  const lblTop = document.getElementById('label-modo-viagem-top');
+  if (btnTop) btnTop.classList.toggle('btn-primary', !!mv.ativo);
+  if (lblTop) lblTop.textContent = mv.ativo ? ` Viagem: ${mv.nome}` : ' Modo Viagem';
+
+  const chkCfg = document.getElementById('cfg-modo-viagem-toggle');
+  const lblCfg = document.getElementById('cfg-modo-viagem-label');
+  if (chkCfg) chkCfg.checked = !!mv.ativo;
+  if (lblCfg) lblCfg.textContent = mv.ativo ? `Ativo (${mv.nome} · #${mv.hashtag})` : 'Desativado';
+}
+async function alternarModoViagem() {
+  if (!STATE.config) STATE.config = {};
+  if (!STATE.config.modoViagem) STATE.config.modoViagem = { ativo: false, nome: '', hashtag: '' };
+  if (STATE.config.modoViagem.ativo) {
+    await encerrarModoViagem();
+    return;
+  }
+  const nome = await pedirValor('Qual o destino ou nome da viagem? (Ex: Paris)', '', true);
+  if (nome === null || !String(nome).trim()) {
+    atualizarUIModoViagem();
+    return;
+  }
+  const nomeLimpo = String(nome).trim();
+  const hashtag = slugViagemHashtag(nomeLimpo);
+  STATE.config.modoViagem = { ativo: true, nome: nomeLimpo, hashtag };
+  await salvarDados();
+  atualizarUIModoViagem();
+  renderPaginaAtiva();
+  toast(`✈️ Modo Viagem Ativo: ${nomeLimpo} (#${hashtag})`, 'ok');
+}
+async function encerrarModoViagem() {
+  if (!STATE.config) STATE.config = {};
+  const nomeAntigo = (STATE.config.modoViagem && STATE.config.modoViagem.nome) || '';
+  STATE.config.modoViagem = { ativo: false, nome: '', hashtag: '' };
+  await salvarDados();
+  atualizarUIModoViagem();
+  renderPaginaAtiva();
+  toast(nomeAntigo ? `Viagem "${nomeAntigo}" encerrada. Modo normal restaurado.` : 'Modo Viagem encerrado.', 'ok');
+}
+
+/* ================= METAS & COFRES (UNIFICADOS E GAMIFICADOS) ================= */
 function renderMetas() {
+  migrarCofresParaMetas();
   const lista = STATE.metas || [];
+  const { saldoTotal, totalAlocado, saldoDisponivel } = calcularSaldoDisponivelGeral();
+  const totalObjetivos = lista.reduce((s, m) => s + (Number(m.valorAlvo) || 0), 0);
+
+  const kpisEl = document.getElementById('metas-kpis');
+  if (kpisEl) {
+    kpisEl.innerHTML = `
+      <div class="metric m-info">
+        <div class="metric-top"><div class="metric-label">Saldo Disponível</div><div class="metric-icon mi-info"><i class="ti ti-wallet"></i></div></div>
+        <div class="metric-value ${saldoDisponivel>=0?'mv-ok':'mv-bad'}">${toBRL(saldoDisponivel)}</div>
+        <div class="metric-sub">livre para transferir</div>
+      </div>
+      <div class="metric m-ok">
+        <div class="metric-top"><div class="metric-label">Retido em Metas &amp; Cofres</div><div class="metric-icon mi-ok"><i class="ti ti-shield-lock"></i></div></div>
+        <div class="metric-value mv-ok">${toBRL(totalAlocado)}</div>
+        <div class="metric-sub">${lista.length} cofre(s) ativo(s)</div>
+      </div>
+      <div class="metric m-info">
+        <div class="metric-top"><div class="metric-label">Patrimônio Total</div><div class="metric-icon mi-info"><i class="ti ti-pig-money"></i></div></div>
+        <div class="metric-value ${saldoTotal>=0?'mv-info':'mv-bad'}">${toBRL(saldoTotal)}</div>
+        <div class="metric-sub">disponível + metas</div>
+      </div>
+      <div class="metric m-warn">
+        <div class="metric-top"><div class="metric-label">Soma das Metas</div><div class="metric-icon mi-warn"><i class="ti ti-target-arrow"></i></div></div>
+        <div class="metric-value mv-info">${toBRL(totalObjetivos)}</div>
+        <div class="metric-sub">${totalObjetivos > 0 ? Math.min(100, (totalAlocado / totalObjetivos) * 100).toFixed(0) + '% alcançado no geral' : 'sem meta global'}</div>
+      </div>`;
+  }
+
   document.getElementById('metas-empty').style.display = lista.length ? 'none' : 'block';
   const marcosRef = [
     { pct: 25, icone: 'ti-flag-3' },
@@ -4098,31 +4874,55 @@ function renderMetas() {
     { pct: 100, icone: 'ti-trophy' }
   ];
   document.getElementById('metas-lista').innerHTML = lista.map(m => {
-    const pct = m.valorAlvo ? Math.min(100, (m.valorAtual / m.valorAlvo) * 100) : 0;
+    const valorRetido = Number(m.valorAtual) || 0;
+    const valorAlvo = Number(m.valorAlvo) || 0;
+    const pct = valorAlvo > 0 ? Math.min(100, (valorRetido / valorAlvo) * 100) : 0;
+    const faltante = Math.max(0, valorAlvo - valorRetido);
     const prazoTxt = m.prazo ? (() => { const [a,mm,d] = m.prazo.split('-'); return `Prazo: ${d}/${mm}/${a}`; })() : '';
     const marcosHTML = marcosRef.map(mc => {
       const atingido = pct >= mc.pct;
       const posLeft = mc.pct === 100 ? 'calc(100% - 11px)' : `${mc.pct}%`;
       const iconeClasse = mc.pct === 50 ? 'ti-flame' : mc.icone;
-      return `<div class="meta-marco${atingido ? ' marco-atingido' : ''}" style="left:${posLeft}" title="Marco de ${mc.pct}% (${toBRL((m.valorAlvo || 0) * (mc.pct / 100))})">
+      return `<div class="meta-marco${atingido ? ' marco-atingido' : ''}" style="left:${posLeft}" title="Marco de ${mc.pct}% (${toBRL(valorAlvo * (mc.pct / 100))})">
         <div class="meta-marco-dot"><i class="ti ${iconeClasse}"></i></div>
         <div class="meta-marco-label">${mc.pct}%</div>
       </div>`;
     }).join('');
     return `
-    <div class="card">
-      <div class="card-header">
-        <div>
-          <div class="card-title" style="font-size:13.5px;color:var(--text);display:flex;align-items:center;gap:6px">
-            <span>${m.nome}</span>
-            <span class="badge ${pct >= 100 ? 'badge-pago' : 'badge-cat'}">${pct.toFixed(0)}% concluído</span>
+    <div class="card meta-vault-card">
+      <div class="meta-vault-header">
+        <div class="meta-vault-identity">
+          <div class="meta-vault-emblem${pct >= 100 ? ' concluida' : ''}" title="Cofre de Retenção Ativo">
+            <i class="ti ${pct >= 100 ? 'ti-trophy' : 'ti-shield-lock'}"></i>
           </div>
-          <div class="help-text">${toBRL(m.valorAtual)} de ${toBRL(m.valorAlvo)} ${prazoTxt ? '· ' + prazoTxt : ''}</div>
+          <div>
+            <div class="card-title" style="font-size:14px;color:var(--text);display:flex;align-items:center;gap:8px;text-transform:none;letter-spacing:-.01em">
+              <span>${escHtml(m.nome)}</span>
+              <span class="badge ${pct >= 100 ? 'badge-pago' : 'badge-cat'}">${pct.toFixed(0)}% concluído</span>
+            </div>
+            <div class="help-text" style="margin:2px 0 0">Objetivo: <strong>${toBRL(valorAlvo)}</strong> ${prazoTxt ? '· ' + prazoTxt : ''}</div>
+          </div>
         </div>
-        <div style="display:flex;gap:6px">
-          <button class="btn btn-sm" onclick="aportarMeta('${m.id}')"><i class="ti ti-plus"></i> Aportar</button>
+        <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
+          <button class="btn btn-primary btn-sm" onclick="adicionarFundoMeta('${m.id}')" title="Transferir do Saldo Disponível para este cofre"><i class="ti ti-arrow-up-circle"></i> Guardar</button>
+          <button class="btn btn-sm" onclick="resgatarFundoMeta('${m.id}')" title="Devolver ao Saldo Disponível" ${valorRetido <= 0 ? 'disabled' : ''}><i class="ti ti-arrow-down-circle"></i> Resgatar</button>
           <button class="icon-btn" onclick="editarMeta('${m.id}')" title="Editar"><i class="ti ti-pencil"></i></button>
           <button class="icon-btn danger" onclick="removerMeta('${m.id}')" title="Remover"><i class="ti ti-trash"></i></button>
+        </div>
+      </div>
+      <div class="meta-vault-valor-wrap">
+        <div class="meta-vault-valor-row">
+          <div class="meta-vault-valor-atual" title="Valor atual guardado neste cofre">
+            <i class="ti ti-lock"></i>
+            <span>${toBRL(valorRetido)}</span>
+            <span style="font-size:12px;font-weight:500;color:var(--text3)">de ${toBRL(valorAlvo)}</span>
+          </div>
+          ${faltante > 0
+            ? `<span class="help-text" style="margin:0">Faltam <strong>${toBRL(faltante)}</strong> para atingir a meta</span>`
+            : `<span class="badge badge-pago"><i class="ti ti-circle-check" style="margin-right:3px"></i> Meta concluída!</span>`}
+        </div>
+        <div>
+          <span class="badge-seguranca"><i class="ti ti-shield-check"></i> ${toBRL(valorRetido)} protegidos do saldo diário</span>
         </div>
       </div>
       <div class="meta-trilha-wrap">
@@ -4156,7 +4956,8 @@ async function salvarMeta() {
   cancelarEdicaoMeta();
   await salvarDados();
   renderMetas();
-  toast(id ? 'Meta atualizada.' : 'Meta criada.', 'ok');
+  atualizarSaldos();
+  toast(id ? 'Meta / Cofre atualizado.' : 'Meta / Cofre criado.', 'ok');
 }
 function editarMeta(id) {
   const m = STATE.metas.find(x => x.id === id);
@@ -4168,32 +4969,99 @@ function editarMeta(id) {
   document.getElementById('meta-form-title').textContent = 'Editando: ' + m.nome;
   document.getElementById('meta-submit-btn').innerHTML = '<i class="ti ti-device-floppy"></i> Salvar alterações';
   document.getElementById('meta-cancelar-btn').style.display = '';
+  focarCampoCriacao('meta-nome');
 }
 function cancelarEdicaoMeta() {
   document.getElementById('meta-id').value = '';
   document.getElementById('meta-nome').value = '';
   document.getElementById('meta-valor-alvo').value = '';
   document.getElementById('meta-prazo').value = '';
-  document.getElementById('meta-form-title').textContent = 'Nova meta';
-  document.getElementById('meta-submit-btn').innerHTML = '<i class="ti ti-plus"></i> Adicionar';
+  document.getElementById('meta-form-title').textContent = 'Nova Meta / Cofre';
+  document.getElementById('meta-submit-btn').innerHTML = '<i class="ti ti-plus"></i> Criar Meta / Cofre';
   document.getElementById('meta-cancelar-btn').style.display = 'none';
 }
 function removerMeta(id) {
-  abrirConfirmacao('Remover esta meta? O progresso guardado nela se perde.', async () => {
+  const m = STATE.metas.find(x => x.id === id);
+  const msg = m && (Number(m.valorAtual) || 0) > 0
+    ? `Remover o cofre "${m.nome}"? Os ${toBRL(m.valorAtual)} guardados nele voltarão automaticamente para o seu Saldo Disponível.`
+    : 'Remover esta meta/cofre?';
+  abrirConfirmacao(msg, async () => {
     STATE.metas = STATE.metas.filter(m => m.id !== id);
-    await salvarDados(); renderMetas();
-  }, 'Remover meta');
+    await salvarDados();
+    renderMetas();
+    atualizarSaldos();
+    toast('Meta / Cofre removido.', 'ok');
+  }, 'Remover Meta / Cofre');
 }
-async function aportarMeta(id) {
+function registrarLancamentoHistoricoCofre(meta, valor, direcao) {
+  const contaPadrao = (STATE.contas.find(c => c.tipo !== 'cartao') || STATE.contas[0] || { nome: 'Carteira' }).nome;
+  const grupoId = uid();
+  const ehGuardar = direcao === 'guardar';
+  STATE.lancamentos.push({
+    id: uid(),
+    tipo: ehGuardar ? 'despesa' : 'receita',
+    data: hojeLocalISO(),
+    descricao: ehGuardar ? `Saída para Cofre: ${meta.nome}` : `Resgate do Cofre: ${meta.nome}`,
+    categoria: 'Transferência',
+    conta: contaPadrao,
+    valor,
+    origem: 'cofre',
+    sincronizado: false,
+    pago: true,
+    ehTransferencia: true,
+    ehMovimentoCofre: true,
+    metaId: meta.id,
+    transferenciaGrupo: grupoId,
+    transferenciaContraparte: `Cofre: ${meta.nome}`
+  });
+}
+async function adicionarFundoMeta(id) {
   const m = STATE.metas.find(x => x.id === id);
   if (!m) return;
-  const resposta = await pedirValor(`Quanto você quer somar à meta "${m.nome}"?`);
+  const { saldoDisponivel } = calcularSaldoDisponivelGeral();
+  if (saldoDisponivel <= 0) {
+    toast(`Saldo Disponível insuficiente (${toBRL(saldoDisponivel)}) para guardar neste cofre.`, 'err');
+    return;
+  }
+  const resposta = await pedirValor(`Quanto deseja transferir do seu Saldo Disponível para este cofre? (Disponível: ${toBRL(saldoDisponivel)})`);
   if (resposta === null) return;
   const valor = moedaToNumber(resposta);
-  if (!valor) return;
-  m.valorAtual = Math.max(0, (m.valorAtual || 0) + valor);
-  await salvarDados(); renderMetas();
-  toast(`+${toBRL(valor)} aportado em "${m.nome}".`, 'ok');
+  if (!valor || valor <= 0) { toast('Informe um valor válido maior que zero.', 'err'); return; }
+  if (valor > saldoDisponivel + 0.009) {
+    toast(`Saldo Disponível insuficiente (${toBRL(saldoDisponivel)}) para transferir ${toBRL(valor)}.`, 'err');
+    return;
+  }
+  m.valorAtual = Math.max(0, Math.round(((Number(m.valorAtual) || 0) + valor) * 100) / 100);
+  registrarLancamentoHistoricoCofre(m, valor, 'guardar');
+  await salvarDados();
+  renderMetas();
+  atualizarSaldos();
+  sincronizarEmSegundoPlano();
+  toast(`${toBRL(valor)} guardado no cofre "${m.nome}"!`, 'ok');
+}
+async function resgatarFundoMeta(id) {
+  const m = STATE.metas.find(x => x.id === id);
+  if (!m) return;
+  const guardado = Number(m.valorAtual) || 0;
+  if (guardado <= 0) { toast('Este cofre não possui saldo guardado para resgatar.', 'err'); return; }
+  const resposta = await pedirValor(`Quanto deseja devolver ao seu Saldo Disponível? (Guardado: ${toBRL(guardado)})`, toBRL(guardado).replace('R$', 'R$ '));
+  if (resposta === null) return;
+  const valor = moedaToNumber(resposta);
+  if (!valor || valor <= 0) { toast('Informe um valor válido maior que zero.', 'err'); return; }
+  if (valor > guardado + 0.009) {
+    toast(`Saldo insuficiente no cofre (${toBRL(guardado)}) para resgatar ${toBRL(valor)}.`, 'err');
+    return;
+  }
+  m.valorAtual = Math.max(0, Math.round((guardado - valor) * 100) / 100);
+  registrarLancamentoHistoricoCofre(m, valor, 'resgatar');
+  await salvarDados();
+  renderMetas();
+  atualizarSaldos();
+  sincronizarEmSegundoPlano();
+  toast(`${toBRL(valor)} devolvido ao Saldo Disponível!`, 'ok');
+}
+async function aportarMeta(id) {
+  return adicionarFundoMeta(id);
 }
 
 /* ================= DÍVIDAS & TERCEIROS ================= */
@@ -4425,10 +5293,61 @@ function renderRelatorios() {
     : 'sem receitas no período';
 
   const mesAtual = hojeLocalISO().slice(0,7);
+  const [anoAtualNum, mesAtualNum] = mesAtual.split('-').map(Number);
+  const dtMesAnterior = new Date(anoAtualNum, mesAtualNum - 2, 1);
+  const mesAnteriorExato = dtMesAnterior.getFullYear() + '-' + String(dtMesAnterior.getMonth() + 1).padStart(2, '0');
+
   const gastosMesAtual = {};
-  STATE.lancamentos.filter(l => l.tipo==='despesa' && (l.data||'').slice(0,7)===mesAtual && (!hashtagFiltro || lancamentoTemHashtag(l, hashtagFiltro))).forEach(l => {
-    gastosMesAtual[l.categoria] = (gastosMesAtual[l.categoria]||0) + l.valor;
+  const gastosMesAnterior = {};
+  STATE.lancamentos.forEach(l => {
+    if (l.tipo !== 'despesa' || l.ehTransferencia) return;
+    if (hashtagFiltro && !lancamentoTemHashtag(l, hashtagFiltro)) return;
+    const m = (l.data || '').slice(0, 7);
+    const cat = l.categoria || 'Sem categoria';
+    if (m === mesAtual) gastosMesAtual[cat] = (gastosMesAtual[cat] || 0) + l.valor;
+    else if (m === mesAnteriorExato) gastosMesAnterior[cat] = (gastosMesAnterior[cat] || 0) + l.valor;
   });
+
+  // Comparativo Inteligente (MoM - Month over Month) abaixo dos gastos por categoria
+  const momContainer = document.getElementById('rel-categorias-mom');
+  if (momContainer) {
+    const categoriasParaMoM = porCategoria.length
+      ? porCategoria
+      : Object.entries(gastosMesAtual).sort((a, b) => b[1] - a[1]);
+    if (categoriasParaMoM.length) {
+      momContainer.innerHTML = categoriasParaMoM.map(([catNome, totalPeriodo]) => {
+        const atualVal = gastosMesAtual[catNome] || 0;
+        const antVal = gastosMesAnterior[catNome] || 0;
+        let badgeMoM = '';
+        if (antVal > 0) {
+          const diffPct = Math.round(((atualVal - antVal) / antVal) * 100);
+          if (diffPct < 0) {
+            badgeMoM = `<span class="mom-badge mom-good">▼ ${Math.abs(diffPct)}% vs mês passado</span>`;
+          } else if (diffPct > 0) {
+            badgeMoM = `<span class="mom-badge mom-bad">▲ ${diffPct}% vs mês passado</span>`;
+          } else {
+            badgeMoM = `<span class="mom-badge mom-neutral">= 0% vs mês passado</span>`;
+          }
+        } else if (atualVal > 0 && antVal === 0) {
+          badgeMoM = `<span class="mom-badge mom-bad">▲ 100% vs mês passado</span>`;
+        } else {
+          badgeMoM = `<span class="mom-badge mom-neutral">— sem gastos no mês atual</span>`;
+        }
+        return `<div class="mom-item">
+          <div class="mom-item-top">
+            <span>${escHtml(catNome)}</span>
+            <span>${toBRL(atualVal)} <span style="font-size:10.5px;font-weight:400;color:var(--text3)">(mês atual)</span></span>
+          </div>
+          <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap">
+            ${badgeMoM}
+            <span style="font-size:11px;color:var(--text3)">Mês ant.: ${toBRL(antVal)} · Período: ${toBRL(totalPeriodo)}</span>
+          </div>
+        </div>`;
+      }).join('');
+    } else {
+      momContainer.innerHTML = `<div class="help-text">Nenhuma despesa por categoria registrada no período para comparação MoM.</div>`;
+    }
+  }
   const comOrcamento = STATE.categorias.filter(c => c.tipo==='despesa' && c.orcamento);
   document.getElementById('rel-orcamento').innerHTML = comOrcamento.length ? comOrcamento.map(c => {
     const gasto = gastosMesAtual[c.nome] || 0;
@@ -4471,36 +5390,6 @@ function exportarRelatorioPDF() {
   } else {
     executarImpressao();
   }
-}
-
-/* ================= NOTIFICAÇÕES DE VENCIMENTO ================= */
-async function verificarVencimentos() {
-  const hoje = hojeLocalISO();
-  const em3dias = hojeLocalISO(3);
-  const relevantes = STATE.lancamentos.filter(l => !estaPago(l) && l.data && l.data <= em3dias);
-  atualizarSino(relevantes.length);
-  if (!relevantes.length) return;
-  if (typeof Notification === 'undefined') return;
-  try {
-    let permissao = Notification.permission;
-    if (permissao === 'default') permissao = await Notification.requestPermission();
-    if (permissao !== 'granted') return;
-    const atrasados = relevantes.filter(l => l.data < hoje).length;
-    const corpo = atrasados
-      ? `${atrasados} lançamento(s) atrasado(s) e ${relevantes.length - atrasados} vencendo nos próximos 3 dias.`
-      : `${relevantes.length} lançamento(s) vencendo nos próximos 3 dias.`;
-    new Notification('COFIN — Contas a vencer', { body: corpo });
-  } catch (e) { console.error('Notificação não disponível:', e); }
-}
-function atualizarSino(qtd) {
-  if (qtd === undefined) {
-    const hoje = hojeLocalISO();
-    const em3dias = hojeLocalISO(3);
-    qtd = STATE.lancamentos.filter(l => !estaPago(l) && l.data && l.data <= em3dias).length;
-  }
-  const badge = document.getElementById('sino-badge');
-  if (qtd > 0) { badge.textContent = qtd > 99 ? '99+' : qtd; badge.style.display = ''; }
-  else { badge.style.display = 'none'; }
 }
 
 /* ================= PRIVACIDADE: OCULTAR VALORES ================= */
@@ -5405,7 +6294,7 @@ function itensBuscaFixos() {
     { tipo:'nav', pagina:'lancamentos', label:'Lançamentos', icone:'list-details' },
     { tipo:'nav', pagina:'cartoes', label:'Cartões & Faturas', icone:'credit-card' },
     { tipo:'nav', pagina:'recorrentes', label:'Assinaturas & Recorrentes', icone:'repeat' },
-    { tipo:'nav', pagina:'metas', label:'Metas', icone:'target-arrow' },
+    { tipo:'nav', pagina:'metas', label:'Metas & Cofres', icone:'pig-money' },
     { tipo:'nav', pagina:'dividas', label:'Dívidas & Terceiros', icone:'users' },
     { tipo:'nav', pagina:'relatorios', label:'Relatórios', icone:'chart-bar' },
     { tipo:'nav', pagina:'sync', label:'Sincronizar OneDrive', icone:'cloud-download' },
@@ -5414,6 +6303,8 @@ function itensBuscaFixos() {
   const acoes = [
     { tipo:'acao', label:'Lançamento rápido (texto livre)', icone:'bolt', executar: () => { nav('lancamentos'); setTimeout(() => document.getElementById('rapido-texto').focus(), 60); } },
     { tipo:'acao', label:'Novo lançamento', icone:'plus', executar: () => abrirModalLancamento() },
+    { tipo:'acao', label:'Cofre de Garantias Ativas', icone:'shield-check', executar: () => abrirModalGarantias() },
+    { tipo:'acao', label:'Alternar Modo Viagem', icone:'plane', executar: () => alternarModoViagem() },
     { tipo:'acao', label:'Nova transferência', icone:'transfer', executar: () => abrirModalTransferencia() },
     { tipo:'acao', label:'Abrir lixeira', icone:'trash', executar: () => { nav('lancamentos'); abrirLixeira(); } },
     { tipo:'acao', label:'Ocultar/mostrar valores (privacidade)', icone:'eye-off', executar: () => alternarPrivacidade() },
@@ -5434,6 +6325,9 @@ function abrirBusca() {
 function comandosSpotlight() {
   return [
     { tipo: 'comando', cmd: '>novo', label: 'Criar novo lançamento', icone: 'plus', executar: () => abrirModalLancamento() },
+    { tipo: 'comando', cmd: '>metas', label: 'Abrir Metas & Cofres (Vaults)', icone: 'pig-money', executar: () => nav('metas') },
+    { tipo: 'comando', cmd: '>garantias', label: 'Abrir Cofre de Garantias Ativas', icone: 'shield-check', executar: () => abrirModalGarantias() },
+    { tipo: 'comando', cmd: '>viagem', label: 'Ativar / Encerrar Modo Viagem', icone: 'plane', executar: () => alternarModoViagem() },
     { tipo: 'comando', cmd: '>tema escuro', label: 'Ativar tema escuro (Dark Mode)', icone: 'moon', executar: () => aplicarTema('dark') },
     { tipo: 'comando', cmd: '>tema claro', label: 'Ativar tema claro (Light Mode)', icone: 'sun', executar: () => aplicarTema('light') },
     { tipo: 'comando', cmd: '>relatorio', label: 'Abrir aba de Relatórios & Análises', icone: 'chart-bar', executar: () => nav('relatorios') },
@@ -5500,10 +6394,26 @@ function navegarBusca(event) {
   if (event.key === 'ArrowDown') { event.preventDefault(); buscaIndiceAtivo = Math.min(buscaResultadosAtuais.length-1, buscaIndiceAtivo+1); renderResultadosBusca(buscaResultadosAtuais); }
   else if (event.key === 'ArrowUp') { event.preventDefault(); buscaIndiceAtivo = Math.max(0, buscaIndiceAtivo-1); renderResultadosBusca(buscaResultadosAtuais); }
   else if (event.key === 'Enter') { event.preventDefault(); selecionarResultadoBusca(buscaIndiceAtivo); }
-  else if (event.key === 'Escape') { fecharModal('modal-busca'); }
 }
 document.addEventListener('keydown', (e) => {
   if (document.documentElement.classList.contains('bloqueado')) return; // bloqueado: nenhum atalho funciona
+  if (e.key === 'Escape') {
+    const modalConfirm = document.getElementById('modal-confirmacao');
+    if (modalConfirm && modalConfirm.classList.contains('show')) {
+      e.preventDefault();
+      e.stopPropagation();
+      fecharConfirmacao();
+      return;
+    }
+    const modaisVisiveis = Array.from(document.querySelectorAll('.modal-bg.show:not(#modal-confirmacao)'));
+    const modalAtivo = modaisVisiveis[modaisVisiveis.length - 1];
+    if (modalAtivo) {
+      e.preventDefault();
+      e.stopPropagation();
+      tentarFecharModalPorEsc(modalAtivo);
+    }
+    return;
+  }
   if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
     e.preventDefault();
     abrirBusca();
@@ -5554,7 +6464,7 @@ function apagarTudo() {
     STATE.config.lastSync = null;
     const entradaId = registrarExclusao(itens, `Todos os lançamentos (${total})`);
     await salvarDados();
-    renderDashboard(); renderLancamentos(); renderConfig(); atualizarContagemLixeira(); atualizarSino();
+    renderDashboard(); renderLancamentos(); renderConfig(); atualizarContagemLixeira();
     sincronizarEmSegundoPlano();
     toastDesfazer(`${total} lançamentos apagados.`, entradaId);
   }, 'Apagar todos os lançamentos');
@@ -5998,8 +6908,6 @@ document.querySelectorAll('.modal-bg').forEach(m => m.addEventListener('click', 
   await gerarLancamentosRecorrentes();
   renderDashboard();
   atualizarStatusSync();
-  atualizarSino();
-  verificarVencimentos();
   // Não usa "await" aqui de propósito: a tela já aparece com os dados locais na hora,
   // e a planilha é carregada por cima, em segundo plano, sem travar a abertura do app.
   // Site/celular com login vencido: tenta renovar sozinho (sem tela) antes de qualquer outra coisa.
