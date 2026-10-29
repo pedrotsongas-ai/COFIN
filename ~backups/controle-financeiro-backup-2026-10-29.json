@@ -1,0 +1,307 @@
+{
+  "lancamentos": [
+    {
+      "id": "id-1793150899942-wamk3j",
+      "tipo": "receita",
+      "data": "2026-09-27",
+      "descricao": "Espetáculo Amanda",
+      "categoria": "Inscrição Espetáculo",
+      "conta": "Santander",
+      "valor": 50,
+      "origem": "onedrive",
+      "sincronizado": true,
+      "pago": true
+    },
+    {
+      "id": "id-1793150943265-p6xlj6",
+      "tipo": "receita",
+      "data": "2026-10-27",
+      "descricao": "Inscrição Pedro",
+      "categoria": "Inscrição Espetáculo",
+      "conta": "Santander",
+      "valor": 50,
+      "origem": "onedrive",
+      "sincronizado": true,
+      "pago": true,
+      "tags": [
+        "Espetáculo"
+      ]
+    },
+    {
+      "id": "id-1793151492194-55xvt2",
+      "tipo": "receita",
+      "data": "2026-10-10",
+      "descricao": "Mensalidade Pedro",
+      "categoria": "Mensalidade",
+      "conta": "Santander",
+      "valor": 150,
+      "origem": "onedrive",
+      "sincronizado": true,
+      "pago": true
+    },
+    {
+      "id": "id-1793151507006-aynvax",
+      "tipo": "despesa",
+      "data": "2026-10-27",
+      "descricao": "Conta de Luz",
+      "categoria": "Conta de Luz",
+      "conta": "Santander",
+      "valor": 150,
+      "origem": "onedrive",
+      "sincronizado": true,
+      "pago": true
+    },
+    {
+      "id": "id-1793151622903-wdn1re",
+      "tipo": "receita",
+      "data": "2026-10-27",
+      "descricao": "Mensalidade",
+      "categoria": "Mensalidade",
+      "conta": "Nubank",
+      "valor": 50,
+      "origem": "onedrive",
+      "sincronizado": true,
+      "pago": true
+    },
+    {
+      "id": "id-1793151644269-j43c8m",
+      "tipo": "despesa",
+      "data": "2026-10-27",
+      "descricao": "Conta",
+      "categoria": "Conta de Luz",
+      "conta": "Nubank",
+      "valor": 150,
+      "origem": "onedrive",
+      "sincronizado": true,
+      "pago": true
+    },
+    {
+      "id": "id-1793151765181-xiwbbx",
+      "tipo": "despesa",
+      "data": "2026-10-01",
+      "descricao": "Internet",
+      "categoria": "Conta de Luz",
+      "conta": "Santander",
+      "valor": 150,
+      "origem": "onedrive",
+      "sincronizado": true,
+      "pago": true,
+      "recorrenteId": "id-1793151741667-dd531y"
+    },
+    {
+      "id": "id-1793152008795-f5lmmh",
+      "tipo": "despesa",
+      "data": "2026-10-27",
+      "descricao": "dasd",
+      "categoria": "Conta de Luz",
+      "conta": "Santander",
+      "valor": 200,
+      "origem": "onedrive",
+      "sincronizado": true,
+      "pago": true
+    }
+  ],
+  "categorias": [
+    {
+      "nome": "Moradia",
+      "tipo": "despesa"
+    },
+    {
+      "nome": "Alimentação",
+      "tipo": "despesa"
+    },
+    {
+      "nome": "Transporte",
+      "tipo": "despesa"
+    },
+    {
+      "nome": "Saúde",
+      "tipo": "despesa"
+    },
+    {
+      "nome": "Educação",
+      "tipo": "despesa"
+    },
+    {
+      "nome": "Lazer",
+      "tipo": "despesa"
+    },
+    {
+      "nome": "Assinaturas",
+      "tipo": "despesa"
+    },
+    {
+      "nome": "Salário",
+      "tipo": "receita"
+    },
+    {
+      "nome": "Freelance",
+      "tipo": "receita"
+    },
+    {
+      "nome": "Investimentos",
+      "tipo": "receita"
+    },
+    {
+      "nome": "Outros",
+      "tipo": "receita"
+    },
+    {
+      "nome": "Pets",
+      "tipo": "despesa"
+    },
+    {
+      "nome": "Outros",
+      "tipo": "despesa"
+    }
+  ],
+  "contas": [
+    {
+      "nome": "Santander Débito - Pedro",
+      "tipo": "conta"
+    },
+    {
+      "nome": "Santander Débito - Amanda",
+      "tipo": "conta"
+    },
+    {
+      "nome": "Nubank Crédito",
+      "tipo": "cartao",
+      "diaFechamento": 10,
+      "diaVencimento": 17
+    },
+    {
+      "nome": "Caju",
+      "tipo": "conta"
+    },
+    {
+      "nome": "Nubank Débito - Pedro",
+      "tipo": "conta"
+    }
+  ],
+  "recorrentes": [
+    {
+      "id": "id-1791863839410-n8y9ga",
+      "nome": "Wellhub - Amanda",
+      "tipo": "despesa",
+      "categoria": "Saúde",
+      "conta": "Nubank Débito - Pedro",
+      "valor": 99.99,
+      "diaCobranca": 12,
+      "dataInicio": "2026-10-12",
+      "ativa": true
+    }
+  ],
+  "regras": [
+    {
+      "id": "id-1789672879251-fnez35",
+      "palavraChave": "Uber",
+      "categoria": "Transporte"
+    },
+    {
+      "id": "id-1789672883307-oc4q4j",
+      "palavraChave": "Jae",
+      "categoria": "Transporte"
+    },
+    {
+      "id": "id-1789672887634-noajwj",
+      "palavraChave": "Luz",
+      "categoria": "Moradia"
+    },
+    {
+      "id": "id-1789672896520-hyw7ha",
+      "palavraChave": "Tim",
+      "categoria": "Moradia"
+    },
+    {
+      "id": "id-1789672948069-fp42zi",
+      "palavraChave": "Aluguel",
+      "categoria": "Moradia"
+    },
+    {
+      "id": "id-1790905902626-npm87x",
+      "palavraChave": "Ração",
+      "categoria": "Pets"
+    },
+    {
+      "id": "id-1793244941727-y8at8q",
+      "palavraChave": "iFood",
+      "categoria": "Alimentação"
+    },
+    {
+      "id": "id-1793244955456-f2h0q5",
+      "palavraChave": "Claro",
+      "categoria": "Moradia"
+    },
+    {
+      "id": "id-1793244970924-b4ye98",
+      "palavraChave": "Areia",
+      "categoria": "Pets"
+    }
+  ],
+  "metas": [],
+  "cofres": [],
+  "dividas": [],
+  "lixeira": [
+    {
+      "id": "id-1793150382841-ggqmap",
+      "excluidoEm": "2026-10-28T01:19:42.841Z",
+      "rotulo": "dsadas",
+      "itens": [
+        {
+          "id": "id-1793150348293-kt6b9v",
+          "tipo": "despesa",
+          "data": "2026-10-27",
+          "descricao": "dsadas",
+          "categoria": "Alimentação",
+          "conta": "Santander Pedro",
+          "valor": 3231.23,
+          "origem": "onedrive",
+          "sincronizado": true,
+          "pago": true,
+          "tags": []
+        }
+      ]
+    }
+  ],
+  "excluidosPendentes": [],
+  "recorrentesIgnorados": [
+    "id-1789562816379-wemvsf|2026-09",
+    "id-1789562872155-j8icp1|2026-09",
+    "id-1789562816379-wemvsf|2026-10",
+    "id-1789562872155-j8icp1|2026-10",
+    "id-1791863839410-n8y9ga|2026-10"
+  ],
+  "config": {
+    "lastSync": "2026-10-29T03:34:38.816Z",
+    "oneDriveLink": "https://1drv.ms/x/c/7498c39ad1dc33e5/IQC3I38MGveeSoF2epJ5O8rqATZkOSJEGR3CJ_afZ3jqOU0?download=1",
+    "layoutDashboard": [
+      "dash-kpis",
+      "dash-insights",
+      "dash-pendentes-card",
+      "dash-saldo-contas-card",
+      "dash-chart-card",
+      "dash-ultimos-card"
+    ],
+    "modoViagem": {
+      "ativo": false,
+      "nome": "",
+      "hashtag": ""
+    },
+    "layoutDashboardKpis": [
+      "kpi-patrimonio-total",
+      "kpi-saldo-total",
+      "kpi-receitas-mes",
+      "kpi-despesas-mes",
+      "kpi-resultado-mes",
+      "kpi-taxa-poupanca"
+    ]
+  },
+  "assinaturas": [
+    {
+      "id": "id-1789505984277-0rk8bl",
+      "nome": "Tim UltraFibra",
+      "valor": 149.99
+    }
+  ]
+}
