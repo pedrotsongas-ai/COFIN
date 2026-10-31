@@ -1,0 +1,90 @@
+================================================================================
+                      COFIN — CONTROLE FINANCEIRO PESSOAL
+================================================================================
+
+Este documento traz o guia rápido de inicialização, compilação e integração.
+Para o manual completo e ilustrado em formato Markdown, consulte: README.md
+
+--------------------------------------------------------------------------------
+1. COMO INICIAR O APLICATIVO NO SEU COMPUTADOR
+--------------------------------------------------------------------------------
+- Opção 1 (Mais fácil):
+  Dê duplo clique no arquivo: "Iniciar COFIN.bat"
+
+- Opção 2 (Via Terminal / Prompt de Comando):
+  Abra a pasta do projeto no Prompt de Comando e digite:
+    npm start
+
+--------------------------------------------------------------------------------
+2. COMO GERAR O INSTALADOR EXECUTÁVEL (.EXE)
+--------------------------------------------------------------------------------
+Caso queira gerar o arquivo de instalação executável para Windows:
+1. Abra o Prompt de Comando ou PowerShell dentro desta pasta.
+2. Execute o comando:
+    npm run dist
+3. Aguarde o empacotamento finalizar.
+4. O instalador estará pronto na pasta "dist/" (ex: "COFIN Setup 1.0.0.exe").
+
+--------------------------------------------------------------------------------
+3. COMO CONECTAR NO MAKE.COM (SINCRONIZAÇÃO EM NUVEM)
+--------------------------------------------------------------------------------
+Para sincronizar seus lançamentos com a sua própria conta do OneDrive / Make:
+
+PASSO 1: IMPORTAR O CENÁRIO NO MAKE.COM
+1. Crie uma conta gratuita em: https://www.make.com
+2. No menu do Make, clique em "Scenarios" > "Create a new scenario".
+3. Na barra inferior, clique nos três pontinhos "..." e escolha "Import Blueprint".
+4. Selecione o arquivo do cenário ("Cenario_COFIN_Make.json").
+5. O cenário será montado automaticamente na sua tela!
+
+PASSO 2: CONECTAR SUA CONTA E GERAR O WEBHOOK
+1. Clique no módulo do OneDrive e conecte a sua conta Microsoft (botão "Add").
+2. Clique no módulo "Custom Webhook", clique em "Add" e copie a URL do Webhook 
+   gerada exclusivamente para você (ex: https://hook.us2.make.com/...).
+3. Ative a chave do cenário no canto inferior esquerdo para "ON" (Ativo).
+
+PASSO 3: COLAR A URL NO COFIN
+1. Abra o aplicativo COFIN e acesse o menu "Sincronizar OneDrive".
+2. No campo "URL do Webhook do Make.com", cole a URL gerada no Passo 2.
+3. No campo "Link de compartilhamento", cole o link público da sua planilha 
+   gerado no OneDrive (para poder carregar dados no app).
+4. Pronto! A partir de agora, qualquer alteração feita no aplicativo será 
+   enviada e salva automaticamente na sua própria nuvem.
+
+--------------------------------------------------------------------------------
+4. RECURSOS PRINCIPAIS DO PAINEL
+--------------------------------------------------------------------------------
+* Dashboard Fluido (Bento Grid):
+  - Arraste e solte (Drag & Drop) os cards para reorganizar a tela.
+  - A ordem personalizada fica salva no seu computador.
+  - Sem espaços pretos ou vazios laterais (layout 100% responsivo).
+
+* Lançamento Rápido Inteligente:
+  - Na tela de Lançamentos, digite em linguagem natural:
+    Ex: "Uber 25 ontem no Nubank" ou "Ifood 50 hoje Itaú"
+  - O sistema detecta data, valor, categoria e conta automaticamente.
+
+* Spotlight Semântico (Ctrl + K):
+  - Pressione Ctrl + K em qualquer tela para abrir a barra de busca global.
+  - Digite ">" para comandos rápidos ou busque termos como "mês passado", etc.
+
+* Leitura de Recibos com OCR Local (Dropzone):
+  - Arraste fotos de recibos, comprovantes ou faturas para dentro da janela.
+  - O motor OCR lê os dados localmente e pré-preenche o formulário.
+
+* Smart Rules (Regras Inteligentes):
+  - Em Configurações, cadastre palavras-chave (ex: "Netflix") para 
+    auto-categorizar despesas sem precisar selecionar manualmente.
+
+* Anti-Metas (Redução de Hábitos):
+  - Monitore tetos mensais com anel de progresso e ritmo diário seguro.
+
+* Shadow Vault (Auto-Backup Silencioso):
+  - Em Configurações > Segurança e Backups, escolha uma pasta segura 
+    (ex: Google Drive ou pasta de backup local). O COFIN salva cópias .json 
+    periodicamente sem interromper seu uso.
+
+* Modo Stealth (Alt + P):
+  - Oculte e borre valores da tela para usar o aplicativo em locais públicos.
+
+================================================================================

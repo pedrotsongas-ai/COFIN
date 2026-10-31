@@ -1,5 +1,6 @@
-const { app, BrowserWindow, ipcMain, nativeImage } = require('electron');
+const { app, BrowserWindow, ipcMain, nativeImage, dialog } = require('electron');
 const path = require('path');
+const fs = require('fs');
 
 function createWindow () {
   const win = new BrowserWindow({
@@ -13,8 +14,9 @@ function createWindow () {
     title: "COFIN",
     icon: path.join(__dirname, 'build', 'icon.ico'),
     webPreferences: {
+      preload: path.join(__dirname, 'preload.js'),
       nodeIntegration: true,
-      contextIsolation: false,
+      contextIsolation: true,
       webSecurity: false // <--- AQUI DESLIGAMOS O CORS
     }
   });
@@ -64,6 +66,71 @@ ipcMain.on('cofin:set-window-icon', (evento, dataUrl) => {
       if (!img.isEmpty()) win.setIcon(img);
     }
   } catch (e) {}
+});
+
+/* ================= SHADOW VAULT (AUTO-BACKUP SILENCIOSO) ================= */
+ipcMain.handle('escolher-pasta', async (evento) => {
+  try {
+    const win = BrowserWindow.fromWebContents(evento.sender);
+    const resultado = await dialog.showOpenDialog(win, {
+      title: 'Selecionar Pasta para Shadow Vault (Auto-Backup)',
+      properties: ['openDirectory', 'createDirectory']
+    });
+    if (!resultado.canceled && resultado.filePaths && resultado.filePaths.length > 0) {
+      return resultado.filePaths[0];
+    }
+    return null;
+  } catch (err) {
+    console.error('Erro ao escolher pasta de backup:', err);
+    return null;
+  }
+});
+
+ipcMain.handle('salvar-backup', async (_evento, params) => {
+  try {
+    const { dadosJson, caminhoDestino, nomeArquivo } = params || {};
+    if (!caminhoDestino) {
+      return { ok: false, erro: 'Caminho de pasta de destino não fornecido.' };
+    }
+    if (!fs.existsSync(caminhoDestino)) {
+      return { ok: false, erro: `A pasta selecionada não existe ou foi removida: ${caminhoDestino}` };
+    }
+
+    const agora = new Date();
+    const ano = agora.getFullYear();
+    const mes = String(agora.getMonth() + 1).padStart(2, '0');
+    const dia = String(agora.getDate()).padStart(2, '0');
+    const nomeFinal = nomeArquivo || `cofin_backup_${ano}${mes}${dia}.json`;
+    const caminhoCompleto = path.join(caminhoDestino, nomeFinal);
+
+    const conteudo = typeof dadosJson === 'string' ? dadosJson : JSON.stringify(dadosJson, null, 2);
+    await fs.promises.writeFile(caminhoCompleto, conteudo, 'utf8');
+
+    return { ok: true, caminho: caminhoCompleto, arquivo: nomeFinal };
+  } catch (err) {
+    console.error('Erro ao salvar backup no disco:', err);
+    return { ok: false, erro: err.message || 'Falha ao gravar arquivo de backup no disco.' };
+  }
+});
+
+ipcMain.handle('selecionar-arquivo-backup', async (evento) => {
+  try {
+    const win = BrowserWindow.fromWebContents(evento.sender);
+    const resultado = await dialog.showOpenDialog(win, {
+      title: 'Restaurar Backup do COFIN',
+      properties: ['openFile'],
+      filters: [{ name: 'Arquivos de Backup JSON (*.json)', extensions: ['json'] }]
+    });
+    if (!resultado.canceled && resultado.filePaths && resultado.filePaths.length > 0) {
+      const caminho = resultado.filePaths[0];
+      const conteudo = await fs.promises.readFile(caminho, 'utf8');
+      return { ok: true, caminho, conteudo };
+    }
+    return { ok: false, cancelado: true };
+  } catch (err) {
+    console.error('Erro ao ler arquivo de backup:', err);
+    return { ok: false, erro: err.message || 'Falha ao ler arquivo.' };
+  }
 });
 
 /* ================= LOGIN MICROSOFT (OAuth) =================

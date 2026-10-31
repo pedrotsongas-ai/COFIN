@@ -30,6 +30,7 @@
 <script>if (typeof module === 'object') {window.module = module; module = undefined;}</script>
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
 <script>if (window.module) module = window.module;</script>
 <link rel="stylesheet" href="style.css">
 </head>
@@ -135,6 +136,7 @@
 </div>
 
 <div class="main">
+  <div class="ambient-glow" id="ambient-glow" aria-hidden="true"></div>
   <div class="travel-banner" id="travel-banner">
     <div class="travel-banner-left">
       <span id="travel-banner-text">✈️ Modo Viagem Ativo: —</span>
@@ -149,15 +151,10 @@
     </div>
     <div class="topbar-actions">
       <button class="btn btn-sm" id="btn-busca" onclick="abrirBusca()" title="Buscar (Ctrl+K)"><i class="ti ti-search"></i></button>
-      <button class="btn btn-sm hide-mobile-label" id="btn-sim-parcelado" onclick="abrirModalSimuladorParcelado()" title="Simulador À Vista vs. Parcelado"><i class="ti ti-percentage"></i><span class="btn-label"> À Vista vs Parcelado</span></button>
-      <button class="btn btn-sm hide-mobile-label" id="btn-garantias-top" onclick="abrirModalGarantias()" title="Cofre de Garantias Ativas"><i class="ti ti-shield-check"></i><span class="btn-label"> Garantias</span></button>
-      <button class="btn btn-sm hide-mobile-label" id="btn-modo-viagem-top" onclick="alternarModoViagem()" title="Ativar/Desativar Modo Viagem"><i class="ti ti-plane" id="icone-modo-viagem-top"></i><span class="btn-label" id="label-modo-viagem-top"> Modo Viagem</span></button>
       <button class="btn btn-sm hide-mobile-label" id="btn-privacidade" onclick="alternarModoStealth()" title="Modo Stealth / Ocultar Valores (Alt+P)"><i class="ti ti-eye" id="icone-privacidade"></i><span class="btn-label" id="label-privacidade"> Stealth Mode</span></button>
       <button class="btn btn-sm" id="btn-bloquear" onclick="bloquearApp()" title="Bloquear agora" style="display:none"><i class="ti ti-lock"></i></button>
       <button class="btn btn-sm" id="btn-tema" onclick="alternarTema()" title="Alternar tema claro/escuro"><i class="ti ti-moon" id="icone-tema"></i></button>
       <button class="btn btn-sm hide-mobile-label" onclick="abrirModalTransferencia()" title="Nova transferência"><i class="ti ti-transfer"></i><span class="btn-label"> Transferir</span></button>
-      <button class="btn btn-primary hide-mobile-label" onclick="sincronizacaoInteligente()" title="Sincronizar Tudo"><i class="ti ti-refresh"></i><span class="btn-label"> Sincronizar Tudo</span></button>
-      <button class="btn btn-sm hide-mobile-label" onclick="exportarBackup()" title="Backup (.json)"><i class="ti ti-download"></i><span class="btn-label"> Backup (.json)</span></button>
       <button class="btn btn-primary btn-sm" onclick="abrirModalLancamento()"><i class="ti ti-plus"></i><span class="btn-label"> Novo lançamento</span></button>
       <div class="topbar-window-controls" id="window-controls">
         <button class="win-btn win-btn-minimize" onclick="windowControl('minimize')" title="Minimizar" aria-label="Minimizar">
@@ -183,33 +180,20 @@
         <div class="help-text" style="margin:0"><i class="ti ti-grip-vertical"></i> Arraste os blocos ou KPIs para personalizar a ordem do seu painel</div>
         <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
           <button class="btn btn-sm" onclick="abrirWizardFechamentoMensal(true)" title="Assistente de Fechamento Mensal Guiado"><i class="ti ti-calendar-check" style="color:var(--good)"></i> Fechamento do Mês</button>
-          <button class="btn btn-sm" onclick="abrirModalSimulador()"><i class="ti ti-calculator" style="color:var(--accent)"></i> Simulador de Compra</button>
+          <button class="btn btn-sm" onclick="abrirModalSimulador()" title="Simulador de Compra (Impacto no Orçamento)"><i class="ti ti-calculator" style="color:var(--accent)"></i> Simulador de Compra</button>
+          <button class="btn btn-sm" id="btn-sim-parcelado" onclick="abrirModalSimuladorParcelado()" title="Simulador: Comprar À Vista vs. Parcelado"><i class="ti ti-percentage" style="color:var(--good)"></i> À Vista vs Parcelado</button>
         </div>
       </div>
       <div id="dash-modular-container">
-        <div class="grid-kpis dash-draggable" id="dash-kpis" draggable="true"></div>
-        <div id="dash-insights" class="insights-grid dash-draggable" draggable="true" style="display:none"></div>
-        <div class="card dash-draggable" id="dash-chart-card" draggable="true">
+        <div class="grid-kpis dash-draggable bento-item" id="dash-kpis" draggable="true" data-widget-id="kpis-resumo"></div>
+        <div id="dash-insights" class="insights-grid dash-draggable bento-item" draggable="true" data-widget-id="smart-insights" style="display:none"></div>
+        <div class="card dash-draggable bento-item" id="dash-chart-card" draggable="true" data-widget-id="grafico-patrimonio">
           <div class="card-header"><div class="card-title"><i class="ti ti-grip-vertical dash-drag-handle"></i>Receitas x despesas — últimos 6 meses</div></div>
           <div style="position:relative; height:240px; width:100%">
             <canvas id="dash-chart"></canvas>
           </div>
         </div>
-        <div class="card dash-draggable" id="dash-pendentes-card" draggable="true" style="display:none">
-          <div class="card-header">
-            <div class="card-title"><i class="ti ti-grip-vertical dash-drag-handle"></i>Parcelas e lançamentos pendentes</div>
-            <div class="metric-sub" id="dash-pendentes-total"></div>
-          </div>
-          <div id="dash-pendentes-list"></div>
-        </div>
-        <div class="card dash-draggable" id="dash-reembolsos-card" draggable="true">
-          <div class="card-header">
-            <div class="card-title"><i class="ti ti-grip-vertical dash-drag-handle"></i><i class="ti ti-receipt-refund" style="color:#F59E0B;margin-right:6px"></i>A Recuperar (Dinheiro na Rua / Reembolsos)</div>
-            <div class="metric-sub" id="dash-reembolsos-total"></div>
-          </div>
-          <div id="dash-reembolsos-lista"></div>
-        </div>
-        <div class="card dash-draggable" id="dash-saldo-contas-card" draggable="true">
+        <div class="card dash-draggable bento-item" id="dash-saldo-contas-card" draggable="true" data-widget-id="cartoes-banco">
           <div class="card-header">
             <div class="card-title"><i class="ti ti-grip-vertical dash-drag-handle"></i>Saldo por conta &amp; Cartões</div>
             <div style="display:flex;gap:6px;align-items:center">
@@ -219,7 +203,35 @@
           </div>
           <div id="dash-saldo-contas"></div>
         </div>
-        <div class="card dash-draggable" id="dash-ultimos-card" draggable="true">
+        <div class="card dash-draggable bento-item" id="dash-reembolsos-card" draggable="true" data-widget-id="reembolsos-pendentes">
+          <div class="card-header">
+            <div class="card-title"><i class="ti ti-grip-vertical dash-drag-handle"></i><i class="ti ti-receipt-refund" style="color:#F59E0B;margin-right:6px"></i>A Recuperar (Dinheiro na Rua / Reembolsos)</div>
+            <div class="metric-sub" id="dash-reembolsos-total"></div>
+          </div>
+          <div id="dash-reembolsos-lista"></div>
+        </div>
+        <div class="card dash-draggable bento-item" id="dash-top3-categorias-card" draggable="true" data-widget-id="top-categorias">
+          <div class="card-header">
+            <div class="card-title"><i class="ti ti-grip-vertical dash-drag-handle"></i><i class="ti ti-flame" style="color:#EF4444;margin-right:6px"></i>Top 3 Gastos do Mês</div>
+            <div class="metric-sub" id="dash-top3-total"></div>
+          </div>
+          <div id="dash-top3-content"></div>
+        </div>
+        <div class="card dash-draggable bento-item animated-border" id="dash-antimetas-card" draggable="true" data-widget-id="anti-metas">
+          <div class="card-header">
+            <div class="card-title"><i class="ti ti-grip-vertical dash-drag-handle"></i><i class="ti ti-flame-off" style="color:#F97316;margin-right:6px"></i>Anti-Metas (Redução de Hábitos)</div>
+            <button class="btn btn-sm" onclick="abrirModalAntiMetas()" title="Configurar Anti-Meta"><i class="ti ti-settings"></i></button>
+          </div>
+          <div id="dash-antimetas-content"></div>
+        </div>
+        <div class="card dash-draggable bento-item" id="dash-pendentes-card" draggable="true" data-widget-id="lancamentos-pendentes" style="display:none">
+          <div class="card-header">
+            <div class="card-title"><i class="ti ti-grip-vertical dash-drag-handle"></i>Parcelas e lançamentos pendentes</div>
+            <div class="metric-sub" id="dash-pendentes-total"></div>
+          </div>
+          <div id="dash-pendentes-list"></div>
+        </div>
+        <div class="card dash-draggable bento-item" id="dash-ultimos-card" draggable="true" data-widget-id="ultimos-lancamentos">
           <div class="card-header">
             <div class="card-title"><i class="ti ti-grip-vertical dash-drag-handle"></i>Últimos lançamentos</div>
             <button class="btn btn-sm" onclick="nav('lancamentos')">Ver todos</button>
@@ -254,13 +266,14 @@
           <button type="button" class="chip-btn" data-chip-target="f-status" data-chip-val="pago" onclick="selecionarChipFiltro('f-status','pago',this,renderLancamentos)">Pagos</button>
           <button type="button" class="chip-btn" data-chip-target="f-status" data-chip-val="pendente" onclick="selecionarChipFiltro('f-status','pendente',this,renderLancamentos)">Pendentes</button>
         </div>
+        <select id="f-conta" onchange="renderLancamentos()"></select>
         <select id="f-categoria" onchange="renderLancamentos()"></select>
         <select id="f-tag" onchange="renderLancamentos()"></select>
         <input type="search" id="f-busca" placeholder="Buscar descrição..." oninput="renderLancamentos()">
         <button class="btn btn-sm" onclick="abrirLixeira()" title="Lançamentos excluídos (recuperáveis)"><i class="ti ti-trash"></i> Lixeira <span id="lixeira-contagem"></span></button>
         <button class="btn btn-sm" id="btn-toggle-view" onclick="alternarEstiloTabela()" title="Alternar visualização Lista/Cards"><i class="ti ti-layout-cards"></i> Estilo Cards</button>
         <button class="btn btn-sm" id="btn-toggle-calendario" onclick="alternarModoCalendario()" title="Alternar entre Lista/Cards e Calendário"><i class="ti ti-calendar-event"></i> Calendário</button>
-        <button class="btn btn-sm" id="btn-modo-conciliacao" onclick="alternarModoConciliacao()" title="Selecionar lançamentos pendentes em lote"><i class="ti ti-checks"></i> Modo Conciliação</button>
+        <button class="btn btn-sm" id="btn-modo-conciliacao" onclick="alternarModoConciliacao()" title="Selecionar vários lançamentos para apagar ou conciliar em lote"><i class="ti ti-checks"></i> Modo Seleção</button>
         <button class="btn btn-sm" onclick="document.getElementById('extrato-file-input').click()" title="Importar extrato bancário (.csv ou .ofx)"><i class="ti ti-file-import"></i> Importar Extrato</button>
         <input type="file" id="extrato-file-input" accept=".csv,.ofx" style="display:none" onchange="lerArquivoExtrato(this.files[0]); this.value='';">
       </div>
@@ -273,16 +286,23 @@
           </table>
         </div>
         <div id="lanc-empty" class="empty" style="display:none">
-          <i class="ti ti-receipt-off"></i>
-          <p>Nenhum lançamento encontrado.</p>
+          <div class="empty-illustration-wrap">
+            <div class="empty-glow-orb"></div>
+            <div class="empty-icon-badge">
+              <i class="ti ti-receipt-off"></i>
+            </div>
+          </div>
+          <p>Nenhum lançamento encontrado</p>
+          <span class="empty-subtext">Registre suas despesas e receitas para acompanhar seu fluxo financeiro.</span>
           <button class="btn btn-primary btn-sm empty-cta" onclick="abrirModalLancamento()"><i class="ti ti-plus"></i> Criar lançamento</button>
         </div>
       </div>
       <div class="card" id="view-calendario" style="display:none"></div>
       <div class="conciliacao-bar" id="conciliacao-bar">
-        <span id="conciliacao-contador" style="font-size:12.5px;font-weight:600">0 selecionados</span>
-        <button class="btn btn-primary btn-sm" onclick="marcarSelecionadosComoPagos()"><i class="ti ti-checks"></i> Marcar Selecionados como Pagos</button>
-        <button class="btn btn-sm" style="background:rgba(255,255,255,.12);color:#fff;border-color:rgba(255,255,255,.2)" onclick="alternarModoConciliacao()">Cancelar</button>
+        <span id="conciliacao-contador" style="font-size:12.5px;font-weight:700">0 selecionados</span>
+        <button class="btn btn-danger btn-sm" id="btn-concil-apagar" onclick="excluirSelecionadosEmLote()" title="Apagar todos os lançamentos selecionados"><i class="ti ti-trash"></i> Apagar Selecionados</button>
+        <button class="btn btn-primary btn-sm" id="btn-concil-pago" onclick="marcarSelecionadosComoPagos()" title="Marcar lançamentos selecionados como pagos"><i class="ti ti-checks"></i> Marcar como Pagos</button>
+        <button class="btn btn-sm" style="background:rgba(255,255,255,.12);color:var(--text);border-color:var(--border2)" onclick="alternarModoConciliacao()">Cancelar</button>
       </div>
     </div>
 
@@ -290,8 +310,14 @@
     <div id="page-cartoes" class="page">
       <div id="cartoes-content"></div>
       <div id="cartoes-empty" class="empty" style="display:none">
-        <i class="ti ti-credit-card-off"></i>
-        <p>Nenhuma conta marcada como cartão de crédito ainda.</p>
+        <div class="empty-illustration-wrap">
+          <div class="empty-glow-orb"></div>
+          <div class="empty-icon-badge">
+            <i class="ti ti-credit-card-off"></i>
+          </div>
+        </div>
+        <p>Nenhum cartão cadastrado</p>
+        <span class="empty-subtext">Acompanhe faturas, limites e datas de fechamento em um só lugar.</span>
         <button class="btn btn-primary btn-sm empty-cta" onclick="atalhoCriarCartao()"><i class="ti ti-plus"></i> Cadastrar cartão de crédito</button>
       </div>
     </div>
@@ -336,44 +362,16 @@
           </table>
         </div>
         <div id="rec-empty" class="empty" style="display:none">
-          <i class="ti ti-repeat-off"></i>
-          <p>Nenhuma assinatura ou recorrência cadastrada ainda.</p>
+          <div class="empty-illustration-wrap">
+            <div class="empty-glow-orb"></div>
+            <div class="empty-icon-badge">
+              <i class="ti ti-repeat-off"></i>
+            </div>
+          </div>
+          <p>Nenhuma assinatura cadastrada</p>
+          <span class="empty-subtext">Monitore serviços recorrentes como streamings, academias e contas fixas.</span>
           <button class="btn btn-primary btn-sm empty-cta" onclick="focarCampoCriacao('rec-nome')"><i class="ti ti-plus"></i> Criar primeira assinatura</button>
         </div>
-      </div>
-    </div>
-
-    <!-- COFRES / CAIXINHAS (VAULTS) -->
-    <div id="page-cofres" class="page">
-      <div class="help-text" style="margin-bottom:1rem">O dinheiro guardado nos Cofres sai do seu <strong>Saldo Disponível</strong> para gastos do dia a dia no Dashboard, mas continua somando normalmente no seu <strong>Patrimônio Total</strong>.</div>
-      <div class="grid4" id="cofres-kpis"></div>
-      <div class="card">
-        <div class="card-title" id="cofre-form-title" style="margin-bottom:.75rem">Novo Cofre / Caixinha</div>
-        <input type="hidden" id="cofre-id">
-        <div class="form-row tri">
-          <div class="fg"><label>Nome do Cofre</label><input type="text" id="cofre-nome" placeholder="Ex: Reserva de Emergência, Trocar Notebook..." onkeydown="seEnviar(event, salvarCofre)"></div>
-          <div class="fg"><label>Objetivo (R$)</label><input type="text" id="cofre-objetivo" placeholder="R$ 0,00" oninput="maskMoeda(this)" onkeydown="seEnviar(event, salvarCofre)"></div>
-          <div class="fg"><label>Ícone &amp; Cor</label>
-            <select id="cofre-estilo">
-              <option value="ti-pig-money|#1A6FE0">🐷 Cofrinho (Azul)</option>
-              <option value="ti-shield-lock|#10B981">🛡️ Reserva Segura (Verde)</option>
-              <option value="ti-plane-departure|#8B5CF6">✈️ Viagem dos Sonhos (Roxo)</option>
-              <option value="ti-device-laptop|#F97316">💻 Tecnologia / Equipamentos (Laranja)</option>
-              <option value="ti-home-heart|#F43F5E">🏠 Casa / Imóvel (Rosa)</option>
-              <option value="ti-car|#06B6D4">🚗 Veículo (Ciano)</option>
-            </select>
-          </div>
-        </div>
-        <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:.5rem">
-          <button class="btn" id="cofre-cancelar-btn" onclick="cancelarEdicaoCofre()" style="display:none">Cancelar edição</button>
-          <button class="btn btn-primary" id="cofre-submit-btn" onclick="salvarCofre()"><i class="ti ti-plus"></i> Criar Cofre</button>
-        </div>
-      </div>
-      <div class="vaults-grid" id="cofres-lista"></div>
-      <div id="cofres-empty" class="empty" style="display:none">
-        <i class="ti ti-pig-off"></i>
-        <p>Nenhum cofre ou caixinha criado ainda.</p>
-        <button class="btn btn-primary btn-sm empty-cta" onclick="focarCampoCriacao('cofre-nome')"><i class="ti ti-plus"></i> Criar primeiro cofre</button>
       </div>
     </div>
 
@@ -404,8 +402,14 @@
       </div>
       <div id="metas-lista"></div>
       <div id="metas-empty" class="empty" style="display:none">
-        <i class="ti ti-pig-off"></i>
-        <p>Nenhuma meta ou cofre cadastrado ainda.</p>
+        <div class="empty-illustration-wrap">
+          <div class="empty-glow-orb"></div>
+          <div class="empty-icon-badge">
+            <i class="ti ti-pig-off"></i>
+          </div>
+        </div>
+        <p>Nenhuma meta ou cofre ativo</p>
+        <span class="empty-subtext">Proteja seu patrimônio com reservas e metas com prazos definidos.</span>
         <button class="btn btn-primary btn-sm empty-cta" onclick="focarCampoCriacao('meta-nome')"><i class="ti ti-plus"></i> Criar primeiro cofre</button>
       </div>
     </div>
@@ -444,8 +448,14 @@
           </table>
         </div>
         <div id="divida-empty" class="empty" style="display:none">
-          <i class="ti ti-users"></i>
-          <p>Nenhuma dívida registrada ainda.</p>
+          <div class="empty-illustration-wrap">
+            <div class="empty-glow-orb"></div>
+            <div class="empty-icon-badge">
+              <i class="ti ti-users"></i>
+            </div>
+          </div>
+          <p>Nenhuma dívida registrada</p>
+          <span class="empty-subtext">Registre valores com terceiros para controle sem misturar com seu fluxo mensal.</span>
           <button class="btn btn-primary btn-sm empty-cta" onclick="focarCampoCriacao('divida-pessoa')"><i class="ti ti-plus"></i> Registrar primeira dívida</button>
         </div>
       </div>
@@ -463,13 +473,8 @@
         <select id="rel-hashtag" onchange="renderRelatorios()" title="Filtrar análises por #Hashtag">
           <option value="">Todas as #Hashtags</option>
         </select>
-        <button class="btn btn-sm" onclick="exportarRelatorioPDF()"><i class="ti ti-file-download"></i> Exportar PDF</button>
       </div>
       <div id="relatorio-imprimivel">
-        <div class="card" id="rel-print-header" style="display:none">
-          <div class="card-title" style="font-size:16px;color:var(--text)">COFIN — Relatório financeiro</div>
-          <div class="help-text" id="rel-print-periodo"></div>
-        </div>
         <div class="grid4" id="rel-kpis"></div>
         <div class="card">
           <div class="card-header">
@@ -594,10 +599,16 @@
         </details>
       </div>
       <div class="card">
-        <div class="card-title" style="margin-bottom:.75rem">Planilha do OneDrive — método antigo (link + Make.com)</div>
+        <div class="card-title" style="margin-bottom:.75rem">Sincronização com a Nuvem (OneDrive via Make.com)</div>
         <div class="fg" style="margin-bottom:.75rem">
-          <label>Link de compartilhamento</label>
-          <input type="url" id="sync-link" value="https://1drv.ms/x/c/7498c39ad1dc33e5/IQDcKrXvq7r4Toi4lsF9Eq0XAZRQCHLW9H19jcNpgLaxJys?download=1" onchange="salvarLinkOneDrive()">
+          <label>URL do Webhook do Make.com (para gravação automática)</label>
+          <input type="url" id="sync-webhook-make" placeholder="https://hook.us2.make.com/..." onchange="salvarWebhookMake()">
+          <div class="help-text">Cole aqui a URL do Webhook do seu cenário do Make.com para salvar e atualizar a planilha automaticamente.</div>
+        </div>
+        <div class="fg" style="margin-bottom:.75rem">
+          <label>Link de compartilhamento da planilha (para leitura no OneDrive)</label>
+          <input type="url" id="sync-link" placeholder="Cole o link de compartilhamento da planilha (1drv.ms/x/...)" onchange="salvarLinkOneDrive()">
+          <div class="help-text">Link de compartilhamento público gerado no seu OneDrive para baixar a planilha diretamente no app.</div>
         </div>
         <div style="display:flex;gap:8px;flex-wrap:wrap">
   	<button class="btn btn-primary" id="btn-sync" onclick="sincronizarOneDrive()"><i class="ti ti-refresh"></i> Buscar planilha agora</button>
@@ -702,9 +713,10 @@
       <div class="card">
         <div class="card-title" style="margin-bottom:.75rem">Regras de categorização automática</div>
         <div class="help-text" style="margin-bottom:.75rem">Quando a descrição de um lançamento novo contiver a palavra-chave, a categoria é sugerida sozinha.</div>
-        <div class="form-row" style="grid-template-columns:1fr 1fr auto;margin-bottom:.75rem">
+        <div class="form-row" style="grid-template-columns:1fr 1fr 1fr auto;gap:8px;margin-bottom:.75rem">
           <input type="text" id="regra-palavra" placeholder="Palavra-chave (ex: UBER)" onkeydown="seEnviar(event, adicionarRegra)">
           <select id="regra-categoria"></select>
+          <select id="regra-conta" title="Conta ou Cartão padrão (opcional)"><option value="">Qualquer Conta/Cartão</option></select>
           <button class="btn btn-primary" onclick="adicionarRegra()"><i class="ti ti-plus"></i> Adicionar</button>
         </div>
         <div class="tag-list" id="regra-list"></div>
@@ -738,13 +750,35 @@
         <div class="help-text" style="margin-top:.75rem">O Modo Stealth oculta temporariamente todos os saldos e valores sensíveis da tela, revelando-os suavemente ao passar o mouse. Você também pode ativá-lo a qualquer momento pelo botão na barra superior ou pelo atalho <kbd>Alt + P</kbd>.</div>
         <div class="help-text" style="margin-top:.4rem">O PIN protege contra quem usar este aparelho enquanto você estiver longe, mas <strong>não criptografa</strong> os dados guardados: quem tiver acesso aos arquivos do aparelho ainda consegue lê-los. O PIN é por aparelho — não vai pra planilha nem pro backup.</div>
       </div>
-      <div class="card">
-        <div class="card-title" style="margin-bottom:.75rem">Backup local</div>
-        <div style="display:flex;gap:8px;flex-wrap:wrap">
-          <button class="btn" onclick="exportarBackup()"><i class="ti ti-download"></i> Exportar backup (.json)</button>
-          <button class="btn" onclick="document.getElementById('backup-file-input').click()"><i class="ti ti-upload"></i> Importar backup</button>
+      <!-- SEGURANÇA E BACKUPS (SHADOW VAULT) -->
+      <div class="card" id="card-seguranca-backups">
+        <div class="card-header" style="margin-bottom:.5rem">
+          <div class="card-title" style="display:flex;align-items:center;gap:8px">
+            <i class="ti ti-shield-lock" style="color:var(--accent)"></i>
+            <span>Segurança e Backups (Shadow Vault)</span>
+          </div>
+          <span class="badge" id="backup-status-badge" style="background:var(--accent-bg);color:var(--accent-text);font-weight:600">Auto-Backup</span>
+        </div>
+        <div class="help-text" style="margin-bottom:.85rem">
+          O <strong>Shadow Vault</strong> salva automaticamente cópias silenciosas do seu estado financeiro em um diretório personalizado (como seu Google Drive, Dropbox ou pasta local). O auto-backup é realizado a cada 7 dias de forma transparente.
+        </div>
+
+        <div style="background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius);padding:10px 14px;margin-bottom:1rem;display:flex;flex-direction:column;gap:6px">
+          <div id="backup-pasta-atual" style="font-size:13px;color:var(--text)">
+            <strong>Pasta atual:</strong> <span class="help-text">Nenhuma pasta selecionada</span>
+          </div>
+          <div id="backup-ultimo-status" style="font-size:11.5px;color:var(--text3)">
+            Último auto-backup: Nenhum registro ainda
+          </div>
+        </div>
+
+        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+          <button class="btn btn-primary" onclick="selecionarPastaBackup()"><i class="ti ti-folder"></i> Selecionar Pasta de Backup</button>
+          <button class="btn" onclick="executarBackupSilencioso(true)"><i class="ti ti-device-floppy"></i> Forçar Backup Agora</button>
+          <button class="btn" onclick="restaurarBackup()"><i class="ti ti-restore"></i> Restaurar Backup</button>
+          <button class="btn btn-sm" onclick="exportarBackup()"><i class="ti ti-download"></i> Baixar cópia (.json)</button>
           <input type="file" id="backup-file-input" accept=".json" style="display:none" onchange="importarBackup(this.files[0])">
-          <button class="btn btn-danger" onclick="apagarTudo()"><i class="ti ti-trash"></i> Apagar todos os dados</button>
+          <button class="btn btn-sm btn-danger" onclick="apagarTudo()"><i class="ti ti-trash"></i> Apagar todos os dados</button>
         </div>
       </div>
     </div>
@@ -883,7 +917,7 @@
     </div>
     <div class="modal-actions">
       <button class="btn" onclick="fecharModal('modal-lancamento')">Cancelar</button>
-      <button class="btn btn-primary" onclick="salvarLancamento()"><i class="ti ti-device-floppy"></i> Salvar</button>
+      <button class="btn btn-primary" id="btn-salvar-lancamento" onclick="salvarLancamento()"><i class="ti ti-device-floppy"></i> Salvar</button>
     </div>
   </div>
 </div>
@@ -974,11 +1008,31 @@
 </div>
 
 <!-- MODAL BUSCA GLOBAL / SPOTLIGHT -->
-<div class="modal-bg" id="modal-busca">
-  <div class="modal" style="max-width:560px;padding:.75rem">
-    <input type="text" id="busca-input" placeholder="Buscar ou digite > para comandos (>novo, >tema escuro, >relatorio)..." oninput="filtrarBusca()" onkeydown="navegarBusca(event)"
-      style="border:none;font-size:15px;padding:.75rem;box-shadow:none">
-    <div id="busca-resultados" style="max-height:360px;overflow-y:auto;border-top:1px solid var(--border);margin-top:.5rem;padding-top:.5rem"></div>
+<div class="modal-bg spotlight-modal-bg" id="modal-busca">
+  <div class="modal spotlight-modal">
+    <div class="spotlight-header">
+      <i class="ti ti-search spotlight-search-icon"></i>
+      <input type="text" id="busca-input" class="spotlight-input" placeholder="Buscar lançamentos, valores ou digite > para comandos..." oninput="filtrarBusca()" onkeydown="navegarBusca(event)" autocomplete="off" spellcheck="false">
+      <div class="spotlight-kbd-hints">
+        <span class="spotlight-chip" onclick="definirTermoBusca('>')" title="Ver comandos">&gt; comandos</span>
+        <span class="spotlight-chip" onclick="definirTermoBusca('este mês')">este mês</span>
+        <span class="spotlight-chip" onclick="definirTermoBusca('mês passado')">mês passado</span>
+        <span class="spotlight-chip" onclick="definirTermoBusca('despesa')">despesas</span>
+        <span class="spotlight-chip" onclick="definirTermoBusca('receita')">receitas</span>
+      </div>
+      <button type="button" class="spotlight-close-btn" onclick="fecharModal('modal-busca')" title="Fechar (Esc)"><i class="ti ti-x"></i></button>
+    </div>
+    <div id="busca-resultados" class="spotlight-results"></div>
+    <div class="spotlight-footer">
+      <div class="spotlight-footer-hint">
+        <span><kbd>↑</kbd><kbd>↓</kbd> Navegar</span>
+        <span><kbd>↵</kbd> Executar / Editar</span>
+        <span><kbd>Esc</kbd> Fechar</span>
+      </div>
+      <div class="spotlight-footer-status" id="spotlight-footer-status">
+        <i class="ti ti-sparkles"></i> Spotlight Semântico
+      </div>
+    </div>
   </div>
 </div>
 
@@ -1089,6 +1143,7 @@
     <p id="confirm-mensagem"></p>
     <div class="confirm-actions">
       <button type="button" class="btn" id="btn-confirm-cancel">Cancelar</button>
+      <button type="button" class="btn" id="btn-confirm-single" style="display:none"></button>
       <button type="button" class="btn btn-danger" id="btn-confirm-ok"><i class="ti ti-check"></i> Confirmar</button>
     </div>
   </div>
@@ -1376,6 +1431,57 @@
     <div class="modal-actions" style="margin-top:1.25rem">
       <button class="btn btn-primary" onclick="registrarSnapshotAtual()"><i class="ti ti-camera"></i> Registrar Snapshot Agora</button>
       <button class="btn" onclick="fecharModal('modal-historico-snapshots')">Fechar</button>
+    </div>
+  </div>
+</div>
+
+<!-- OVERLAY UNIVERSAL DROPZONE (OCR) -->
+<div id="dropzone-overlay" class="dropzone-overlay" style="display:none">
+  <div class="dropzone-card">
+    <div class="dropzone-icon-ring">
+      <i class="ti ti-scan"></i>
+    </div>
+    <h2 class="dropzone-title">Solte o recibo ou fatura aqui</h2>
+    <p class="dropzone-desc">Leitura inteligente de valores, datas e comprovantes via OCR local (Tesseract.js)</p>
+    <div class="dropzone-formats">
+      <span><i class="ti ti-file-type-png"></i> PNG</span>
+      <span><i class="ti ti-file-type-jpg"></i> JPG / JPEG</span>
+      <span><i class="ti ti-file-invoice"></i> PDF / WEBP</span>
+    </div>
+  </div>
+</div>
+
+<!-- INDICADOR HUD DE PROCESSAMENTO OCR -->
+<div id="ocr-loading-hud" class="ocr-loading-hud" style="display:none">
+  <div class="ocr-spinner"></div>
+  <div class="ocr-loading-text">
+    <div style="font-weight:600">A ler fatura... (OCR)</div>
+    <div id="ocr-loading-progress" style="font-size:12px;color:var(--text3)">Processando imagem...</div>
+  </div>
+</div>
+
+<!-- MODAL CONFIGURAR ANTI-METAS -->
+<div class="modal-bg" id="modal-antimetas">
+  <div class="modal" style="max-width:440px">
+    <div class="modal-head">
+      <div class="modal-title"><i class="ti ti-flame-off" style="color:#F97316;margin-right:6px"></i> Configurar Anti-Meta</div>
+      <button class="modal-close" onclick="fecharModal('modal-antimetas')"><i class="ti ti-x"></i></button>
+    </div>
+    <div class="help-text" style="margin-bottom:1rem">
+      Anti-Metas definem um teto mensal estrito para categorias onde você deseja reduzir despesas por impulso ou conter hábitos.
+    </div>
+    <input type="hidden" id="antimeta-id">
+    <div class="fg" style="margin-bottom:1rem">
+      <label>Categoria a Controlar</label>
+      <select id="antimeta-categoria"></select>
+    </div>
+    <div class="fg" style="margin-bottom:1.25rem">
+      <label>Limite Mensal Máximo</label>
+      <input type="text" id="antimeta-limite" placeholder="R$ 0,00" oninput="maskMoeda(this)">
+    </div>
+    <div style="display:flex;gap:8px;justify-content:flex-end">
+      <button class="btn" type="button" onclick="fecharModal('modal-antimetas')">Cancelar</button>
+      <button class="btn btn-primary" type="button" onclick="salvarAntiMeta()"><i class="ti ti-check"></i> Salvar Anti-Meta</button>
     </div>
   </div>
 </div>
