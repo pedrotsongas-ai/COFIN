@@ -12,8 +12,9 @@ build/
 *.tmp
 *.log
 
-# Atalhos locais do Windows
+# Atalhos e links pessoais locais
 *.lnk
+LINK MAKE.txt
 
 # Arquivos do sistema operacional
 Thumbs.db

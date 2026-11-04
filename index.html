@@ -196,7 +196,8 @@
         <div class="card dash-draggable bento-item" id="dash-saldo-contas-card" draggable="true" data-widget-id="cartoes-banco">
           <div class="card-header">
             <div class="card-title"><i class="ti ti-grip-vertical dash-drag-handle"></i>Saldo por conta &amp; Cartões</div>
-            <div style="display:flex;gap:6px;align-items:center">
+            <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
+              <button class="btn btn-sm" onclick="abrirModalConciliacaoBancaria()" title="Conciliar saldo real do banco com os lançamentos do app"><i class="ti ti-scale"></i> Conciliar Saldo</button>
               <button class="btn btn-sm" onclick="abrirModalGerirCartoes()" title="Gerenciar limites e faturas dos cartões"><i class="ti ti-credit-card"></i> Cartões</button>
               <div class="metric-sub" id="dash-contas-resumo-topo"></div>
             </div>
@@ -687,7 +688,10 @@
         <div class="help-text" style="margin-top:.5rem">Clique no valor de orçamento de uma categoria de despesa pra editar ou remover, ou clique em <strong>"+ sub"</strong> para adicionar uma subcategoria rapidamente.</div>
       </div>
       <div class="card">
-        <div class="card-title" id="conta-form-title" style="margin-bottom:.75rem">Contas / Cartões</div>
+        <div class="card-header" style="margin-bottom:.75rem">
+          <div class="card-title" id="conta-form-title">Contas / Cartões</div>
+          <button class="btn btn-sm btn-primary" type="button" onclick="abrirModalConciliacaoBancaria()" title="Conciliar saldo real do banco com os lançamentos"><i class="ti ti-scale"></i> Conciliar Saldo</button>
+        </div>
         <input type="hidden" id="conta-id">
         <div class="form-row" style="margin-bottom:.75rem">
           <div class="fg"><label>Nome</label><input type="text" id="conta-nome" placeholder="Nome da conta ou cartão" onkeydown="seEnviar(event, salvarConta)"></div>
@@ -720,6 +724,65 @@
           <button class="btn btn-primary" onclick="adicionarRegra()"><i class="ti ti-plus"></i> Adicionar</button>
         </div>
         <div class="tag-list" id="regra-list"></div>
+      </div>
+      <!-- MOTOR DE RECEITAS INTELIGENTES (AUTO-PAYCHECK) -->
+      <div class="card" id="card-receitas-fixas">
+        <div class="card-header" style="margin-bottom:.5rem">
+          <div class="card-title" style="display:flex;align-items:center;gap:8px">
+            <i class="ti ti-cash-banknote" style="color:var(--good);font-size:18px"></i>
+            <span id="recfixa-card-title">Receitas Fixas Inteligentes (Auto-Paycheck)</span>
+          </div>
+          <div style="display:flex;gap:6px">
+            <button class="btn btn-sm" type="button" onclick="processarReceitasAutomatizadas(true)" title="Verificar créditos para hoje">
+              <i class="ti ti-refresh"></i> Verificar créditos hoje
+            </button>
+            <button class="btn btn-sm btn-primary" type="button" onclick="abrirModalRendas()" title="Cadastrar nova renda/salário">
+              <i class="ti ti-plus"></i> Nova Renda
+            </button>
+          </div>
+        </div>
+        <div class="help-text" style="margin-bottom:.75rem">
+          Configure seu salário, pró-labore ou renda fixa para cair automaticamente na conta no dia programado (por <strong>Dia Útil</strong> ou <strong>Dia Fixo</strong> do mês), sem necessidade de lançamento manual.
+        </div>
+        <input type="hidden" id="recfixa-id">
+        <div class="form-row" style="grid-template-columns:1.5fr 1fr 1fr;gap:10px;margin-bottom:.75rem">
+          <div class="fg">
+            <label>Descrição</label>
+            <input type="text" id="recfixa-desc" placeholder="Ex: Salário Nubank, Pró-Labore..." onkeydown="seEnviar(event, salvarReceitaFixa)">
+          </div>
+          <div class="fg">
+            <label>Valor (R$)</label>
+            <input type="text" id="recfixa-valor" placeholder="R$ 0,00" oninput="maskMoeda(this)" onkeydown="seEnviar(event, salvarReceitaFixa)">
+          </div>
+          <div class="fg">
+            <label>Conta de Destino</label>
+            <select id="recfixa-conta"></select>
+          </div>
+        </div>
+        <div class="form-row" style="grid-template-columns:1.2fr 1fr 1.2fr;gap:10px;margin-bottom:.75rem">
+          <div class="fg">
+            <label>Regra de Recebimento</label>
+            <select id="recfixa-tipo-regra" onchange="atualizarDicaRegraReceitaFixa()">
+              <option value="dia_util">Dia Útil do Mês (ex: 5º dia útil)</option>
+              <option value="dia_fixo">Dia Fixo do Mês (ex: todo dia 5)</option>
+            </select>
+          </div>
+          <div class="fg">
+            <label id="recfixa-lbl-dia">Número do Dia</label>
+            <input type="number" id="recfixa-dia" min="1" max="31" value="5" onchange="atualizarDicaRegraReceitaFixa()" oninput="atualizarDicaRegraReceitaFixa()" onkeydown="seEnviar(event, salvarReceitaFixa)">
+          </div>
+          <div class="fg">
+            <label>Categoria</label>
+            <select id="recfixa-cat"></select>
+          </div>
+        </div>
+        <div class="help-text" id="recfixa-dica-regra" style="margin-bottom:.75rem;color:var(--good-text);font-weight:500"></div>
+        <div style="display:flex;justify-content:flex-end;gap:8px;margin-bottom:1rem">
+          <button class="btn" type="button" id="recfixa-btn-cancelar" onclick="cancelarEdicaoReceitaFixa()" style="display:none">Cancelar edição</button>
+          <button class="btn btn-primary" type="button" id="recfixa-btn-salvar" onclick="salvarReceitaFixa()"><i class="ti ti-plus"></i> Salvar Receita Fixa</button>
+        </div>
+        <div class="section-title" style="margin-bottom:.5rem">Receitas Fixas Cadastradas</div>
+        <div id="recfixa-lista"></div>
       </div>
       <div class="card">
         <div class="card-title" style="margin-bottom:.75rem">Segurança e privacidade</div>
@@ -895,7 +958,7 @@
       <div class="form-row" style="margin-bottom:0">
         <div class="fg">
           <label>Prazo em meses</label>
-          <input type="number" id="lanc-garantia-meses" min="1" max="120" placeholder="Ex: 12" oninput="calcularDataGarantiaPorMeses()" style="font-family:var(--font);font-size:13px;padding:8px 10px;border:1px solid var(--border2);border-radius:var(--radius);background:var(--surface);color:var(--text);width:100%">
+          <input type="number" id="lanc-garantia-meses" min="1" max="120" placeholder="Ex: 12" oninput="calcularDataGarantiaPorMeses()">
         </div>
         <div class="fg">
           <label>Ou data de término</label>
@@ -1281,7 +1344,7 @@
       <div class="fg">
         <label>Desconto À Vista (%)</label>
         <div style="display:flex;align-items:center;gap:6px">
-          <input type="number" id="sim-parc-desconto" min="0" max="99" step="0.5" value="10" style="font-family:var(--font);font-size:13.5px;padding:8px 10px;border:1px solid var(--border2);border-radius:var(--radius);background:var(--surface);color:var(--text);width:100%" oninput="calcularSimuladorParcelado()">
+          <input type="number" id="sim-parc-desconto" min="0" max="99" step="0.5" value="10" oninput="calcularSimuladorParcelado()">
           <span style="font-weight:700;color:var(--text3)">%</span>
         </div>
       </div>
@@ -1295,7 +1358,7 @@
       <div class="fg">
         <label>Rendimento dos Cofres (% a.m.)</label>
         <div style="display:flex;align-items:center;gap:6px">
-          <input type="number" id="sim-parc-taxa" min="0.01" max="10" step="0.05" value="0.85" style="font-family:var(--font);font-size:13.5px;padding:8px 10px;border:1px solid var(--border2);border-radius:var(--radius);background:var(--surface);color:var(--text);width:100%" oninput="calcularSimuladorParcelado()">
+          <input type="number" id="sim-parc-taxa" min="0.01" max="10" step="0.05" value="0.85" oninput="calcularSimuladorParcelado()">
           <span style="font-weight:700;color:var(--text3)">% a.m.</span>
         </div>
         <span class="help-text" style="font-size:11px;margin-top:2px">Padrão 0.85% a.m. (~100% a 105% do CDI)</span>
@@ -1485,6 +1548,153 @@
     </div>
   </div>
 </div>
+
+<!-- MODAL DE RENDAS / RECEITAS FIXAS (AUTO-PAYCHECK) -->
+<div class="modal-bg" id="modal-rendas">
+  <div class="modal" style="max-width:540px">
+    <div class="modal-head">
+      <div class="modal-title" id="modal-rendas-title">
+        <i class="ti ti-cash-banknote" style="color:var(--good);margin-right:6px"></i>
+        <span>Receita Fixa / Salário (Auto-Paycheck)</span>
+      </div>
+      <button class="modal-close" onclick="fecharModal('modal-rendas')"><i class="ti ti-x"></i></button>
+    </div>
+    <div class="help-text" style="margin-bottom:1rem">
+      Configure o recebimento automático para crédito direto na sua conta no dia especificado (por <strong>Dia Útil</strong> ou <strong>Dia Fixo</strong> do mês).
+    </div>
+    <input type="hidden" id="modal-recfixa-id">
+    <div class="form-row" style="margin-bottom:.75rem">
+      <div class="fg">
+        <label>Descrição</label>
+        <input type="text" id="modal-recfixa-desc" placeholder="Ex: Salário Nubank" onkeydown="seEnviar(event, salvarReceitaFixaModal)">
+      </div>
+      <div class="fg">
+        <label>Valor (R$)</label>
+        <input type="text" id="modal-recfixa-valor" placeholder="R$ 0,00" oninput="maskMoeda(this)" onkeydown="seEnviar(event, salvarReceitaFixaModal)">
+      </div>
+    </div>
+    <div class="form-row" style="margin-bottom:.75rem">
+      <div class="fg">
+        <label>Conta de Destino</label>
+        <select id="modal-recfixa-conta"></select>
+      </div>
+      <div class="fg">
+        <label>Categoria</label>
+        <select id="modal-recfixa-cat"></select>
+      </div>
+    </div>
+    <div class="form-row" style="margin-bottom:.75rem">
+      <div class="fg">
+        <label>Regra de Recebimento</label>
+        <select id="modal-recfixa-tipo-regra" onchange="atualizarDicaRegraReceitaFixaModal()">
+          <option value="dia_util">Dia Útil do Mês (ex: 5º dia útil)</option>
+          <option value="dia_fixo">Dia Fixo do Mês (ex: todo dia 5)</option>
+        </select>
+      </div>
+      <div class="fg">
+        <label>Número do Dia</label>
+        <input type="number" id="modal-recfixa-dia" min="1" max="31" value="5" onchange="atualizarDicaRegraReceitaFixaModal()" oninput="atualizarDicaRegraReceitaFixaModal()" onkeydown="seEnviar(event, salvarReceitaFixaModal)">
+      </div>
+    </div>
+    <div class="help-text" id="modal-recfixa-dica-regra" style="margin-bottom:1rem;color:var(--good-text);font-weight:500"></div>
+    <div style="display:flex;gap:8px;justify-content:flex-end">
+      <button class="btn" type="button" onclick="fecharModal('modal-rendas')">Cancelar</button>
+      <button class="btn btn-primary" type="button" id="modal-recfixa-btn-salvar" onclick="salvarReceitaFixaModal()"><i class="ti ti-check"></i> Salvar Receita Fixa</button>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL DE CONCILIAÇÃO BANCÁRIA (BALANCE RECONCILER) -->
+<div class="modal-bg" id="modal-conciliacao-bancaria">
+  <div class="modal wide" style="max-width:640px">
+    <div class="modal-head">
+      <div class="modal-title" style="display:flex;align-items:center;gap:8px">
+        <i class="ti ti-scale" style="color:var(--accent);font-size:18px"></i>
+        <span>Modo de Conciliação Bancária</span>
+      </div>
+      <button class="modal-close" onclick="fecharModal('modal-conciliacao-bancaria')"><i class="ti ti-x"></i></button>
+    </div>
+    <div class="help-text" style="margin-bottom:.85rem">
+      Informe o saldo real exibido no seu banco e marque os lançamentos do mês que já compensaram no extrato para validar a exatidão da conta.
+    </div>
+
+    <div class="form-row" style="grid-template-columns:1.1fr 0.9fr 1.2fr;gap:10px;margin-bottom:.85rem">
+      <div class="fg">
+        <label>Conta Bancária</label>
+        <select id="concil-banco-conta" onchange="aoMudarFiltroConciliacaoBancaria()"></select>
+      </div>
+      <div class="fg">
+        <label>Mês de Referência</label>
+        <select id="concil-banco-mes" onchange="aoMudarFiltroConciliacaoBancaria()"></select>
+      </div>
+      <div class="fg">
+        <label>Saldo Real no Banco (R$)</label>
+        <input type="text" id="concil-saldo-real" placeholder="R$ 0,00" oninput="maskMoedaComSinal(this); atualizarCalculoConciliacaoBancaria();" onkeydown="seEnviar(event, finalizarConciliacaoBancaria)">
+      </div>
+    </div>
+
+    <div class="concil-kpis-grid">
+      <div class="concil-kpi-box">
+        <span class="concil-kpi-label">Saldo App (Base)</span>
+        <strong class="concil-kpi-val valor-sensivel" id="concil-kpi-base">R$ 0,00</strong>
+      </div>
+      <div class="concil-kpi-box">
+        <span class="concil-kpi-label">+ Selecionados</span>
+        <strong class="concil-kpi-val valor-sensivel" id="concil-kpi-selecionados">R$ 0,00</strong>
+      </div>
+      <div class="concil-kpi-box">
+        <span class="concil-kpi-label">= Saldo Esperado</span>
+        <strong class="concil-kpi-val valor-sensivel" id="concil-kpi-esperado">R$ 0,00</strong>
+      </div>
+      <div class="concil-kpi-box destaque" id="concil-kpi-dif-box">
+        <span class="concil-kpi-label">Diferença</span>
+        <strong class="concil-kpi-val valor-sensivel" id="concil-kpi-diferenca">R$ 0,00</strong>
+      </div>
+    </div>
+
+    <div id="concil-status-banner" class="concil-status-banner"></div>
+
+    <div class="concil-list-header">
+      <span class="section-title" style="margin:0" id="concil-lista-titulo">Lançamentos do mês não conciliados</span>
+      <div style="display:flex;gap:6px;align-items:center">
+        <button type="button" class="btn btn-sm" onclick="marcarTodosConciliacaoBancaria(true)"><i class="ti ti-checks"></i> Marcar todos</button>
+        <button type="button" class="btn btn-sm" onclick="marcarTodosConciliacaoBancaria(false)">Limpar</button>
+      </div>
+    </div>
+
+    <div class="concil-lista-wrap" id="concil-banco-lista"></div>
+
+    <div class="modal-actions">
+      <button type="button" class="btn" onclick="fecharModal('modal-conciliacao-bancaria')">Cancelar</button>
+      <button type="button" class="btn btn-primary" id="btn-finalizar-conciliacao" onclick="finalizarConciliacaoBancaria()"><i class="ti ti-circle-check"></i> Finalizar Conciliação</button>
+    </div>
+  </div>
+</div>
+
+<!-- MENU DE CONTEXTO NATIVO (RIGHT-CLICK LANÇAMENTOS) -->
+<div id="context-menu" class="context-menu" role="menu" aria-hidden="true">
+  <div class="context-menu-header" id="ctx-menu-titulo">Lançamento</div>
+  <button type="button" class="context-menu-item" id="ctx-btn-editar">
+    <i class="ti ti-pencil"></i>
+    <span>Editar</span>
+  </button>
+  <button type="button" class="context-menu-item" id="ctx-btn-duplicar">
+    <i class="ti ti-copy"></i>
+    <span>Duplicar Lançamento</span>
+  </button>
+  <button type="button" class="context-menu-item" id="ctx-btn-status">
+    <i class="ti ti-arrows-exchange"></i>
+    <span id="ctx-label-status">Alternar Estado (Pago/Pendente)</span>
+  </button>
+  <div class="context-menu-divider"></div>
+  <button type="button" class="context-menu-item danger" id="ctx-btn-apagar">
+    <i class="ti ti-trash"></i>
+    <span>Apagar</span>
+  </button>
+</div>
+
+<!-- CANVAS DE CELEBRAÇÕES / CONFETTIS (DOPAMINE MILESTONES) -->
+<canvas id="confetti-canvas" aria-hidden="true"></canvas>
 
 <div class="toast" id="toast"></div>
 

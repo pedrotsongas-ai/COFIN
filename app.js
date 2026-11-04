@@ -36,6 +36,7 @@ let STATE = {
   cartoes: [],              // Gestão Inteligente: { id, nome, limiteTotal, diaFechamento, diaVencimento, cor }
   historicoPatrimonio: [],  // Máquina do Tempo: { id, mesAno, saldoLivre, totalCofres, dividasCartao, patrimonioLiquido, dataRegistro }
   recorrentes: [],
+  receitasFixas: [],        // Motor de Receitas Inteligentes (Auto-Paycheck): { id, descricao, valor, conta, categoria, tipoRegra: 'dia_fixo'|'dia_util', diaRegra, ativo }
   regras: [],               // Smart Rules: { id, palavraChave, categoriaDesejada, subcategoria, contaId }
   antiMetas: [],            // Anti-Metas: { id, categoriaId, limiteMensal }
   metas: [],
@@ -903,7 +904,7 @@ function renderWidgetReembolsos() {
           <div class="reembolso-row" style="display:flex;align-items:center;justify-content:space-between;padding:8px 10px;background:var(--surface2);border:1px solid var(--border2);border-radius:var(--radius)">
             <div style="min-width:0;flex:1;margin-right:8px">
               <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
-                <span style="font-weight:700;font-size:12.5px;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escHtml(l.descricao)}</span>
+                <span style="font-weight:700;font-size:12.5px;color:var(--text);min-width:0;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;word-break:break-word;line-height:1.3">${escHtml(l.descricao)}</span>
                 <span class="reembolso-devedor-tag"><i class="ti ti-user"></i> ${escHtml(l.reembolsoDevedor || 'Terceiro')}</span>
               </div>
               <div style="font-size:11px;color:var(--text3);margin-top:2px">
@@ -1449,8 +1450,10 @@ async function carregarDados() {
     normalizarHierarquiaCategorias();
     if (!Array.isArray(STATE.cartoes)) STATE.cartoes = [];
     if (!Array.isArray(STATE.historicoPatrimonio)) STATE.historicoPatrimonio = [];
+    if (!Array.isArray(STATE.receitasFixas)) STATE.receitasFixas = [];
     sincronizarEstruturaCartoes();
     normalizarLancamentosCartaoExistentes();
+    normalizarConciliacaoLancamentos();
     if (!STATE.regras) STATE.regras = [];
     if (!Array.isArray(STATE.antiMetas)) STATE.antiMetas = [];
     if (STATE.regras.length === 0) {
@@ -1512,6 +1515,7 @@ async function salvarWebhookMake() {
 async function salvarDados() {
   if (window.__apagandoDados) return;
   try { 
+    normalizarConciliacaoLancamentos();
     // Guarda tudo silenciosamente no armazenamento interno do app
     localStorage.setItem(STORAGE_KEY, JSON.stringify(STATE)); 
   } catch (e) { 
@@ -2757,12 +2761,15 @@ function comprovanteIconHTML(l) {
     const corGar = diasRest < 0 ? 'var(--bad)' : (diasRest <= 30 ? 'var(--amber)' : 'var(--good)');
     html += ` <i class="ti ti-shield-check" style="cursor:pointer;color:${corGar}" onclick="event.stopPropagation(); abrirModalGarantias()" title="Garantia até ${dataGarFmt}"></i>`;
   }
+  if (l.conciliado === true) {
+    html += ` <i class="ti ti-circle-check concil-check-badge" title="Conciliado com o extrato bancário"></i>`;
+  }
   return html;
 }
 function linhaLancamento(l) {
   const [a,m,d] = (l.data||'').split('-');
   const dataFmt = a ? `${d}/${m}/${a}` : '-';
-  return `<tr>
+  return `<tr data-id="${l.id}" class="card-lancamento">
     <td>${dataFmt}</td>
     <td>${formatarDescricaoComHashtags(l.descricao)}${badgeParcelaHTML(l)}${badgesTagsHTML(l)}${comprovanteIconHTML(l)}</td>
     <td><span class="badge badge-cat">${escHtml(formatarCategoriaExibicao(l.categoria))}</span></td>
@@ -2963,6 +2970,7 @@ function renderLancamentos() {
       ? `<input type="checkbox" class="concil-chk" value="${l.id}" ${selecionado ? 'checked' : ''} style="width:15px;height:15px;accent-color:var(--accent);margin-right:6px;pointer-events:none;vertical-align:-2px">`
       : '';
     const classesTr = [
+      'card-lancamento',
       modoConciliacaoAtivo ? 'concil-elegivel' : '',
       selecionado ? 'item-selecionado' : ''
     ].filter(Boolean).join(' ');
@@ -4792,6 +4800,7 @@ function renderConfig() {
     }
     const saldo = saldos[c.nome] || 0;
     return `<span class="tag">${c.nome} <span class="badge ${saldo>=0?'badge-pago':'badge-pendente'}" style="margin-left:4px">${toBRL(saldo)}</span>
+      <button onclick="abrirModalConciliacaoPorIndice(${i})" title="Conciliar saldo desta conta"><i class="ti ti-scale"></i></button>
       <button onclick="editarConta(${i})" title="Editar"><i class="ti ti-pencil"></i></button>
       <button onclick="removerConta(${i})" title="Remover"><i class="ti ti-x"></i></button></span>`;
   }).join('') || '<span class="help-text">Nenhuma conta.</span>';
@@ -4814,6 +4823,7 @@ function renderConfig() {
   atualizarSegurancaUI();
   atualizarUIModoViagem();
   atualizarUIBackup();
+  renderReceitasFixas();
 }
 async function adicionarCategoria() {
   normalizarHierarquiaCategorias();
@@ -5197,6 +5207,642 @@ function renderRecorrentes() {
       </td>
     </tr>`;
   }).join('');
+}
+
+/* ================= MOTOR DE RECEITAS INTELIGENTES (AUTO-PAYCHECK) ================= */
+
+/**
+ * Calcula a data do Domingo de Páscoa utilizando o algoritmo clássico de Computus (Meeus/Jones/Butcher).
+ * Válido para o calendário Gregoriano em Vanilla JS puro.
+ */
+function calcularPascoa(ano) {
+  const a = ano % 19;
+  const b = Math.floor(ano / 100);
+  const c = ano % 100;
+  const d = Math.floor(b / 4);
+  const e = b % 4;
+  const f = Math.floor((b + 8) / 25);
+  const g = Math.floor((b - f + 1) / 3);
+  const h = (19 * a + b - d - g + 15) % 30;
+  const i = Math.floor(c / 4);
+  const k = c % 4;
+  const l = (32 + 2 * e + 2 * i - h - k) % 7;
+  const m = Math.floor((a + 11 * h + 22 * l) / 451);
+  const mes = Math.floor((h + l - 7 * m + 114) / 31);
+  const dia = ((h + l - 7 * m + 114) % 31) + 1;
+  return new Date(ano, mes - 1, dia, 12, 0, 0);
+}
+
+/**
+ * Retorna todos os feriados nacionais brasileiros (fixos e móveis) no formato 'DD/MM' para o ano solicitado.
+ * Feriados Fixos: 01/01, 21/04, 01/05, 07/09, 12/10, 02/11, 15/11, 20/11 (Consciência Negra) e 25/12.
+ * Feriados Móveis: Carnaval (Páscoa - 47 dias), Sexta-feira Santa (Páscoa - 2 dias), Corpus Christi (Páscoa + 60 dias).
+ */
+function obterFeriadosAno(ano) {
+  const a = parseInt(ano, 10) || new Date().getFullYear();
+  const pascoa = calcularPascoa(a);
+  const carnaval = new Date(pascoa.getTime() - 47 * 24 * 60 * 60 * 1000);
+  const sextaSanta = new Date(pascoa.getTime() - 2 * 24 * 60 * 60 * 1000);
+  const corpusChristi = new Date(pascoa.getTime() + 60 * 24 * 60 * 60 * 1000);
+
+  const fmtDDMM = (d) => `${String(d.getDate()).padStart(2, '0')}/${String(d.getMonth() + 1).padStart(2, '0')}`;
+
+  const feriadosFixos = [
+    '01/01', // Confraternização Universal
+    '21/04', // Tiradentes
+    '01/05', // Dia do Trabalho
+    '07/09', // Independência do Brasil
+    '12/10', // Nossa Senhora Aparecida
+    '02/11', // Finados
+    '15/11', // Proclamação da República
+    '20/11', // Consciência Negra (Lei 14.759/2023)
+    '25/12'  // Natal
+  ];
+
+  const feriadosMoveis = [
+    fmtDDMM(carnaval),
+    fmtDDMM(sextaSanta),
+    fmtDDMM(corpusChristi)
+  ];
+
+  return [...new Set([...feriadosFixos, ...feriadosMoveis])];
+}
+
+/**
+ * Calcula a data exata do N-ésimo dia útil de um determinado mês e ano no Brasil.
+ * Inicia no dia 1 do mês/ano fornecido e itera dia a dia.
+ * Ignora sábados (6), domingos (0) e feriados nacionais fixos/móveis (obterFeriadosAno).
+ * Se o N solicitado ultrapassar os dias úteis do mês, avança ordenadamente pelos meses seguintes.
+ * Retorna data no formato ISO YYYY-MM-DD.
+ */
+function calcularDiaUtil(mes, ano, nDiaUtil) {
+  if (typeof mes === 'string' && mes.includes('-')) {
+    const partes = mes.split('-').map(Number);
+    ano = partes[0];
+    mes = partes[1];
+  }
+  let m = parseInt(mes, 10);
+  let a = parseInt(ano, 10);
+  let n = parseInt(nDiaUtil, 10);
+  if (isNaN(n) || n < 1) n = 1;
+
+  // Proteção se parâmetros forem passados invertidos (ano, mes)
+  if (m > 100 && a <= 12) {
+    const temp = m;
+    m = a;
+    a = temp;
+  }
+  if (!a || isNaN(a)) a = new Date().getFullYear();
+  if (!m || isNaN(m)) m = new Date().getMonth() + 1;
+
+  let curAno = a;
+  let curMes = (m >= 1 && m <= 12) ? m : 1;
+  let curMesIndex = curMes - 1;
+  let diasUteisContados = 0;
+  let diaEscolhido = 1;
+  let feriadosSet = new Set(obterFeriadosAno(curAno));
+
+  while (diasUteisContados < n) {
+    const diasNoMes = new Date(curAno, curMesIndex + 1, 0).getDate();
+    let encontrouNoMes = false;
+
+    for (let d = 1; d <= diasNoMes; d++) {
+      const dataObj = new Date(curAno, curMesIndex, d, 12, 0, 0);
+      const diaSemana = dataObj.getDay(); // 0 = Domingo, 6 = Sábado
+      const diaMesFmt = `${String(d).padStart(2, '0')}/${String(curMes).padStart(2, '0')}`;
+      const ehFimDeSemana = (diaSemana === 0 || diaSemana === 6);
+      const ehFeriado = feriadosSet.has(diaMesFmt);
+
+      if (!ehFimDeSemana && !ehFeriado) {
+        diasUteisContados++;
+        if (diasUteisContados === n) {
+          diaEscolhido = d;
+          encontrouNoMes = true;
+          break;
+        }
+        diaEscolhido = d;
+      }
+    }
+
+    if (encontrouNoMes || diasUteisContados >= n) {
+      break;
+    }
+
+    // Avança para o mês seguinte se nDiaUtil for maior que os dias úteis deste mês
+    curMesIndex++;
+    if (curMesIndex > 11) {
+      curMesIndex = 0;
+      curAno++;
+      feriadosSet = new Set(obterFeriadosAno(curAno));
+    }
+    curMes = curMesIndex + 1;
+  }
+
+  const yyyy = String(curAno);
+  const mm = String(curMes).padStart(2, '0');
+  const dd = String(diaEscolhido).padStart(2, '0');
+  return `${yyyy}-${mm}-${dd}`;
+}
+
+/**
+ * Calcula a data prevista para crédito da receita fixa no mês e ano informados.
+ */
+function calcularDataReceitaFixa(r, ano, mes) {
+  const a = parseInt(ano, 10) || new Date().getFullYear();
+  const m = parseInt(mes, 10) || (new Date().getMonth() + 1);
+  if (r.tipoRegra === 'dia_util') {
+    return calcularDiaUtil(m, a, r.diaRegra || 5);
+  } else {
+    const diaValido = diaValidoNoMes(a, m, parseInt(r.diaRegra, 10) || 1);
+    return `${a}-${String(m).padStart(2, '0')}-${String(diaValido).padStart(2, '0')}`;
+  }
+}
+
+/**
+ * Motor de injeção automática silenciosa (Auto-Paycheck).
+ * Processa todas as receitas fixas ativas do mês atual.
+ * Se a data atual for maior ou igual à data de pagamento calculada e ainda
+ * não houver lançamento com essa descrição naquele mês/ano, gera o crédito automaticamente.
+ */
+async function processarReceitasAutomatizadas(manual) {
+  if (!Array.isArray(STATE.receitasFixas) || STATE.receitasFixas.length === 0) {
+    if (manual) toast('Nenhuma receita fixa cadastrada.', 'info');
+    return;
+  }
+
+  const hojeISO = hojeLocalISO();
+  const [anoAtual, mesAtual] = hojeISO.split('-').map(Number);
+  const mesAnoAtual = `${anoAtual}-${String(mesAtual).padStart(2, '0')}`;
+
+  let criados = 0;
+  const ativas = STATE.receitasFixas.filter(r => r.ativo !== false);
+
+  for (const r of ativas) {
+    const valorNum = Number(r.valor) || 0;
+    if (valorNum <= 0) continue;
+
+    const dataPagamentoISO = calcularDataReceitaFixa(r, anoAtual, mesAtual);
+
+    // Se a data atual for maior ou igual à data calculada
+    if (hojeISO >= dataPagamentoISO) {
+      const descLimpa = (r.descricao || '').trim().toLowerCase();
+
+      // Verifica se já existe lançamento automático correspondente neste mês/ano
+      const jaExiste = (STATE.lancamentos || []).some(l => {
+        if (l.tipo !== 'receita') return false;
+        const compMes = mesCompetenciaLancamento(l) || (l.data || '').slice(0, 7);
+        if (compMes !== mesAnoAtual) return false;
+        if (l.receitaFixaId && l.receitaFixaId === r.id) return true;
+        const descL = (l.descricao || '').trim().toLowerCase();
+        return descL === descLimpa;
+      });
+
+      if (!jaExiste) {
+        const contaDestino = r.conta || (STATE.contas && STATE.contas[0] ? STATE.contas[0].nome : 'Conta principal');
+        const novo = {
+          id: uid(),
+          tipo: 'receita',
+          data: dataPagamentoISO,
+          descricao: r.descricao || 'Salário',
+          categoria: r.categoria || 'Salário',
+          conta: contaDestino,
+          valor: valorNum,
+          pago: true, // Status: Efetivado
+          origem: 'auto_receita',
+          receitaFixaId: r.id,
+          sincronizado: false
+        };
+
+        STATE.lancamentos.push(novo);
+        criados++;
+
+        const nomeNotif = (r.descricao && r.descricao.trim()) ? r.descricao.trim() : 'Salário';
+        toast(`O seu ${nomeNotif} de ${toBRL(valorNum)} foi creditado automaticamente hoje.`, 'ok');
+      }
+    }
+  }
+
+  if (criados > 0) {
+    await salvarDados();
+    renderPaginaAtiva();
+    if (typeof sincronizarEmSegundoPlano === 'function') sincronizarEmSegundoPlano();
+  } else if (manual) {
+    toast('Nenhuma receita fixa pendente para creditar hoje.', 'info');
+  }
+}
+
+function atualizarDicaRegraReceitaFixa() {
+  const elTipo = document.getElementById('recfixa-tipo-regra');
+  const elDia = document.getElementById('recfixa-dia');
+  const elDica = document.getElementById('recfixa-dica-regra');
+  const elLbl = document.getElementById('recfixa-lbl-dia');
+  if (!elTipo || !elDia || !elDica) return;
+
+  const tipo = elTipo.value;
+  let dia = parseInt(elDia.value, 10);
+  if (isNaN(dia) || dia < 1) dia = 1;
+
+  if (tipo === 'dia_util') {
+    if (elLbl) elLbl.textContent = 'Xº Dia Útil (1 a 23)';
+    elDia.max = 23;
+    if (dia > 23) { dia = 23; elDia.value = '23'; }
+  } else {
+    if (elLbl) elLbl.textContent = 'Dia Fixo do Mês (1 a 31)';
+    elDia.max = 31;
+    if (dia > 31) { dia = 31; elDia.value = '31'; }
+  }
+
+  const hoje = new Date();
+  const mesAtual = hoje.getMonth() + 1;
+  const anoAtual = hoje.getFullYear();
+  const nomesMeses = ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez'];
+  const nomesSemana = ['Domingo', 'Segunda-feira', 'Terça-feira', 'Quarta-feira', 'Quinta-feira', 'Sexta-feira', 'Sábado'];
+
+  const dataPrevistaISO = (tipo === 'dia_util') ? calcularDiaUtil(mesAtual, anoAtual, dia) : `${anoAtual}-${String(mesAtual).padStart(2, '0')}-${String(diaValidoNoMes(anoAtual, mesAtual, dia)).padStart(2, '0')}`;
+  const [a, m, d] = dataPrevistaISO.split('-').map(Number);
+  const dataObj = new Date(a, m - 1, d, 12, 0, 0);
+  const diaSemanaNome = nomesSemana[dataObj.getDay()];
+
+  if (tipo === 'dia_util') {
+    elDica.innerHTML = `<i class="ti ti-calendar-event"></i> Previsão neste mês (${nomesMeses[mesAtual - 1]}/${anoAtual}): <strong>${String(d).padStart(2, '0')}/${String(m).padStart(2, '0')} (${diaSemanaNome})</strong> — ${dia}º dia útil (descontando fins de semana e feriados nacionais).`;
+  } else {
+    elDica.innerHTML = `<i class="ti ti-calendar-event"></i> Previsão neste mês (${nomesMeses[mesAtual - 1]}/${anoAtual}): <strong>${String(d).padStart(2, '0')}/${String(m).padStart(2, '0')} (${diaSemanaNome})</strong> — todo dia ${dia}.`;
+  }
+}
+
+function atualizarDicaRegraReceitaFixaModal() {
+  const elTipo = document.getElementById('modal-recfixa-tipo-regra');
+  const elDia = document.getElementById('modal-recfixa-dia');
+  const elDica = document.getElementById('modal-recfixa-dica-regra');
+  if (!elTipo || !elDia || !elDica) return;
+
+  const tipo = elTipo.value;
+  let dia = parseInt(elDia.value, 10);
+  if (isNaN(dia) || dia < 1) dia = 1;
+  if (tipo === 'dia_util' && dia > 23) { dia = 23; elDia.value = '23'; }
+  if (tipo === 'dia_fixo' && dia > 31) { dia = 31; elDia.value = '31'; }
+
+  const hoje = new Date();
+  const mesAtual = hoje.getMonth() + 1;
+  const anoAtual = hoje.getFullYear();
+  const nomesMeses = ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez'];
+  const nomesSemana = ['Domingo', 'Segunda-feira', 'Terça-feira', 'Quarta-feira', 'Quinta-feira', 'Sexta-feira', 'Sábado'];
+
+  const dataPrevistaISO = (tipo === 'dia_util') ? calcularDiaUtil(mesAtual, anoAtual, dia) : `${anoAtual}-${String(mesAtual).padStart(2, '0')}-${String(diaValidoNoMes(anoAtual, mesAtual, dia)).padStart(2, '0')}`;
+  const [a, m, d] = dataPrevistaISO.split('-').map(Number);
+  const dataObj = new Date(a, m - 1, d, 12, 0, 0);
+  const diaSemanaNome = nomesSemana[dataObj.getDay()];
+
+  if (tipo === 'dia_util') {
+    elDica.innerHTML = `<i class="ti ti-calendar-event"></i> Previsão (${nomesMeses[mesAtual - 1]}/${anoAtual}): <strong>${String(d).padStart(2, '0')}/${String(m).padStart(2, '0')} (${diaSemanaNome})</strong> — ${dia}º dia útil (descontando fins de semana e feriados nacionais).`;
+  } else {
+    elDica.innerHTML = `<i class="ti ti-calendar-event"></i> Previsão (${nomesMeses[mesAtual - 1]}/${anoAtual}): <strong>${String(d).padStart(2, '0')}/${String(m).padStart(2, '0')} (${diaSemanaNome})</strong> — todo dia ${dia}.`;
+  }
+}
+
+function popularSelectsReceitaFixa() {
+  const selConta = document.getElementById('recfixa-conta');
+  const selContaModal = document.getElementById('modal-recfixa-conta');
+  const selCat = document.getElementById('recfixa-cat');
+  const selCatModal = document.getElementById('modal-recfixa-cat');
+
+  const contasBancarias = (STATE.contas || []).filter(c => c.tipo !== 'cartao');
+  const listaContas = contasBancarias.length ? contasBancarias : (STATE.contas || []);
+  const optsContas = listaContas.map(c => `<option value="${escHtml(c.nome)}">${escHtml(c.nome)}</option>`).join('');
+
+  if (selConta && (!selConta.options.length || selConta.innerHTML.trim() === '')) {
+    selConta.innerHTML = optsContas;
+  }
+  if (selContaModal) selContaModal.innerHTML = optsContas;
+
+  const catsReceita = (STATE.categorias || []).filter(c => c.tipo === 'receita');
+  let optsCat = '';
+  catsReceita.forEach(c => {
+    optsCat += `<option value="${escHtml(c.nome)}">${escHtml(c.nome)}</option>`;
+    if (Array.isArray(c.subcategorias)) {
+      c.subcategorias.forEach(sub => {
+        optsCat += `<option value="${escHtml(c.nome + ' -> ' + sub)}">${escHtml(c.nome)} › ${escHtml(sub)}</option>`;
+      });
+    }
+  });
+  if (!optsCat) optsCat = '<option value="Salário">Salário</option>';
+
+  if (selCat && (!selCat.options.length || selCat.innerHTML.trim() === '')) {
+    selCat.innerHTML = optsCat;
+    if ([...selCat.options].some(o => o.value.toLowerCase().includes('salário'))) {
+      const optSal = [...selCat.options].find(o => o.value.toLowerCase().includes('salário'));
+      if (optSal) selCat.value = optSal.value;
+    }
+  }
+  if (selCatModal) {
+    selCatModal.innerHTML = optsCat;
+    if ([...selCatModal.options].some(o => o.value.toLowerCase().includes('salário'))) {
+      const optSal = [...selCatModal.options].find(o => o.value.toLowerCase().includes('salário'));
+      if (optSal) selCatModal.value = optSal.value;
+    }
+  }
+}
+
+function renderReceitasFixas() {
+  if (!Array.isArray(STATE.receitasFixas)) STATE.receitasFixas = [];
+  popularSelectsReceitaFixa();
+  atualizarDicaRegraReceitaFixa();
+
+  const cont = document.getElementById('recfixa-lista');
+  if (!cont) return;
+
+  if (STATE.receitasFixas.length === 0) {
+    cont.innerHTML = `
+      <div class="empty" style="padding:1.5rem 0">
+        <div class="empty-icon-badge"><i class="ti ti-cash-banknote"></i></div>
+        <div style="font-weight:600;font-size:13.5px;margin-top:8px">Nenhuma receita fixa cadastrada ainda</div>
+        <div class="help-text">Cadastre seu salário ou renda fixa acima para que ele caia na conta automaticamente todo mês.</div>
+      </div>`;
+    return;
+  }
+
+  const hojeISO = hojeLocalISO();
+  const [anoAtual, mesAtual] = hojeISO.split('-').map(Number);
+  const mesAnoAtual = `${anoAtual}-${String(mesAtual).padStart(2, '0')}`;
+
+  cont.innerHTML = STATE.receitasFixas.map(r => {
+    const dataPrevistaISO = calcularDataReceitaFixa(r, anoAtual, mesAtual);
+    const [a, m, d] = dataPrevistaISO.split('-');
+    const dataFmt = `${d}/${m}/${a}`;
+
+    const jaCreditado = (STATE.lancamentos || []).some(l => {
+      if (l.tipo !== 'receita') return false;
+      const compMes = mesCompetenciaLancamento(l) || (l.data || '').slice(0, 7);
+      if (compMes !== mesAnoAtual) return false;
+      if (l.receitaFixaId && l.receitaFixaId === r.id) return true;
+      return (l.descricao || '').trim().toLowerCase() === (r.descricao || '').trim().toLowerCase();
+    });
+
+    const regraTexto = (r.tipoRegra === 'dia_util') ? `${r.diaRegra}º Dia Útil` : `Dia Fixo: ${r.diaRegra}`;
+    const estaAtivo = r.ativo !== false;
+
+    let badgeStatus = '';
+    if (!estaAtivo) {
+      badgeStatus = `<span class="badge" style="background:var(--surface2);color:var(--text3)"><i class="ti ti-player-pause" style="margin-right:3px"></i>Pausada</span>`;
+    } else if (jaCreditado) {
+      badgeStatus = `<span class="badge badge-pago" title="Já creditado na conta neste mês"><i class="ti ti-check" style="margin-right:3px"></i>Creditado neste mês</span>`;
+    } else if (hojeISO < dataPrevistaISO) {
+      badgeStatus = `<span class="badge badge-pendente" title="Aguardando data prevista de crédito"><i class="ti ti-clock" style="margin-right:3px"></i>Previsto p/ ${d}/${m}</span>`;
+    } else {
+      badgeStatus = `<span class="badge badge-pago" title="Pronto para creditar hoje"><i class="ti ti-arrow-down-circle" style="margin-right:3px"></i>Pronto p/ hoje</span>`;
+    }
+
+    return `
+      <div class="recfixa-row ${estaAtivo ? '' : 'inativa'}">
+        <div class="recfixa-info">
+          <div class="recfixa-titulo">
+            <i class="ti ti-cash" style="color:var(--good);font-size:16px"></i>
+            <span>${escHtml(r.descricao || 'Salário')}</span>
+            <span class="badge badge-cat">${regraTexto}</span>
+            ${badgeStatus}
+          </div>
+          <div class="recfixa-meta">
+            <span><i class="ti ti-building-bank"></i> ${escHtml(r.conta || 'Conta')}</span>
+            <span>·</span>
+            <span><i class="ti ti-tag"></i> ${escHtml(formatarCategoriaExibicao(r.categoria || 'Salário'))}</span>
+            <span>·</span>
+            <span>Próximo crédito: <strong>${dataFmt}</strong></span>
+          </div>
+        </div>
+        <div style="display:flex;align-items:center;gap:12px">
+          <div class="recfixa-valor valor-sensivel">${toBRL(r.valor)}</div>
+          <div class="recfixa-acoes">
+            <button class="icon-btn" onclick="alternarAtivoReceitaFixa('${r.id}')" title="${estaAtivo ? 'Pausar crédito automático' : 'Ativar crédito automático'}">
+              <i class="ti ${estaAtivo ? 'ti-toggle-right' : 'ti-toggle-left'}" style="font-size:18px;color:${estaAtivo ? 'var(--good)' : 'var(--text3)'}"></i>
+            </button>
+            <button class="icon-btn" onclick="editarReceitaFixa('${r.id}')" title="Editar"><i class="ti ti-pencil"></i></button>
+            <button class="icon-btn danger" onclick="removerReceitaFixa('${r.id}')" title="Remover"><i class="ti ti-trash"></i></button>
+          </div>
+        </div>
+      </div>`;
+  }).join('');
+}
+
+function abrirModalRendas(id) {
+  popularSelectsReceitaFixa();
+  const elId = document.getElementById('modal-recfixa-id');
+  const elDesc = document.getElementById('modal-recfixa-desc');
+  const elValor = document.getElementById('modal-recfixa-valor');
+  const elConta = document.getElementById('modal-recfixa-conta');
+  const elCat = document.getElementById('modal-recfixa-cat');
+  const elTipo = document.getElementById('modal-recfixa-tipo-regra');
+  const elDia = document.getElementById('modal-recfixa-dia');
+  const elTitle = document.getElementById('modal-rendas-title');
+  const elBtn = document.getElementById('modal-recfixa-btn-salvar');
+
+  if (id) {
+    const r = (STATE.receitasFixas || []).find(x => x.id === id);
+    if (!r) return;
+    if (elId) elId.value = r.id;
+    if (elDesc) elDesc.value = r.descricao || '';
+    if (elValor) elValor.value = toBRL(r.valor).replace('R$', 'R$ ');
+    if (elConta && r.conta) elConta.value = r.conta;
+    if (elCat && r.categoria) elCat.value = r.categoria;
+    if (elTipo) elTipo.value = r.tipoRegra || 'dia_util';
+    if (elDia) elDia.value = r.diaRegra || 5;
+    if (elTitle) elTitle.innerHTML = '<i class="ti ti-pencil" style="color:var(--good);margin-right:6px"></i><span>Editar Receita Fixa</span>';
+    if (elBtn) elBtn.innerHTML = '<i class="ti ti-check"></i> Atualizar Receita Fixa';
+  } else {
+    if (elId) elId.value = '';
+    if (elDesc) elDesc.value = '';
+    if (elValor) elValor.value = '';
+    if (elTipo) elTipo.value = 'dia_util';
+    if (elDia) elDia.value = '5';
+    if (elTitle) elTitle.innerHTML = '<i class="ti ti-cash-banknote" style="color:var(--good);margin-right:6px"></i><span>Nova Receita Fixa (Auto-Paycheck)</span>';
+    if (elBtn) elBtn.innerHTML = '<i class="ti ti-check"></i> Salvar Receita Fixa';
+  }
+  atualizarDicaRegraReceitaFixaModal();
+  abrirModal('modal-rendas');
+  setTimeout(() => { if (elDesc) elDesc.focus(); }, 60);
+}
+
+async function salvarReceitaFixaModal() {
+  const id = document.getElementById('modal-recfixa-id')?.value;
+  const descricao = document.getElementById('modal-recfixa-desc')?.value.trim();
+  const valor = moedaToNumber(document.getElementById('modal-recfixa-valor')?.value);
+  const conta = document.getElementById('modal-recfixa-conta')?.value;
+  const categoria = document.getElementById('modal-recfixa-cat')?.value || 'Salário';
+  const tipoRegra = document.getElementById('modal-recfixa-tipo-regra')?.value || 'dia_util';
+  let diaRegra = parseInt(document.getElementById('modal-recfixa-dia')?.value, 10);
+  if (isNaN(diaRegra) || diaRegra < 1) diaRegra = 1;
+
+  if (!descricao) {
+    toast('Informe a descrição da receita fixa (ex: Salário Nubank).', 'warn');
+    document.getElementById('modal-recfixa-desc')?.focus();
+    return;
+  }
+  if (!valor || valor <= 0) {
+    toast('Informe um valor válido maior que zero.', 'warn');
+    document.getElementById('modal-recfixa-valor')?.focus();
+    return;
+  }
+
+  if (!Array.isArray(STATE.receitasFixas)) STATE.receitasFixas = [];
+
+  if (id) {
+    const item = STATE.receitasFixas.find(x => x.id === id);
+    if (item) {
+      item.descricao = descricao;
+      item.valor = valor;
+      item.conta = conta;
+      item.categoria = categoria;
+      item.tipoRegra = tipoRegra;
+      item.diaRegra = diaRegra;
+    }
+  } else {
+    STATE.receitasFixas.push({
+      id: uid(),
+      descricao,
+      valor,
+      conta,
+      categoria,
+      tipoRegra,
+      diaRegra,
+      ativo: true,
+      criadoEm: hojeLocalISO()
+    });
+  }
+
+  await salvarDados();
+  fecharModal('modal-rendas');
+  renderReceitasFixas();
+  toast(id ? 'Receita fixa atualizada com sucesso!' : 'Receita fixa cadastrada com sucesso!', 'ok');
+  await processarReceitasAutomatizadas();
+}
+
+async function salvarReceitaFixa() {
+  const id = document.getElementById('recfixa-id')?.value;
+  const descricao = document.getElementById('recfixa-desc')?.value.trim();
+  const valor = moedaToNumber(document.getElementById('recfixa-valor')?.value);
+  const conta = document.getElementById('recfixa-conta')?.value;
+  const categoria = document.getElementById('recfixa-cat')?.value || 'Salário';
+  const tipoRegra = document.getElementById('recfixa-tipo-regra')?.value || 'dia_util';
+  let diaRegra = parseInt(document.getElementById('recfixa-dia')?.value, 10);
+  if (isNaN(diaRegra) || diaRegra < 1) diaRegra = 1;
+
+  if (!descricao) {
+    toast('Informe a descrição da receita fixa (ex: Salário Nubank).', 'warn');
+    document.getElementById('recfixa-desc')?.focus();
+    return;
+  }
+  if (!valor || valor <= 0) {
+    toast('Informe um valor válido maior que zero.', 'warn');
+    document.getElementById('recfixa-valor')?.focus();
+    return;
+  }
+
+  if (!Array.isArray(STATE.receitasFixas)) STATE.receitasFixas = [];
+
+  if (id) {
+    const item = STATE.receitasFixas.find(x => x.id === id);
+    if (item) {
+      item.descricao = descricao;
+      item.valor = valor;
+      item.conta = conta;
+      item.categoria = categoria;
+      item.tipoRegra = tipoRegra;
+      item.diaRegra = diaRegra;
+    }
+  } else {
+    STATE.receitasFixas.push({
+      id: uid(),
+      descricao,
+      valor,
+      conta,
+      categoria,
+      tipoRegra,
+      diaRegra,
+      ativo: true,
+      criadoEm: hojeLocalISO()
+    });
+  }
+
+  cancelarEdicaoReceitaFixa();
+  await salvarDados();
+  renderReceitasFixas();
+  toast(id ? 'Receita fixa atualizada com sucesso!' : 'Receita fixa cadastrada com sucesso!', 'ok');
+  await processarReceitasAutomatizadas();
+}
+
+function editarReceitaFixa(id) {
+  const r = (STATE.receitasFixas || []).find(x => x.id === id);
+  if (!r) return;
+
+  const elId = document.getElementById('recfixa-id');
+  const elDesc = document.getElementById('recfixa-desc');
+  const elValor = document.getElementById('recfixa-valor');
+  const elConta = document.getElementById('recfixa-conta');
+  const elCat = document.getElementById('recfixa-cat');
+  const elTipo = document.getElementById('recfixa-tipo-regra');
+  const elDia = document.getElementById('recfixa-dia');
+  const elBtnSalvar = document.getElementById('recfixa-btn-salvar');
+  const elBtnCancelar = document.getElementById('recfixa-btn-cancelar');
+
+  if (elId) elId.value = r.id;
+  if (elDesc) elDesc.value = r.descricao || '';
+  if (elValor) elValor.value = toBRL(r.valor).replace('R$', 'R$ ');
+  if (elConta && r.conta) elConta.value = r.conta;
+  if (elCat && r.categoria) elCat.value = r.categoria;
+  if (elTipo) elTipo.value = r.tipoRegra || 'dia_util';
+  if (elDia) elDia.value = r.diaRegra || 5;
+
+  if (elBtnSalvar) elBtnSalvar.innerHTML = '<i class="ti ti-check"></i> Atualizar Receita Fixa';
+  if (elBtnCancelar) elBtnCancelar.style.display = 'inline-flex';
+
+  atualizarDicaRegraReceitaFixa();
+  const card = document.getElementById('card-receitas-fixas');
+  if (card) card.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  setTimeout(() => { if (elDesc) elDesc.focus(); }, 100);
+}
+
+function cancelarEdicaoReceitaFixa() {
+  const elId = document.getElementById('recfixa-id');
+  const elDesc = document.getElementById('recfixa-desc');
+  const elValor = document.getElementById('recfixa-valor');
+  const elTipo = document.getElementById('recfixa-tipo-regra');
+  const elDia = document.getElementById('recfixa-dia');
+  const elBtnSalvar = document.getElementById('recfixa-btn-salvar');
+  const elBtnCancelar = document.getElementById('recfixa-btn-cancelar');
+
+  if (elId) elId.value = '';
+  if (elDesc) elDesc.value = '';
+  if (elValor) elValor.value = '';
+  if (elTipo) elTipo.value = 'dia_util';
+  if (elDia) elDia.value = '5';
+
+  if (elBtnSalvar) elBtnSalvar.innerHTML = '<i class="ti ti-plus"></i> Salvar Receita Fixa';
+  if (elBtnCancelar) elBtnCancelar.style.display = 'none';
+
+  atualizarDicaRegraReceitaFixa();
+}
+
+async function removerReceitaFixa(id) {
+  const r = (STATE.receitasFixas || []).find(x => x.id === id);
+  const nome = r ? r.descricao : 'esta receita';
+  if (!confirm(`Deseja remover ${nome}? Os lançamentos já creditados no extrato serão preservados.`)) return;
+
+  STATE.receitasFixas = (STATE.receitasFixas || []).filter(x => x.id !== id);
+  if (document.getElementById('recfixa-id')?.value === id) cancelarEdicaoReceitaFixa();
+  await salvarDados();
+  renderReceitasFixas();
+  toast('Receita fixa removida.', 'ok');
+}
+
+async function alternarAtivoReceitaFixa(id) {
+  const r = (STATE.receitasFixas || []).find(x => x.id === id);
+  if (!r) return;
+  r.ativo = (r.ativo === false) ? true : false;
+  await salvarDados();
+  renderReceitasFixas();
+  toast(r.ativo ? `Receita "${r.descricao}" ativada.` : `Receita "${r.descricao}" pausada.`, 'info');
+  if (r.ativo) {
+    await processarReceitasAutomatizadas();
+  }
 }
 
 /* ================= CÁLCULOS COMPARTILHADOS ================= */
@@ -5791,13 +6437,21 @@ async function adicionarFundoMeta(id) {
     toast(`Saldo Disponível insuficiente (${toBRL(saldoDisponivel)}) para transferir ${toBRL(valor)}.`, 'err');
     return;
   }
-  m.valorAtual = Math.max(0, Math.round(((Number(m.valorAtual) || 0) + valor) * 100) / 100);
+  const valorAntes = Number(m.valorAtual) || 0;
+  const valorAlvo = Number(m.valorAlvo) || 0;
+  m.valorAtual = Math.max(0, Math.round((valorAntes + valor) * 100) / 100);
+  const atingiuObjetivo100 = valorAlvo > 0 && valorAntes < valorAlvo - 0.009 && m.valorAtual >= valorAlvo - 0.009;
   registrarLancamentoHistoricoCofre(m, valor, 'guardar');
   await salvarDados();
   renderMetas();
   atualizarSaldos();
   sincronizarEmSegundoPlano();
-  toast(`${toBRL(valor)} guardado no cofre "${m.nome}"!`, 'ok');
+  if (atingiuObjetivo100) {
+    dispararConfettis();
+    toastObjetivoAtingido(m.nome);
+  } else {
+    toast(`${toBRL(valor)} guardado no cofre "${m.nome}"!`, 'ok');
+  }
 }
 async function resgatarFundoMeta(id) {
   const m = STATE.metas.find(x => x.id === id);
@@ -6726,7 +7380,7 @@ const CABECALHO_PLANILHA = [
   'ParcelaGrupo','ParcelaAtual','ParcelaTotal','RecorrenteID','Tags',
   'TransferenciaGrupo','TransferenciaContraparte',
   'GarantiaFim','GarantiaMeses','AnexoNome','AnexoPath',
-  'EhReembolsavel','ReembolsoDevedor','Reembolsado'
+  'EhReembolsavel','ReembolsoDevedor','Reembolsado','Conciliado'
 ];
 function montarPlanilhaBytes(linhas) {
   const ws = XLSX.utils.json_to_sheet(linhas || lancamentosParaLinhas(), { header: CABECALHO_PLANILHA });
@@ -7141,6 +7795,8 @@ function definirTermoBusca(termo) {
 function comandosSpotlight() {
   return [
     { tipo: 'comando', cmd: '>novo', label: 'Criar novo lançamento', icone: 'plus', executar: () => abrirModalLancamento() },
+    { tipo: 'comando', cmd: '>salario', label: 'Configurar Receita Fixa / Salário (Auto-Paycheck)', icone: 'cash', executar: () => abrirModalRendas() },
+    { tipo: 'comando', cmd: '>rendas', label: 'Receitas Fixas Inteligentes (Auto-Paycheck)', icone: 'cash-banknote', executar: () => { nav('config'); document.getElementById('card-receitas-fixas')?.scrollIntoView({ behavior: 'smooth' }); } },
     { tipo: 'comando', cmd: '>parcelado', label: 'Simulador: À Vista vs. Parcelado (CDI)', icone: 'percentage', executar: () => abrirModalSimuladorParcelado() },
     { tipo: 'comando', cmd: '>cartoes', label: 'Gestão de Cartões & Melhor Dia de Compra', icone: 'credit-card', executar: () => abrirModalGerirCartoes() },
     { tipo: 'comando', cmd: '>stealth', label: 'Modo Stealth (Privacidade Inteligente)', icone: 'eye', executar: () => alternarModoStealth() },
@@ -7581,6 +8237,7 @@ async function processarRestauracaoBackup(textoJson) {
         try {
           const pastaBackupAtual = STATE.config?.pastaBackup;
           STATE = Object.assign(STATE, dados);
+          if (!Array.isArray(STATE.receitasFixas)) STATE.receitasFixas = [];
           if (pastaBackupAtual && !STATE.config.pastaBackup) {
             STATE.config.pastaBackup = pastaBackupAtual;
           }
@@ -7987,6 +8644,8 @@ function mesclarLinhasNaBase(linhas, mapa, modoSincronizacaoTotal) {
     const reembolsoDevedor = devedorPlanilha || (antigo && antigo.reembolsoDevedor) || undefined;
     const rawReembolsado = lerCampoRow(['Reembolsado', 'reembolsado']);
     const reembolsado = (rawReembolsado.toLowerCase() === 'sim' || rawReembolsado === 'true' || rawReembolsado === '1') ? true : ((antigo && antigo.reembolsado) || undefined);
+    const rawConciliado = lerCampoRow(['Conciliado', 'conciliado']);
+    const conciliado = (rawConciliado.toLowerCase() === 'sim' || rawConciliado === 'true' || rawConciliado === '1') ? true : !!(antigo && antigo.conciliado === true);
 
     novosDaPlanilha.push({
       id: idPlanilha || uid(), tipo, data, descricao,
@@ -8010,7 +8669,8 @@ function mesclarLinhasNaBase(linhas, mapa, modoSincronizacaoTotal) {
       anexoPath,
       ehReembolsavel,
       reembolsoDevedor,
-      reembolsado
+      reembolsado,
+      conciliado
     });
     novos++;
   });
@@ -8392,9 +9052,17 @@ async function concluirFechamentoMensal(alocarNoCofre) {
       };
       STATE.metas.push(metaAlvo);
     }
-    metaAlvo.valorAtual = Math.max(0, Math.round(((Number(metaAlvo.valorAtual) || 0) + valorAlocar) * 100) / 100);
+    const valorAntesWiz = Number(metaAlvo.valorAtual) || 0;
+    const valorAlvoWiz = Number(metaAlvo.valorAlvo) || 0;
+    metaAlvo.valorAtual = Math.max(0, Math.round((valorAntesWiz + valorAlocar) * 100) / 100);
+    const atingiu100Wiz = valorAlvoWiz > 0 && valorAntesWiz < valorAlvoWiz - 0.009 && metaAlvo.valorAtual >= valorAlvoWiz - 0.009;
     registrarLancamentoHistoricoCofre(metaAlvo, valorAlocar, 'guardar');
-    toast(`Fechamento concluído! ${toBRL(valorAlocar)} transferidos para o cofre "${metaAlvo.nome}".`, 'ok');
+    if (atingiu100Wiz) {
+      dispararConfettis();
+      toastObjetivoAtingido(metaAlvo.nome);
+    } else {
+      toast(`Fechamento concluído! ${toBRL(valorAlocar)} transferidos para o cofre "${metaAlvo.nome}".`, 'ok');
+    }
   } else {
     toast(`Fechamento de ${formatarMesExtenso(wizardMesAlvo)} concluído com sucesso!`, 'ok');
   }
@@ -8409,6 +9077,735 @@ async function concluirFechamentoMensal(alocarNoCofre) {
   fecharModal('modal-wizard-fechamento');
   renderPaginaAtiva();
   sincronizarEmSegundoPlano();
+}
+
+/* ================= MODO DE CONCILIAÇÃO BANCÁRIA (BALANCE RECONCILER) ================= */
+let concilBancoSelecionados = new Set();
+
+function normalizarConciliacaoLancamentos() {
+  if (!Array.isArray(STATE.lancamentos)) return;
+  STATE.lancamentos.forEach(l => {
+    if (l && typeof l.conciliado !== 'boolean') {
+      l.conciliado = false;
+    }
+  });
+}
+
+function ehContaCartaoConcil(nomeConta) {
+  if (!nomeConta) return false;
+  return (STATE.contas || []).some(c => c.nome === nomeConta && c.tipo === 'cartao') ||
+         (STATE.cartoes || []).some(c => c.nome === nomeConta);
+}
+
+function maskMoedaComSinal(el) {
+  if (!el) return;
+  const raw = String(el.value || '');
+  if (raw.trim() === '') {
+    el.value = '';
+    return;
+  }
+  const negativo = raw.trim().startsWith('-') || (raw.includes('-') && !raw.trim().startsWith('+'));
+  const digitos = raw.replace(/\D/g, '');
+  if (!digitos) {
+    el.value = negativo ? '-' : '';
+    return;
+  }
+  let v = (parseInt(digitos, 10) / 100).toFixed(2);
+  v = v.replace('.', ',').replace(/\B(?=(\d{3})+(?=,))/g, '.');
+  el.value = (negativo ? '- R$ ' : 'R$ ') + v;
+  const pos = el.value.length;
+  if (typeof el.setSelectionRange === 'function') el.setSelectionRange(pos, pos);
+}
+
+function moedaComSinalToNumber(str) {
+  if (typeof str === 'number') return str;
+  if (!str) return 0;
+  const s = String(str).trim();
+  if (!s || s === '-') return 0;
+  const negativo = s.startsWith('-');
+  const abs = Math.abs(moedaToNumber(s.replace(/-/g, '')));
+  return negativo ? -abs : abs;
+}
+
+function abrirModalConciliacaoPorIndice(idx) {
+  const c = (STATE.contas || [])[idx];
+  abrirModalConciliacaoBancaria(c && c.tipo !== 'cartao' ? c.nome : undefined);
+}
+
+function obterContextoConciliacaoBancaria() {
+  normalizarConciliacaoLancamentos();
+  const selConta = document.getElementById('concil-banco-conta');
+  const selMes = document.getElementById('concil-banco-mes');
+  const contaSel = selConta ? selConta.value : '__todas__';
+  const mesSel = (selMes && selMes.value) ? selMes.value : hojeLocalISO().slice(0, 7);
+
+  const pertenceAConta = (l) => {
+    if (!l || l.ehMovimentoCofre) return false;
+    if (ehContaCartaoConcil(l.conta)) return false;
+    if (contaSel === '__todas__') {
+      return (STATE.contas || []).some(c => c.tipo !== 'cartao' && c.nome === l.conta);
+    }
+    return l.conta === contaSel;
+  };
+
+  // Lançamentos do mês com conciliado === false
+  const itensElegiveis = (STATE.lancamentos || [])
+    .filter(l => pertenceAConta(l) && mesCompetenciaLancamento(l) === mesSel && l.conciliado === false)
+    .sort((a, b) => (b.data || '').localeCompare(a.data || ''));
+
+  const idsElegiveis = new Set(itensElegiveis.map(l => l.id));
+
+  // Saldo App (Base): lançamentos efetivados da conta fora da lista pendente de conciliação (já conciliados ou de meses anteriores)
+  const saldoAppBase = Math.round(
+    (STATE.lancamentos || [])
+      .filter(l => pertenceAConta(l) && estaPago(l) && !idsElegiveis.has(l.id))
+      .reduce((acc, l) => acc + (l.tipo === 'receita' ? 1 : -1) * (Number(l.valor) || 0), 0) * 100
+  ) / 100;
+
+  const somaSelecionados = Math.round(
+    itensElegiveis
+      .filter(l => concilBancoSelecionados.has(l.id))
+      .reduce((acc, l) => acc + (l.tipo === 'receita' ? 1 : -1) * (Number(l.valor) || 0), 0) * 100
+  ) / 100;
+
+  const saldoEsperado = Math.round((saldoAppBase + somaSelecionados) * 100) / 100;
+
+  const inpReal = document.getElementById('concil-saldo-real');
+  const rawReal = inpReal ? inpReal.value.trim() : '';
+  const temSaldoReal = rawReal !== '' && rawReal !== '-';
+  const saldoReal = temSaldoReal ? Math.round(moedaComSinalToNumber(rawReal) * 100) / 100 : saldoEsperado;
+  // Fórmula exata: Diferença = Saldo Real - (Saldo App + Lançamentos Selecionados na Checkbox)
+  const diferenca = Math.round((saldoReal - (saldoAppBase + somaSelecionados)) * 100) / 100;
+
+  return {
+    contaSel,
+    mesSel,
+    itensElegiveis,
+    saldoAppBase,
+    somaSelecionados,
+    saldoEsperado,
+    temSaldoReal,
+    saldoReal,
+    diferenca
+  };
+}
+
+function abrirModalConciliacaoBancaria(contaPreSelecionada) {
+  normalizarConciliacaoLancamentos();
+  const selConta = document.getElementById('concil-banco-conta');
+  const selMes = document.getElementById('concil-banco-mes');
+  const inpReal = document.getElementById('concil-saldo-real');
+  if (!selConta || !selMes || !inpReal) return;
+
+  const contasBancarias = (STATE.contas || []).filter(c => c.tipo !== 'cartao');
+  let optsConta = contasBancarias.map(c => `<option value="${escHtml(c.nome)}">${escHtml(c.nome)}</option>`).join('');
+  if (contasBancarias.length > 1 || contasBancarias.length === 0) {
+    optsConta += `<option value="__todas__">Todas as Contas Bancárias</option>`;
+  }
+  selConta.innerHTML = optsConta;
+
+  if (contaPreSelecionada && contasBancarias.some(c => c.nome === contaPreSelecionada)) {
+    selConta.value = contaPreSelecionada;
+  } else if (contasBancarias.length > 0) {
+    selConta.value = contasBancarias[0].nome;
+  } else {
+    selConta.value = '__todas__';
+  }
+
+  const mesAtual = hojeLocalISO().slice(0, 7);
+  const mesesSet = new Set([mesAtual]);
+  (STATE.lancamentos || []).forEach(l => {
+    const m = mesCompetenciaLancamento(l);
+    if (m) mesesSet.add(m);
+  });
+  const mesesOrdenados = [...mesesSet].sort((a, b) => b.localeCompare(a));
+  const nomesMesCurto = { '01':'Jan','02':'Fev','03':'Mar','04':'Abr','05':'Mai','06':'Jun','07':'Jul','08':'Ago','09':'Set','10':'Out','11':'Nov','12':'Dez' };
+  selMes.innerHTML = mesesOrdenados.map(m => {
+    const [ano, mes] = m.split('-');
+    const rotulo = `${nomesMesCurto[mes] || mes}/${ano}${m === mesAtual ? ' (Atual)' : ''}`;
+    return `<option value="${m}">${rotulo}</option>`;
+  }).join('');
+  selMes.value = mesAtual;
+
+  inpReal.value = '';
+  preSelecionarPagosConciliacaoBancaria();
+  renderListaConciliacaoBancaria();
+  atualizarCalculoConciliacaoBancaria();
+
+  abrirModal('modal-conciliacao-bancaria');
+  setTimeout(() => inpReal.focus(), 60);
+}
+
+function preSelecionarPagosConciliacaoBancaria() {
+  concilBancoSelecionados.clear();
+  const { itensElegiveis } = obterContextoConciliacaoBancaria();
+  itensElegiveis.forEach(l => {
+    if (estaPago(l)) concilBancoSelecionados.add(l.id);
+  });
+}
+
+function aoMudarFiltroConciliacaoBancaria() {
+  preSelecionarPagosConciliacaoBancaria();
+  renderListaConciliacaoBancaria();
+  atualizarCalculoConciliacaoBancaria();
+}
+
+function marcarTodosConciliacaoBancaria(marcar) {
+  const { itensElegiveis } = obterContextoConciliacaoBancaria();
+  concilBancoSelecionados.clear();
+  if (marcar) {
+    itensElegiveis.forEach(l => concilBancoSelecionados.add(l.id));
+  }
+  renderListaConciliacaoBancaria();
+  atualizarCalculoConciliacaoBancaria();
+}
+
+function alternarItemConciliacaoBancaria(id) {
+  if (concilBancoSelecionados.has(id)) {
+    concilBancoSelecionados.delete(id);
+  } else {
+    concilBancoSelecionados.add(id);
+  }
+  const row = document.querySelector(`#concil-banco-lista .concil-item-row[data-id="${id}"]`);
+  if (row) {
+    const marcado = concilBancoSelecionados.has(id);
+    row.classList.toggle('marcado', marcado);
+    const chk = row.querySelector('input[type="checkbox"]');
+    if (chk) chk.checked = marcado;
+  }
+  atualizarCalculoConciliacaoBancaria();
+}
+
+function renderListaConciliacaoBancaria() {
+  const cont = document.getElementById('concil-banco-lista');
+  const tituloEl = document.getElementById('concil-lista-titulo');
+  if (!cont) return;
+
+  const { itensElegiveis } = obterContextoConciliacaoBancaria();
+  if (tituloEl) {
+    tituloEl.textContent = `Lançamentos não conciliados do mês (${itensElegiveis.length})`;
+  }
+
+  if (itensElegiveis.length === 0) {
+    cont.innerHTML = `<div class="empty" style="padding:1.5rem 1rem">
+      <div class="empty-icon"><i class="ti ti-circle-check" style="color:var(--good)"></i></div>
+      Todos os lançamentos desta conta neste mês já estão conciliados!
+    </div>`;
+    return;
+  }
+
+  cont.innerHTML = itensElegiveis.map(l => {
+    const marcado = concilBancoSelecionados.has(l.id);
+    const [a, m, d] = (l.data || '').split('-');
+    const dataFmt = a ? `${d}/${m}/${a}` : '-';
+    const ehRec = l.tipo === 'receita';
+    const sinal = ehRec ? '+' : '−';
+    const corValor = ehRec ? 'var(--good)' : 'var(--bad)';
+    const statusBadge = estaPago(l)
+      ? `<span class="badge badge-pago" style="font-size:10px;padding:1px 6px">Pago</span>`
+      : `<span class="badge badge-pendente" style="font-size:10px;padding:1px 6px">Pendente</span>`;
+    return `<label class="concil-item-row${marcado ? ' marcado' : ''}" data-id="${l.id}">
+      <div class="concil-item-left">
+        <input type="checkbox" ${marcado ? 'checked' : ''} onchange="alternarItemConciliacaoBancaria('${l.id}')" style="width:16px;height:16px;accent-color:var(--accent);flex-shrink:0;cursor:pointer">
+        <div class="concil-item-info">
+          <div class="concil-item-desc">${escHtml(l.descricao || 'Sem descrição')}</div>
+          <div class="concil-item-meta">${dataFmt} · ${escHtml(formatarCategoriaExibicao(l.categoria))} · ${escHtml(l.conta || '-')} ${statusBadge}</div>
+        </div>
+      </div>
+      <div class="concil-item-valor valor-sensivel" style="color:${corValor}">${sinal} ${toBRL(l.valor)}</div>
+    </label>`;
+  }).join('');
+}
+
+function atualizarCalculoConciliacaoBancaria() {
+  const { saldoAppBase, somaSelecionados, saldoEsperado, temSaldoReal, diferenca } = obterContextoConciliacaoBancaria();
+
+  const elBase = document.getElementById('concil-kpi-base');
+  const elSel = document.getElementById('concil-kpi-selecionados');
+  const elEsp = document.getElementById('concil-kpi-esperado');
+  const elDif = document.getElementById('concil-kpi-diferenca');
+  const boxDif = document.getElementById('concil-kpi-dif-box');
+  const banner = document.getElementById('concil-status-banner');
+
+  if (elBase) elBase.textContent = toBRL(saldoAppBase);
+  if (elSel) {
+    elSel.textContent = (somaSelecionados >= 0 ? '+ ' : '− ') + toBRL(Math.abs(somaSelecionados));
+    elSel.style.color = somaSelecionados > 0 ? 'var(--good)' : somaSelecionados < 0 ? 'var(--bad)' : 'var(--text)';
+  }
+  if (elEsp) elEsp.textContent = toBRL(saldoEsperado);
+
+  if (!temSaldoReal) {
+    if (elDif) {
+      elDif.textContent = '—';
+      elDif.style.color = 'var(--text3)';
+    }
+    if (boxDif) boxDif.className = 'concil-kpi-box destaque';
+    if (banner) {
+      banner.className = 'concil-status-banner';
+      banner.innerHTML = `<i class="ti ti-info-circle" style="font-size:16px;flex-shrink:0;color:var(--accent)"></i>
+        <span>Digite o <strong>Saldo Real no Banco</strong> acima para calcular a diferença em tempo real.</span>`;
+    }
+    return;
+  }
+
+  const bateuExato = Math.abs(diferenca) < 0.01;
+  if (elDif) {
+    elDif.textContent = bateuExato ? 'R$ 0,00' : ((diferenca > 0 ? '+ ' : '− ') + toBRL(Math.abs(diferenca)));
+    elDif.style.color = bateuExato ? 'var(--good)' : 'var(--amber)';
+  }
+  if (boxDif) {
+    boxDif.className = 'concil-kpi-box destaque ' + (bateuExato ? 'ok' : 'divergente');
+  }
+  if (banner) {
+    if (bateuExato) {
+      banner.className = 'concil-status-banner ok';
+      banner.innerHTML = `<i class="ti ti-circle-check" style="font-size:17px;flex-shrink:0"></i>
+        <span>Saldos 100% sincronizados! Nenhuma divergência encontrada.</span>`;
+    } else {
+      const tipoAjuste = diferenca > 0 ? 'entrada não registada' : 'saída/tarifa não registada';
+      banner.className = 'concil-status-banner divergente';
+      banner.innerHTML = `<i class="ti ti-alert-triangle" style="font-size:17px;flex-shrink:0"></i>
+        <span>Diferença de <strong class="valor-sensivel">${toBRL(Math.abs(diferenca))}</strong> (${tipoAjuste}). Ao finalizar, poderás gerar um Lançamento de Ajuste automático.</span>`;
+    }
+  }
+}
+
+async function finalizarConciliacaoBancaria() {
+  const { contaSel, mesSel, itensElegiveis, temSaldoReal, diferenca } = obterContextoConciliacaoBancaria();
+
+  if (!temSaldoReal && concilBancoSelecionados.size === 0) {
+    toast('Informe o Saldo Real no Banco ou marque ao menos um lançamento para conciliar.', 'err');
+    const inp = document.getElementById('concil-saldo-real');
+    if (inp) inp.focus();
+    return;
+  }
+
+  let qtdConciliados = 0;
+  itensElegiveis.forEach(l => {
+    if (concilBancoSelecionados.has(l.id)) {
+      l.conciliado = true;
+      l.pago = true;
+      l.sincronizado = false;
+      qtdConciliados++;
+    } else if (temSaldoReal && estaPago(l)) {
+      // Se o utilizador informou o Saldo Real e desmarcou um item pago na conciliação, ele ainda não compensou no banco
+      l.pago = false;
+      l.sincronizado = false;
+    }
+  });
+
+  await salvarDados();
+  fecharModal('modal-conciliacao-bancaria');
+  renderPaginaAtiva();
+  sincronizarEmSegundoPlano();
+
+  if (temSaldoReal && Math.abs(diferenca) >= 0.01) {
+    const valorAbs = Math.round(Math.abs(diferenca) * 100) / 100;
+    const msgAjuste = `Deseja criar um Lançamento de Ajuste de ${toBRL(valorAbs)} para sincronizar a conta?`;
+    abrirConfirmacao(msgAjuste, async () => {
+      const primeiraContaBanco = (STATE.contas || []).find(c => c.tipo !== 'cartao');
+      const contaDestino = (contaSel && contaSel !== '__todas__')
+        ? contaSel
+        : (primeiraContaBanco ? primeiraContaBanco.nome : 'Conta principal');
+
+      const hojeISO = hojeLocalISO();
+      let dataAjuste = hojeISO;
+      if (mesSel && mesSel !== hojeISO.slice(0, 7)) {
+        const [anoRef, mesRef] = mesSel.split('-').map(Number);
+        const ultimoDia = new Date(anoRef, mesRef, 0).getDate();
+        dataAjuste = `${mesSel}-${String(ultimoDia).padStart(2, '0')}`;
+      }
+
+      STATE.lancamentos.push({
+        id: uid(),
+        tipo: diferenca > 0 ? 'receita' : 'despesa',
+        data: dataAjuste,
+        descricao: diferenca > 0 ? 'Ajuste de Conciliação Bancária (Entrada)' : 'Ajuste de Conciliação Bancária (Saída)',
+        categoria: 'Ajuste de Saldo',
+        conta: contaDestino,
+        valor: valorAbs,
+        origem: 'conciliacao',
+        sincronizado: false,
+        pago: true,
+        conciliado: true
+      });
+
+      await salvarDados();
+      renderPaginaAtiva();
+      sincronizarEmSegundoPlano();
+      toast(`Lançamento de Ajuste de ${toBRL(valorAbs)} criado e conta sincronizada!`, 'ok');
+    }, 'Sincronizar Conta Bancária');
+
+    const btnOk = document.getElementById('btn-confirm-ok');
+    if (btnOk) {
+      btnOk.className = 'btn btn-primary';
+      btnOk.innerHTML = '<i class="ti ti-scale"></i> Criar Ajuste';
+    }
+    return;
+  }
+
+  toast(
+    qtdConciliados > 0
+      ? `Conciliação concluída! ${qtdConciliados} lançamento(s) conciliado(s).`
+      : 'Saldo conferido e conta sincronizada!',
+    'ok'
+  );
+}
+
+/* ================= MENU DE CONTEXTO NATIVO (RIGHT-CLICK LANÇAMENTOS) ================= */
+let ctxMenuLancamentoIdAtivo = null;
+let ctxMenuLinhaAtivaEl = null;
+
+function fecharContextMenu() {
+  const menu = document.getElementById('context-menu');
+  if (menu && menu.classList.contains('show')) {
+    menu.classList.remove('show');
+    menu.setAttribute('aria-hidden', 'true');
+  }
+  if (ctxMenuLinhaAtivaEl) {
+    ctxMenuLinhaAtivaEl.classList.remove('context-active');
+    ctxMenuLinhaAtivaEl = null;
+  }
+  ctxMenuLancamentoIdAtivo = null;
+}
+
+async function duplicarLancamentoContexto(id) {
+  const original = (STATE.lancamentos || []).find(x => x.id === id);
+  if (!original) return;
+  if (original.ehMovimentoCofre) {
+    toast('Movimentações internas de Cofre/Meta devem ser feitas na aba Metas & Cofres.', 'err');
+    return;
+  }
+  if (original.ehTransferencia) {
+    toast('Para repetir uma transferência entre contas, utilize o botão Transferir.', 'err');
+    return;
+  }
+
+  const descSemParcela = String(original.descricao || 'Lançamento').replace(/\s*\(\d+\/\d+\)$/, '').trim();
+  const copia = {
+    id: uid(),
+    tipo: original.tipo || 'despesa',
+    data: original.data || hojeLocalISO(),
+    dataCompra: original.dataCompra || undefined,
+    descricao: `${descSemParcela} (Cópia)`,
+    categoria: original.categoria || 'Outros',
+    conta: original.conta || ((STATE.contas && STATE.contas[0]) ? STATE.contas[0].nome : 'Conta principal'),
+    valor: Number(original.valor) || 0,
+    origem: 'manual',
+    sincronizado: false,
+    pago: estaPago(original),
+    conciliado: false,
+    faturaAno: original.faturaAno || undefined,
+    faturaMes: original.faturaMes || undefined,
+    dataVencimentoFatura: original.dataVencimentoFatura || undefined,
+    tags: Array.isArray(original.tags) ? [...original.tags] : undefined,
+    subTransacoes: Array.isArray(original.subTransacoes) ? original.subTransacoes.map(s => ({ ...s })) : undefined,
+    ehReembolsavel: original.ehReembolsavel ? true : undefined,
+    reembolsoDevedor: original.ehReembolsavel ? original.reembolsoDevedor : undefined,
+    reembolsado: original.ehReembolsavel ? false : undefined
+  };
+
+  STATE.lancamentos.push(copia);
+  await salvarDados();
+  renderPaginaAtiva();
+  sincronizarEmSegundoPlano();
+  toast(`Lançamento "${copia.descricao}" duplicado!`, 'ok');
+}
+
+function inicializarMenuContextoLancamentos() {
+  const menu = document.getElementById('context-menu');
+  if (!menu || menu.dataset.bound === '1') return;
+  menu.dataset.bound = '1';
+
+  const btnEditar = document.getElementById('ctx-btn-editar');
+  const btnDuplicar = document.getElementById('ctx-btn-duplicar');
+  const btnStatus = document.getElementById('ctx-btn-status');
+  const btnApagar = document.getElementById('ctx-btn-apagar');
+  const lblStatus = document.getElementById('ctx-label-status');
+  const tituloMenu = document.getElementById('ctx-menu-titulo');
+
+  document.addEventListener('contextmenu', (e) => {
+    const linha = e.target.closest('tr.card-lancamento[data-id], #lanc-tbody tr[data-id], #dash-ultimos tr[data-id]');
+    if (!linha) {
+      fecharContextMenu();
+      return;
+    }
+    if (modoConciliacaoAtivo) return;
+
+    const id = linha.getAttribute('data-id');
+    const lanc = (STATE.lancamentos || []).find(x => x.id === id);
+    if (!lanc) return;
+
+    e.preventDefault();
+    e.stopPropagation();
+
+    if (ctxMenuLinhaAtivaEl && ctxMenuLinhaAtivaEl !== linha) {
+      ctxMenuLinhaAtivaEl.classList.remove('context-active');
+    }
+    ctxMenuLancamentoIdAtivo = id;
+    ctxMenuLinhaAtivaEl = linha;
+    linha.classList.add('context-active');
+
+    if (tituloMenu) {
+      tituloMenu.textContent = `${lanc.descricao || 'Lançamento'} · ${toBRL(lanc.valor)}`;
+    }
+    if (lblStatus) {
+      lblStatus.textContent = estaPago(lanc)
+        ? 'Alternar Estado (Marcar Pendente)'
+        : 'Alternar Estado (Marcar Pago)';
+    }
+    if (btnEditar) {
+      btnEditar.style.display = lanc.ehTransferencia ? 'none' : 'flex';
+    }
+    if (btnDuplicar) {
+      btnDuplicar.style.display = lanc.ehTransferencia ? 'none' : 'flex';
+    }
+    if (btnStatus) {
+      btnStatus.style.display = lanc.ehTransferencia ? 'none' : 'flex';
+    }
+
+    // Exibe invisível primeiro para medir dimensões reais e travar nos limites da janela do Electron
+    menu.style.visibility = 'hidden';
+    menu.style.left = '0px';
+    menu.style.top = '0px';
+    menu.classList.add('show');
+    menu.setAttribute('aria-hidden', 'false');
+
+    const menuW = menu.offsetWidth || 248;
+    const menuH = menu.offsetHeight || 184;
+    const margem = 10;
+
+    let posX = e.pageX;
+    let posY = e.pageY;
+
+    const maxX = window.scrollX + window.innerWidth - menuW - margem;
+    const maxY = window.scrollY + window.innerHeight - menuH - margem;
+
+    if (posX > maxX) posX = Math.max(window.scrollX + margem, e.pageX - menuW);
+    if (posY > maxY) posY = Math.max(window.scrollY + margem, e.pageY - menuH);
+
+    posX = Math.max(window.scrollX + margem, Math.min(posX, maxX));
+    posY = Math.max(window.scrollY + margem, Math.min(posY, maxY));
+
+    menu.style.left = `${Math.round(posX)}px`;
+    menu.style.top = `${Math.round(posY)}px`;
+    menu.style.visibility = 'visible';
+  });
+
+  if (btnEditar) {
+    btnEditar.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const id = ctxMenuLancamentoIdAtivo;
+      fecharContextMenu();
+      if (id) abrirModalLancamento(id);
+    });
+  }
+
+  if (btnDuplicar) {
+    btnDuplicar.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      const id = ctxMenuLancamentoIdAtivo;
+      fecharContextMenu();
+      if (id) await duplicarLancamentoContexto(id);
+    });
+  }
+
+  if (btnStatus) {
+    btnStatus.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      const id = ctxMenuLancamentoIdAtivo;
+      fecharContextMenu();
+      if (!id) return;
+      const lanc = (STATE.lancamentos || []).find(x => x.id === id);
+      if (!lanc || lanc.ehTransferencia) return;
+      await togglePagamento(id);
+      toast(`Estado alterado para ${estaPago(lanc) ? 'Pago' : 'Pendente'}.`, 'ok');
+    });
+  }
+
+  if (btnApagar) {
+    btnApagar.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      const id = ctxMenuLancamentoIdAtivo;
+      fecharContextMenu();
+      if (!id) return;
+      const lanc = (STATE.lancamentos || []).find(x => x.id === id);
+      if (!lanc) return;
+      if (lanc.ehTransferencia && lanc.transferenciaGrupo) {
+        await excluirTransferencia(lanc.transferenciaGrupo);
+      } else {
+        await excluirLancamento(id);
+      }
+    });
+  }
+
+  window.addEventListener('click', (e) => {
+    if (!menu.classList.contains('show')) return;
+    if (!menu.contains(e.target)) fecharContextMenu();
+  });
+
+  window.addEventListener('resize', fecharContextMenu);
+  window.addEventListener('blur', fecharContextMenu);
+  window.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') fecharContextMenu();
+  });
+
+  const scrollContainer = document.querySelector('.content');
+  if (scrollContainer) {
+    scrollContainer.addEventListener('scroll', fecharContextMenu, { passive: true });
+  }
+}
+
+/* ================= CELEBRAÇÕES DE METAS / CONFETTIS (DOPAMINE MILESTONES) ================= */
+let confettiAnimFrameId = null;
+let confettiCleanupTimer = null;
+
+function encerrarConfettis() {
+  if (confettiAnimFrameId !== null) {
+    cancelAnimationFrame(confettiAnimFrameId);
+    confettiAnimFrameId = null;
+  }
+  if (confettiCleanupTimer !== null) {
+    clearTimeout(confettiCleanupTimer);
+    confettiCleanupTimer = null;
+  }
+  const canvas = document.getElementById('confetti-canvas');
+  if (canvas) {
+    const ctx = canvas.getContext('2d');
+    if (ctx) ctx.clearRect(0, 0, canvas.width, canvas.height);
+    canvas.width = 0;
+    canvas.height = 0;
+    canvas.style.display = 'none';
+  }
+}
+
+function dispararConfettis() {
+  const canvas = document.getElementById('confetti-canvas');
+  if (!canvas) return;
+
+  encerrarConfettis();
+
+  const largura = window.innerWidth || document.documentElement.clientWidth || 1024;
+  const altura = window.innerHeight || document.documentElement.clientHeight || 768;
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+
+  canvas.style.display = 'block';
+  canvas.width = Math.floor(largura * dpr);
+  canvas.height = Math.floor(altura * dpr);
+
+  const ctx = canvas.getContext('2d');
+  if (!ctx) {
+    encerrarConfettis();
+    return;
+  }
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+  const estilos = getComputedStyle(document.documentElement);
+  const paleta = [
+    estilos.getPropertyValue('--accent').trim() || '#1A6FE0',
+    estilos.getPropertyValue('--good').trim() || '#10B981',
+    estilos.getPropertyValue('--amber').trim() || '#F59E0B',
+    '#8B5CF6',
+    '#F43F5E',
+    '#06B6D4',
+    '#FBBF24'
+  ];
+
+  const origemX = largura * 0.5;
+  const origemY = altura * 0.45;
+  const totalParticulas = 115;
+  const gravidade = 0.28;
+  const atrito = 0.982;
+  const particulas = [];
+
+  for (let i = 0; i < totalParticulas; i++) {
+    const angulo = Math.random() * Math.PI * 2;
+    const velocidade = 5 + Math.random() * 15;
+    const formato = Math.random() < 0.42 ? 'circle' : 'rect';
+    const tamanho = 5 + Math.random() * 6.5;
+    particulas.push({
+      x: origemX + (Math.random() - 0.5) * 24,
+      y: origemY + (Math.random() - 0.5) * 24,
+      vx: Math.cos(angulo) * velocidade,
+      vy: Math.sin(angulo) * velocidade - (3.5 + Math.random() * 4.5),
+      cor: paleta[i % paleta.length],
+      formato,
+      larguraP: tamanho,
+      alturaP: formato === 'rect' ? tamanho * (0.48 + Math.random() * 0.45) : tamanho,
+      rotacao: Math.random() * Math.PI * 2,
+      velRotacao: (Math.random() - 0.5) * 0.26,
+      opacidade: 1,
+      decaimento: 0.0055 + Math.random() * 0.0065
+    });
+  }
+
+  const inicio = performance.now();
+  const duracaoMaximaMs = 3800;
+
+  function animarFrame(agora) {
+    const decorrido = agora - inicio;
+    ctx.clearRect(0, 0, largura, altura);
+
+    if (decorrido >= duracaoMaximaMs) {
+      encerrarConfettis();
+      return;
+    }
+
+    let vivas = 0;
+    for (let i = 0; i < particulas.length; i++) {
+      const p = particulas[i];
+      if (p.opacidade <= 0.02 || p.y > altura + 40) continue;
+
+      p.vx *= atrito;
+      p.vy = p.vy * atrito + gravidade;
+      p.x += p.vx;
+      p.y += p.vy;
+      p.rotacao += p.velRotacao;
+
+      if (decorrido > 1700) {
+        p.opacidade -= p.decaimento * 1.8;
+      } else {
+        p.opacidade -= p.decaimento * 0.35;
+      }
+      if (p.opacidade <= 0.02) continue;
+
+      vivas++;
+      ctx.save();
+      ctx.globalAlpha = Math.max(0, Math.min(1, p.opacidade));
+      ctx.translate(p.x, p.y);
+      ctx.rotate(p.rotacao);
+      ctx.fillStyle = p.cor;
+
+      if (p.formato === 'circle') {
+        ctx.beginPath();
+        ctx.arc(0, 0, p.larguraP * 0.5, 0, Math.PI * 2);
+        ctx.fill();
+      } else {
+        ctx.fillRect(-p.larguraP * 0.5, -p.alturaP * 0.5, p.larguraP, p.alturaP);
+      }
+      ctx.restore();
+    }
+
+    if (vivas > 0) {
+      confettiAnimFrameId = requestAnimationFrame(animarFrame);
+    } else {
+      encerrarConfettis();
+    }
+  }
+
+  confettiAnimFrameId = requestAnimationFrame(animarFrame);
+  // Garantia extra de auto-destruição mesmo se a aba ficar em background
+  confettiCleanupTimer = setTimeout(encerrarConfettis, duracaoMaximaMs + 250);
+}
+
+function toastObjetivoAtingido(nomeMeta) {
+  const t = document.getElementById('toast');
+  if (!t) return;
+  const sufixo = nomeMeta ? ` Você completou 100% do cofre "${nomeMeta}"!` : ' Meta 100% concluída!';
+  t.textContent = `🏆 Objetivo Atingido!${sufixo}`;
+  t.className = 'toast show ok milestone';
+  clearTimeout(t._timer);
+  t._timer = setTimeout(() => t.classList.remove('show', 'milestone'), 5500);
 }
 
 /* ================= INIT ================= */
@@ -8465,20 +9862,26 @@ document.querySelectorAll('.modal-bg').forEach(m => m.addEventListener('click', 
   if (logoMarca) document.getElementById('bloqueio-logo').src = logoMarca.src;
   inicializarControlesJanela();
   iniciarDropzoneUniversal();
+  inicializarMenuContextoLancamentos();
   if (document.documentElement.classList.contains('bloqueado')) setTimeout(() => document.getElementById('bloqueio-pin').focus(), 100);
   else iniciarRelogioOcioso();
   atualizarSegurancaUI();
   const veioDoLoginMs = await msTratarRetornoDoLogin(); // voltando da tela de login da Microsoft (site/celular)
   await carregarDados();
   await gerarLancamentosRecorrentes();
+  await processarReceitasAutomatizadas();
   renderDashboard();
   atualizarStatusSync();
   atualizarUIBackup();
   setTimeout(() => { executarBackupSilencioso(false).catch(() => {}); }, 1500);
   if (document.readyState === 'complete') {
     setTimeout(verificarViradaDeMesAutomatica, 250);
+    setTimeout(() => processarReceitasAutomatizadas(), 300);
   } else {
-    window.addEventListener('load', () => setTimeout(verificarViradaDeMesAutomatica, 250));
+    window.addEventListener('load', () => {
+      setTimeout(verificarViradaDeMesAutomatica, 250);
+      processarReceitasAutomatizadas();
+    });
   }
   // Não usa "await" aqui de propósito: a tela já aparece com os dados locais na hora,
   // e a planilha é carregada por cima, em segundo plano, sem travar a abertura do app.
@@ -8525,7 +9928,8 @@ function lancamentosParaLinhas() {
       "AnexoPath": l.anexoPath || '',
       "EhReembolsavel": l.ehReembolsavel ? 'Sim' : '',
       "ReembolsoDevedor": l.reembolsoDevedor || '',
-      "Reembolsado": l.reembolsado ? 'Sim' : ''
+      "Reembolsado": l.reembolsado ? 'Sim' : '',
+      "Conciliado": l.conciliado ? 'Sim' : ''
     };
   });
 }
