@@ -844,6 +844,51 @@
           <button class="btn btn-sm btn-danger" onclick="apagarTudo()"><i class="ti ti-trash"></i> Apagar todos os dados</button>
         </div>
       </div>
+
+      <!-- SINCRONIZAÇÃO FAMILIAR P2P (REDE LOCAL PORTA 45000) -->
+      <div class="card" id="card-sync-familiar">
+        <div class="card-header" style="margin-bottom:.5rem">
+          <div class="card-title" style="display:flex;align-items:center;gap:8px">
+            <i class="ti ti-users-group" style="color:var(--accent);font-size:18px"></i>
+            <span>Sincronização Familiar (P2P em Rede Local)</span>
+          </div>
+          <span class="badge" id="p2p-porta-badge" style="background:var(--good-bg);color:var(--good-text);font-weight:600">
+            <i class="ti ti-Access-point" style="margin-right:3px"></i>Porta 45000
+          </span>
+        </div>
+        <div class="help-text" style="margin-bottom:.85rem">
+          Sincronize lançamentos, cofres e metas diretamente entre dois computadores na mesma rede Wi-Fi/Local (sem passar por servidores externos). O <strong>Merge Inteligente</strong> adiciona os registos novos de ambos os lados sem duplicar nem sobrescrever nada.
+        </div>
+
+        <div class="p2p-sync-grid">
+          <div class="fg">
+            <label>Seu IP na rede</label>
+            <div class="p2p-meu-ip-box">
+              <i class="ti ti-device-desktop" style="color:var(--accent);font-size:16px;flex-shrink:0"></i>
+              <code id="p2p-meu-ip" class="p2p-ip-code">Carregando...</code>
+              <button type="button" class="btn btn-sm" onclick="copiarMeuIPP2P()" title="Copiar seu IP para informar ao parceiro" style="margin-left:auto;padding:3px 8px">
+                <i class="ti ti-copy"></i> Copiar
+              </button>
+            </div>
+          </div>
+
+          <div class="fg">
+            <label for="p2p-ip-parceiro">IP do Parceiro</label>
+            <input type="text" id="p2p-ip-parceiro" placeholder="Ex: 192.168.1.15" oninput="salvarIPParceiroP2P(this.value)" onkeydown="seEnviar(event, sincronizarP2PFamiliar)">
+          </div>
+
+          <div class="fg" style="display:flex;flex-direction:column;justify-content:flex-end">
+            <label style="visibility:hidden">Ação</label>
+            <button type="button" class="btn btn-primary" id="btn-p2p-sincronizar" onclick="sincronizarP2PFamiliar()">
+              <i class="ti ti-arrows-exchange"></i> Sincronizar Agora
+            </button>
+          </div>
+        </div>
+
+        <div id="p2p-status-msg" class="help-text" style="margin-top:.75rem;margin-bottom:0">
+          Pronto para sincronizar na rede local (porta 45000).
+        </div>
+      </div>
     </div>
 
   </div>

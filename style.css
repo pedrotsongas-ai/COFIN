@@ -2992,3 +2992,59 @@ body.body-modal-active .bottom-nav {
   z-index: 9999;
   display: none;
 }
+
+/* ================= SINCRONIZAÇÃO FAMILIAR P2P & AUTO-UPDATE OTA ================= */
+.p2p-sync-grid {
+  display: grid;
+  grid-template-columns: 1.15fr 1.15fr auto;
+  gap: 10px;
+  align-items: end;
+}
+
+.p2p-meu-ip-box {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 36px;
+  padding: 4px 8px 4px 11px;
+  background: var(--surface2);
+  border: 1px solid var(--border2);
+  border-radius: var(--radius);
+}
+
+.p2p-ip-code {
+  font-family: var(--mono);
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--accent-text);
+  background: transparent;
+  padding: 0;
+  user-select: all;
+}
+
+@media (max-width: 720px) {
+  .p2p-sync-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.toast.update-downloading {
+  border-color: var(--accent);
+  color: var(--text);
+}
+
+.toast.update-ready {
+  background: linear-gradient(135deg, var(--accent), var(--good));
+  color: #ffffff;
+  border: 1px solid rgba(255, 255, 255, 0.35);
+  box-shadow: 0 12px 32px rgba(26, 111, 224, 0.4);
+  font-weight: 700;
+  cursor: pointer;
+  pointer-events: auto;
+  transition: transform 0.16s ease, box-shadow 0.16s ease;
+}
+
+.toast.update-ready:hover {
+  transform: translateX(-50%) translateY(-2px) scale(1.02);
+  box-shadow: 0 14px 36px rgba(16, 185, 129, 0.5);
+}

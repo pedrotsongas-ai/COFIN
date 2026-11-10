@@ -20,10 +20,20 @@
     "nsis": {
       "oneClick": false,
       "allowToChangeInstallationDirectory": true
-    }
+    },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "pedrotsongas-ai",
+        "repo": "COFIN"
+      }
+    ]
   },
   "author": "",
   "license": "ISC",
+  "dependencies": {
+    "electron-updater": "^6.3.9"
+  },
   "devDependencies": {
     "electron": "^32.0.0",
     "electron-builder": "^24.13.3",

@@ -12,7 +12,24 @@ const electronAPI = {
   onMaximizedStatus: (callback) => {
     ipcRenderer.on('win:maximized-status', (_event, isMax) => callback(isMax));
   },
-  setWindowIcon: (dataUrl) => ipcRenderer.send('cofin:set-window-icon', dataUrl)
+  setWindowIcon: (dataUrl) => ipcRenderer.send('cofin:set-window-icon', dataUrl),
+
+  // Sincronização Familiar P2P (Rede Local :45000)
+  obterIPLocal: () => ipcRenderer.invoke('obter-ip-local'),
+  enviarSync: (ipParceiro, stateLocal) => ipcRenderer.invoke('enviar-sync', { ipParceiro, stateLocal }),
+  onReceberSync: (callback) => {
+    ipcRenderer.on('receber-sync', (_event, dadosParceiro) => callback(dadosParceiro));
+  },
+  atualizarCacheP2P: (stateLocal) => ipcRenderer.send('atualizar-cache-p2p', stateLocal),
+
+  // Auto-Update Silencioso (OTA via electron-updater)
+  onDownloadIniciado: (callback) => {
+    ipcRenderer.on('download-iniciado', (_event, info) => callback(info));
+  },
+  onDownloadConcluido: (callback) => {
+    ipcRenderer.on('download-concluido', (_event, info) => callback(info));
+  },
+  aplicarAtualizacao: () => ipcRenderer.invoke('aplicar-atualizacao')
 };
 
 if (process.contextIsolated) {

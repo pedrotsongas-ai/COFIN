@@ -1518,6 +1518,9 @@ async function salvarDados() {
     normalizarConciliacaoLancamentos();
     // Guarda tudo silenciosamente no armazenamento interno do app
     localStorage.setItem(STORAGE_KEY, JSON.stringify(STATE)); 
+    if (window.electronAPI && typeof window.electronAPI.atualizarCacheP2P === 'function') {
+      try { window.electronAPI.atualizarCacheP2P(STATE); } catch (e) {}
+    }
   } catch (e) { 
     console.error("Erro ao salvar:", e); 
     toast('Erro ao salvar no armazenamento local.', 'err'); 
@@ -1670,6 +1673,8 @@ function moedaToNumber(str) {
 }
 function toast(msg, tipo) {
   const t = document.getElementById('toast');
+  t.onclick = null;
+  t.title = '';
   t.textContent = msg;
   t.className = 'toast show' + (tipo ? ' ' + tipo : '');
   clearTimeout(t._timer);
@@ -4824,6 +4829,7 @@ function renderConfig() {
   atualizarUIModoViagem();
   atualizarUIBackup();
   renderReceitasFixas();
+  atualizarUISincronizacaoFamiliarP2P();
 }
 async function adicionarCategoria() {
   normalizarHierarquiaCategorias();
@@ -9801,11 +9807,374 @@ function dispararConfettis() {
 function toastObjetivoAtingido(nomeMeta) {
   const t = document.getElementById('toast');
   if (!t) return;
+  t.onclick = null;
+  t.title = '';
   const sufixo = nomeMeta ? ` Você completou 100% do cofre "${nomeMeta}"!` : ' Meta 100% concluída!';
   t.textContent = `🏆 Objetivo Atingido!${sufixo}`;
   t.className = 'toast show ok milestone';
   clearTimeout(t._timer);
   t._timer = setTimeout(() => t.classList.remove('show', 'milestone'), 5500);
+}
+
+/* ================= SINCRONIZAÇÃO FAMILIAR P2P (REDE LOCAL PORTA 45000) ================= */
+let p2pMeuIPCache = '';
+let p2pListenerRegistrado = false;
+
+async function obterMeuIPLocalP2P() {
+  if (window.electronAPI && typeof window.electronAPI.obterIPLocal === 'function') {
+    try {
+      const ip = await window.electronAPI.obterIPLocal();
+      if (ip && typeof ip === 'string') {
+        p2pMeuIPCache = ip;
+        return ip;
+      }
+    } catch (e) {}
+  }
+  if (window.electronAPI && typeof window.electronAPI.invocar === 'function') {
+    try {
+      const ip = await window.electronAPI.invocar('obter-ip-local');
+      if (ip && typeof ip === 'string') {
+        p2pMeuIPCache = ip;
+        return ip;
+      }
+    } catch (e) {}
+  }
+  return p2pMeuIPCache || 'Indisponível (Modo Web)';
+}
+
+async function atualizarUISincronizacaoFamiliarP2P() {
+  const elMeuIp = document.getElementById('p2p-meu-ip');
+  const inpParceiro = document.getElementById('p2p-ip-parceiro');
+  const elStatus = document.getElementById('p2p-status-msg');
+
+  if (inpParceiro && STATE.config && STATE.config.ipParceiroP2P && !inpParceiro.value) {
+    inpParceiro.value = STATE.config.ipParceiroP2P;
+  }
+
+  if (elMeuIp) {
+    const ip = await obterMeuIPLocalP2P();
+    elMeuIp.textContent = ip;
+  }
+
+  if (elStatus && STATE.config && STATE.config.ultimoSyncP2P) {
+    elStatus.innerHTML = `<i class="ti ti-circle-check" style="color:var(--good)"></i> Última sincronização familiar: <strong>${escHtml(STATE.config.ultimoSyncP2P)}</strong>`;
+  }
+}
+
+function salvarIPParceiroP2P(valor) {
+  if (!STATE.config) STATE.config = {};
+  STATE.config.ipParceiroP2P = String(valor || '').trim();
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(STATE));
+  } catch (e) {}
+}
+
+async function copiarMeuIPP2P() {
+  const ip = await obterMeuIPLocalP2P();
+  if (!ip || ip.startsWith('Indisponível')) {
+    toast('Endereço IP local indisponível fora do aplicativo Desktop.', 'err');
+    return;
+  }
+  try {
+    await navigator.clipboard.writeText(ip);
+    toast(`Seu IP (${ip}) foi copiado para a área de transferência!`, 'ok');
+  } catch (e) {
+    toast(`Seu IP na rede é: ${ip}`, 'ok');
+  }
+}
+
+/**
+ * Merge Inteligente P2P:
+ * Cruza os arrays (lancamentos, cofres, metas e cadastros auxiliares) via IDs únicos,
+ * adiciona os registos inexistentes, ignora duplicados e protege o localStorage contra
+ * dados malformados.
+ */
+async function mesclarEstadoP2P(dadosExternos, silencioso = false) {
+  let externo = dadosExternos;
+  if (typeof externo === 'string') {
+    try {
+      externo = JSON.parse(externo);
+    } catch (err) {
+      if (!silencioso) toast('Erro no Merge P2P: JSON recebido está malformado.', 'err');
+      return { ok: false, erro: 'JSON malformado.' };
+    }
+  }
+
+  if (!externo || typeof externo !== 'object' || Array.isArray(externo)) {
+    if (!silencioso) toast('Erro no Merge P2P: formato de dados inválido.', 'err');
+    return { ok: false, erro: 'Formato de objeto inválido.' };
+  }
+
+  const temLancamentosValidos = Array.isArray(externo.lancamentos);
+  const temCofresValidos = Array.isArray(externo.cofres);
+  const temMetasValidas = Array.isArray(externo.metas);
+
+  if (!temLancamentosValidos && !temCofresValidos && !temMetasValidas) {
+    if (!silencioso) toast('Dados P2P ignorados: estrutura de estado não reconhecida.', 'err');
+    return { ok: false, erro: 'Estrutura de estado ausente.' };
+  }
+
+  try {
+    if (!Array.isArray(STATE.lancamentos)) STATE.lancamentos = [];
+    if (!Array.isArray(STATE.cofres)) STATE.cofres = [];
+    if (!Array.isArray(STATE.metas)) STATE.metas = [];
+    if (!Array.isArray(STATE.contas)) STATE.contas = [];
+    if (!Array.isArray(STATE.categorias)) STATE.categorias = [];
+
+    const excluidosSet = new Set(Array.isArray(STATE.excluidosPendentes) ? STATE.excluidosPendentes : []);
+    const idsLancamentosLocais = new Set(STATE.lancamentos.map(l => l && l.id).filter(Boolean));
+    const nomesContasLocais = new Set(STATE.contas.map(c => c && c.nome ? c.nome.toLowerCase() : '').filter(Boolean));
+
+    let novosLancamentos = 0;
+    let novosCofres = 0;
+
+    // 1. Mescla Contas que não existam localmente para evitar lançamentos órfãos
+    if (Array.isArray(externo.contas)) {
+      externo.contas.forEach(c => {
+        if (!c || typeof c !== 'object' || typeof c.nome !== 'string') return;
+        const nomeLimpo = c.nome.trim();
+        if (!nomeLimpo || nomesContasLocais.has(nomeLimpo.toLowerCase())) return;
+        STATE.contas.push({
+          nome: nomeLimpo,
+          tipo: c.tipo === 'cartao' ? 'cartao' : 'conta',
+          diaFechamento: c.diaFechamento,
+          diaVencimento: c.diaVencimento,
+          limite: c.limite
+        });
+        nomesContasLocais.add(nomeLimpo.toLowerCase());
+      });
+    }
+
+    // 2. Merge Inteligente de Lançamentos por ID único
+    if (temLancamentosValidos) {
+      externo.lancamentos.forEach(item => {
+        if (!item || typeof item !== 'object') return;
+        const id = typeof item.id === 'string' ? item.id.trim() : '';
+        if (!id || idsLancamentosLocais.has(id) || excluidosSet.has(id)) return;
+        const valorNum = Number(item.valor);
+        if (!isFinite(valorNum) || valorNum < 0) return;
+
+        const contaItem = typeof item.conta === 'string' && item.conta.trim() ? item.conta.trim() : 'Conta principal';
+        if (!nomesContasLocais.has(contaItem.toLowerCase())) {
+          STATE.contas.push({ nome: contaItem, tipo: 'conta' });
+          nomesContasLocais.add(contaItem.toLowerCase());
+        }
+
+        STATE.lancamentos.push({
+          ...item,
+          id,
+          tipo: item.tipo === 'receita' ? 'receita' : 'despesa',
+          valor: Math.round(valorNum * 100) / 100,
+          conta: contaItem,
+          conciliado: typeof item.conciliado === 'boolean' ? item.conciliado : false,
+          pago: typeof item.pago === 'boolean' ? item.pago : true
+        });
+        idsLancamentosLocais.add(id);
+        novosLancamentos++;
+      });
+    }
+
+    // 3. Merge Inteligente de Cofres (STATE.cofres) e Metas (STATE.metas) por ID único
+    const idsCofresLocais = new Set(STATE.cofres.map(c => c && c.id).filter(Boolean));
+    const idsMetasLocais = new Set(STATE.metas.map(m => m && m.id).filter(Boolean));
+
+    if (temCofresValidos) {
+      externo.cofres.forEach(cofre => {
+        if (!cofre || typeof cofre !== 'object') return;
+        const id = typeof cofre.id === 'string' ? cofre.id.trim() : '';
+        if (!id || idsCofresLocais.has(id)) return;
+        STATE.cofres.push({ ...cofre, id });
+        idsCofresLocais.add(id);
+        if (!idsMetasLocais.has(id)) novosCofres++;
+      });
+    }
+
+    if (temMetasValidas) {
+      externo.metas.forEach(meta => {
+        if (!meta || typeof meta !== 'object') return;
+        const id = typeof meta.id === 'string' ? meta.id.trim() : '';
+        if (!id || idsMetasLocais.has(id)) return;
+        const valorAlvo = Number(meta.valorAlvo ?? meta.objetivo) || 0;
+        const valorAtual = Number(meta.valorAtual ?? meta.saldoAlocado) || 0;
+        if (!isFinite(valorAlvo) || !isFinite(valorAtual)) return;
+        STATE.metas.push({
+          ...meta,
+          id,
+          nome: String(meta.nome || 'Cofre Familiar').trim(),
+          valorAlvo: Math.max(0, valorAlvo),
+          valorAtual: Math.max(0, valorAtual)
+        });
+        idsMetasLocais.add(id);
+        novosCofres++;
+      });
+    }
+
+    migrarCofresParaMetas();
+    sincronizarEstruturaCartoes();
+
+    if (!STATE.config) STATE.config = {};
+    const agoraFmt = new Date().toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' });
+    STATE.config.ultimoSyncP2P = agoraFmt;
+
+    await salvarDados();
+    renderPaginaAtiva();
+    atualizarSaldos();
+    atualizarUISincronizacaoFamiliarP2P();
+
+    return { ok: true, novosLancamentos, novosCofres };
+  } catch (err) {
+    console.error('[P2P] Erro protegido durante o Merge Inteligente:', err);
+    if (!silencioso) toast('Falha ao mesclar dados P2P. Seus dados locais foram preservados.', 'err');
+    return { ok: false, erro: err.message || 'Erro interno no merge.' };
+  }
+}
+
+async function sincronizarP2PFamiliar() {
+  const inp = document.getElementById('p2p-ip-parceiro');
+  const btn = document.getElementById('btn-p2p-sincronizar');
+  const elStatus = document.getElementById('p2p-status-msg');
+  const ipParceiro = inp ? inp.value.trim() : '';
+
+  if (!ipParceiro) {
+    toast('Informe o IP do Parceiro na rede local (ex: 192.168.1.15).', 'err');
+    if (inp) inp.focus();
+    return;
+  }
+
+  salvarIPParceiroP2P(ipParceiro);
+
+  const enviarFn = (window.electronAPI && typeof window.electronAPI.enviarSync === 'function')
+    ? (ip, st) => window.electronAPI.enviarSync(ip, st)
+    : (window.electronAPI && typeof window.electronAPI.invocar === 'function')
+      ? (ip, st) => window.electronAPI.invocar('enviar-sync', { ipParceiro: ip, stateLocal: st })
+      : null;
+
+  if (!enviarFn) {
+    toast('A Sincronização P2P requer o aplicativo Desktop (Electron).', 'err');
+    return;
+  }
+
+  const htmlOriginal = btn ? btn.innerHTML : '';
+  if (btn) {
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner"></span> Sincronizando...';
+  }
+  if (elStatus) {
+    elStatus.innerHTML = `<i class="ti ti-loader" style="color:var(--accent)"></i> Conectando a <strong>${escHtml(ipParceiro)}:45000</strong>...`;
+  }
+
+  try {
+    const resposta = await enviarFn(ipParceiro, STATE);
+    if (!resposta || !resposta.ok) {
+      const msgErro = (resposta && resposta.erro) || 'Não foi possível conectar ao parceiro.';
+      if (elStatus) {
+        elStatus.innerHTML = `<i class="ti ti-alert-triangle" style="color:var(--bad)"></i> ${escHtml(msgErro)}`;
+      }
+      toast(msgErro, 'err');
+      return;
+    }
+
+    const resMerge = await mesclarEstadoP2P(resposta.stateParceiro, false);
+    if (resMerge && resMerge.ok) {
+      const resumo = (resMerge.novosLancamentos > 0 || resMerge.novosCofres > 0)
+        ? `Sincronização concluída! +${resMerge.novosLancamentos} lançamento(s) e +${resMerge.novosCofres} cofre(s) adicionados.`
+        : 'Sincronização concluída! Ambos os computadores já estão 100% atualizados.';
+      toast(resumo, 'ok');
+    }
+  } catch (err) {
+    const msg = err.message || 'Falha ao sincronizar com o parceiro.';
+    if (elStatus) {
+      elStatus.innerHTML = `<i class="ti ti-alert-triangle" style="color:var(--bad)"></i> ${escHtml(msg)}`;
+    }
+    toast(msg, 'err');
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.innerHTML = htmlOriginal || '<i class="ti ti-arrows-exchange"></i> Sincronizar Agora';
+    }
+  }
+}
+
+function inicializarSyncFamiliarP2P() {
+  if (p2pListenerRegistrado) return;
+  p2pListenerRegistrado = true;
+
+  if (window.electronAPI && typeof window.electronAPI.atualizarCacheP2P === 'function') {
+    try { window.electronAPI.atualizarCacheP2P(STATE); } catch (e) {}
+  }
+
+  if (window.electronAPI && typeof window.electronAPI.onReceberSync === 'function') {
+    window.electronAPI.onReceberSync(async (stateParceiro) => {
+      const res = await mesclarEstadoP2P(stateParceiro, true);
+      if (res && res.ok) {
+        const detalhe = (res.novosLancamentos > 0 || res.novosCofres > 0)
+          ? `+${res.novosLancamentos} lançamento(s) e +${res.novosCofres} cofre(s) mesclados.`
+          : 'Dados conferidos e sincronizados.';
+        toast(`🤝 Sincronização Familiar recebida! ${detalhe}`, 'ok');
+      }
+    });
+  }
+
+  atualizarUISincronizacaoFamiliarP2P();
+}
+
+/* ================= FEEDBACK VISUAL DE AUTO-UPDATE SILENCIOSO (OTA) ================= */
+let autoUpdateListenersRegistrados = false;
+
+function exibirToastDownloadIniciado() {
+  const t = document.getElementById('toast');
+  if (!t) return;
+  clearTimeout(t._timer);
+  t.onclick = null;
+  t.title = '';
+  t.textContent = '⬇️ A descarregar nova versão em background...';
+  t.className = 'toast show update-downloading';
+  t._timer = setTimeout(() => t.classList.remove('show', 'update-downloading'), 4500);
+}
+
+function acionarInstalacaoAtualizacaoOTA() {
+  if (window.electronAPI && typeof window.electronAPI.aplicarAtualizacao === 'function') {
+    window.electronAPI.aplicarAtualizacao();
+  } else if (window.electronAPI && typeof window.electronAPI.invocar === 'function') {
+    window.electronAPI.invocar('aplicar-atualizacao');
+  } else if (window.electronAPI && typeof window.electronAPI.enviar === 'function') {
+    window.electronAPI.enviar('aplicar-atualizacao');
+  }
+}
+
+function exibirToastAtualizacaoPronta() {
+  const t = document.getElementById('toast');
+  if (!t) return;
+  clearTimeout(t._timer);
+  t.textContent = '🚀 Nova versão pronta! Clique aqui para reiniciar e atualizar.';
+  t.title = 'Clique para reiniciar e instalar a atualização agora';
+  t.className = 'toast show update-ready';
+  t.onclick = () => {
+    t.classList.remove('show', 'update-ready');
+    t.onclick = null;
+    acionarInstalacaoAtualizacaoOTA();
+  };
+  t._timer = setTimeout(() => {
+    t.classList.remove('show', 'update-ready');
+    t.onclick = null;
+  }, 60000);
+}
+
+function inicializarAutoUpdateOTA() {
+  if (autoUpdateListenersRegistrados) return;
+  autoUpdateListenersRegistrados = true;
+
+  if (window.electronAPI && typeof window.electronAPI.onDownloadIniciado === 'function') {
+    window.electronAPI.onDownloadIniciado(() => {
+      exibirToastDownloadIniciado();
+    });
+  }
+
+  if (window.electronAPI && typeof window.electronAPI.onDownloadConcluido === 'function') {
+    window.electronAPI.onDownloadConcluido(() => {
+      exibirToastAtualizacaoPronta();
+    });
+  }
 }
 
 /* ================= INIT ================= */
@@ -9863,11 +10232,13 @@ document.querySelectorAll('.modal-bg').forEach(m => m.addEventListener('click', 
   inicializarControlesJanela();
   iniciarDropzoneUniversal();
   inicializarMenuContextoLancamentos();
+  inicializarAutoUpdateOTA();
   if (document.documentElement.classList.contains('bloqueado')) setTimeout(() => document.getElementById('bloqueio-pin').focus(), 100);
   else iniciarRelogioOcioso();
   atualizarSegurancaUI();
   const veioDoLoginMs = await msTratarRetornoDoLogin(); // voltando da tela de login da Microsoft (site/celular)
   await carregarDados();
+  inicializarSyncFamiliarP2P();
   await gerarLancamentosRecorrentes();
   await processarReceitasAutomatizadas();
   renderDashboard();

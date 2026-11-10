@@ -1,6 +1,35 @@
 const { app, BrowserWindow, ipcMain, nativeImage, dialog } = require('electron');
 const path = require('path');
 const fs = require('fs');
+const http = require('http');
+const os = require('os');
+
+let autoUpdater = null;
+try {
+  ({ autoUpdater } = require('electron-updater'));
+} catch (err) {
+  console.warn('[Auto-Update] Módulo electron-updater não encontrado no ambiente atual:', err.message);
+}
+
+const PORTA_P2P = 45000;
+let mainWindow = null;
+let servidorP2P = null;
+let cacheStateLocalP2P = null;
+
+function obterJanelaAtiva() {
+  if (mainWindow && !mainWindow.isDestroyed()) return mainWindow;
+  const janelas = BrowserWindow.getAllWindows();
+  return janelas.find(w => !w.isDestroyed()) || null;
+}
+
+function enviarEventoParaFrontend(canal, payload) {
+  const win = obterJanelaAtiva();
+  if (win && win.webContents && !win.webContents.isDestroyed()) {
+    try {
+      win.webContents.send(canal, payload);
+    } catch (e) {}
+  }
+}
 
 function createWindow () {
   const win = new BrowserWindow({
@@ -20,6 +49,7 @@ function createWindow () {
       webSecurity: false // <--- AQUI DESLIGAMOS O CORS
     }
   });
+  mainWindow = win;
   
   win.maximize();
   win.show();
@@ -31,6 +61,9 @@ function createWindow () {
   });
   win.on('unmaximize', () => {
     try { win.webContents.send('win:maximized-status', false); } catch (e) {}
+  });
+  win.on('closed', () => {
+    if (mainWindow === win) mainWindow = null;
   });
 }
 
@@ -193,13 +226,295 @@ ipcMain.handle('cofin:ms-token', async (_evento, { url, body }) => {
   return { status: resposta.status, json };
 });
 
+/* ================= INFRAESTRUTURA P2P (REDE LOCAL PORTA 45000) ================= */
+function obterIPLocal() {
+  try {
+    const interfaces = os.networkInterfaces() || {};
+    const candidatos = [];
+    for (const [nome, lista] of Object.entries(interfaces)) {
+      if (!Array.isArray(lista)) continue;
+      for (const iface of lista) {
+        const ehIPv4 = iface.family === 'IPv4' || iface.family === 4;
+        if (!ehIPv4 || iface.internal || !iface.address) continue;
+        const virtual = /vethernet|vmware|virtualbox|vbox|wsl|hyper-v|docker|loopback|hamachi|tailscale/i.test(nome);
+        const privadoPadrao = /^(192\.168\.|10\.|172\.(1[6-9]|2\d|3[0-1])\.)/.test(iface.address);
+        candidatos.push({
+          address: iface.address,
+          prioridade: (virtual ? 0 : 2) + (privadoPadrao ? 1 : 0)
+        });
+      }
+    }
+    candidatos.sort((a, b) => b.prioridade - a.prioridade);
+    return candidatos.length > 0 ? candidatos[0].address : '127.0.0.1';
+  } catch (err) {
+    console.error('[P2P] Erro ao obter IP local:', err);
+    return '127.0.0.1';
+  }
+}
+
+async function obterStateLocalAtual() {
+  const win = obterJanelaAtiva();
+  if (win && win.webContents && !win.webContents.isDestroyed()) {
+    try {
+      const raw = await Promise.race([
+        win.webContents.executeJavaScript('localStorage.getItem("controle-financeiro-dados")', true),
+        new Promise((_, rej) => setTimeout(() => rej(new Error('Timeout localStorage')), 2500))
+      ]);
+      if (raw && typeof raw === 'string') {
+        const parsed = JSON.parse(raw);
+        if (parsed && typeof parsed === 'object') {
+          cacheStateLocalP2P = parsed;
+          return parsed;
+        }
+      }
+    } catch (e) {}
+  }
+  return cacheStateLocalP2P || { lancamentos: [], cofres: [], metas: [] };
+}
+
+function iniciarServidorP2P() {
+  if (servidorP2P) return;
+
+  servidorP2P = http.createServer(async (req, res) => {
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+
+    if (req.method === 'OPTIONS') {
+      res.writeHead(204);
+      res.end();
+      return;
+    }
+
+    if (req.method === 'GET') {
+      res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
+      res.end(JSON.stringify({ ok: true, app: 'COFIN', ip: obterIPLocal(), porta: PORTA_P2P }));
+      return;
+    }
+
+    if (req.method === 'POST') {
+      let bodyChunks = [];
+      let totalBytes = 0;
+      const LIMITE_BYTES = 50 * 1024 * 1024; // 50 MB
+
+      req.on('data', (chunk) => {
+        totalBytes += chunk.length;
+        if (totalBytes > LIMITE_BYTES) {
+          req.destroy();
+          return;
+        }
+        bodyChunks.push(chunk);
+      });
+
+      req.on('end', async () => {
+        try {
+          const rawBody = Buffer.concat(bodyChunks).toString('utf8');
+          const stateParceiro = JSON.parse(rawBody);
+
+          if (!stateParceiro || typeof stateParceiro !== 'object' || Array.isArray(stateParceiro)) {
+            res.writeHead(400, { 'Content-Type': 'application/json; charset=utf-8' });
+            res.end(JSON.stringify({ ok: false, erro: 'O STATE enviado é malformado ou inválido.' }));
+            return;
+          }
+
+          // Obtém o STATE local antes/durante o merge para devolver na resposta ao parceiro
+          const stateLocal = await obterStateLocalAtual();
+
+          // Envia o STATE recebido do parceiro para o frontend realizar o Merge Inteligente
+          enviarEventoParaFrontend('receber-sync', stateParceiro);
+
+          res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
+          res.end(JSON.stringify(stateLocal));
+        } catch (err) {
+          res.writeHead(400, { 'Content-Type': 'application/json; charset=utf-8' });
+          res.end(JSON.stringify({ ok: false, erro: 'JSON malformado: ' + (err.message || 'Erro de leitura') }));
+        }
+      });
+
+      req.on('error', (err) => {
+        console.error('[P2P] Erro na requisição recebida:', err);
+      });
+      return;
+    }
+
+    res.writeHead(405, { 'Content-Type': 'application/json; charset=utf-8' });
+    res.end(JSON.stringify({ ok: false, erro: 'Método não permitido.' }));
+  });
+
+  servidorP2P.on('error', (err) => {
+    if (err && err.code === 'EADDRINUSE') {
+      console.warn(`[P2P] Porta ${PORTA_P2P} já está em uso (EADDRINUSE). O servidor existente foi preservado sem travar a aplicação.`);
+      return;
+    }
+    console.error('[P2P] Erro no servidor HTTP local:', err);
+  });
+
+  try {
+    servidorP2P.listen(PORTA_P2P, '0.0.0.0', () => {
+      console.log(`[P2P] Servidor de Sincronização Familiar ativo em http://${obterIPLocal()}:${PORTA_P2P}`);
+    });
+  } catch (err) {
+    console.warn('[P2P] Falha ao iniciar escuta na porta P2P:', err.message);
+  }
+}
+
+ipcMain.handle('obter-ip-local', () => {
+  return obterIPLocal();
+});
+
+ipcMain.on('atualizar-cache-p2p', (_evento, stateObj) => {
+  if (stateObj && typeof stateObj === 'object' && !Array.isArray(stateObj)) {
+    cacheStateLocalP2P = stateObj;
+  }
+});
+
+ipcMain.handle('enviar-sync', async (_evento, payload, stateExtra) => {
+  const ipBruto = (payload && typeof payload === 'object' && !Array.isArray(payload))
+    ? (payload.ipParceiro || payload.ip || '')
+    : String(payload || '');
+  const dadosEnvio = (payload && typeof payload === 'object' && payload.stateLocal)
+    ? payload.stateLocal
+    : (stateExtra || await obterStateLocalAtual());
+
+  if (dadosEnvio && typeof dadosEnvio === 'object') {
+    cacheStateLocalP2P = dadosEnvio;
+  }
+
+  const limpo = String(ipBruto || '')
+    .trim()
+    .replace(/^https?:\/\//i, '')
+    .replace(/\/.*$/, '');
+
+  if (!limpo) {
+    return { ok: false, erro: 'Informe o IP do parceiro na rede local.' };
+  }
+
+  let host = limpo;
+  let porta = PORTA_P2P;
+  if (limpo.includes(':')) {
+    const partes = limpo.split(':');
+    host = partes[0].trim();
+    const p = parseInt(partes[1], 10);
+    if (p > 0 && p <= 65535) porta = p;
+  }
+
+  if (!host) {
+    return { ok: false, erro: 'Endereço IP do parceiro inválido.' };
+  }
+
+  const bodyStr = typeof dadosEnvio === 'string' ? dadosEnvio : JSON.stringify(dadosEnvio || {});
+
+  return new Promise((resolve) => {
+    const opcoes = {
+      hostname: host,
+      port: porta,
+      path: '/sync',
+      method: 'POST',
+      timeout: 10000,
+      headers: {
+        'Content-Type': 'application/json; charset=utf-8',
+        'Content-Length': Buffer.byteLength(bodyStr, 'utf8')
+      }
+    };
+
+    const req = http.request(opcoes, (res) => {
+      const chunks = [];
+      res.on('data', (c) => chunks.push(c));
+      res.on('end', () => {
+        const texto = Buffer.concat(chunks).toString('utf8');
+        try {
+          const json = JSON.parse(texto);
+          if (res.statusCode >= 200 && res.statusCode < 300) {
+            resolve({ ok: true, stateParceiro: json });
+          } else {
+            resolve({ ok: false, erro: (json && json.erro) || `O parceiro respondeu com status HTTP ${res.statusCode}.` });
+          }
+        } catch (err) {
+          resolve({ ok: false, erro: 'Resposta malformada recebida do parceiro.' });
+        }
+      });
+    });
+
+    req.on('timeout', () => {
+      req.destroy(new Error('Tempo limite excedido ao conectar com o IP do parceiro.'));
+    });
+
+    req.on('error', (err) => {
+      let msg = err.message || 'Falha de conexão na rede local.';
+      if (err.code === 'ECONNREFUSED') {
+        msg = `Conexão recusada em ${host}:${porta}. Verifique se o COFIN está aberto no computador do parceiro.`;
+      } else if (err.code === 'EHOSTUNREACH' || err.code === 'ENETUNREACH' || err.code === 'ETIMEDOUT') {
+        msg = `Não foi possível alcançar ${host}:${porta} na rede local. Verifique se ambos estão no mesmo Wi-Fi/Rede.`;
+      }
+      resolve({ ok: false, erro: msg });
+    });
+
+    req.write(bodyStr);
+    req.end();
+  });
+});
+
+/* ================= MOTOR DE AUTO-UPDATE SILENCIOSO (OTA) ================= */
+function configurarAutoUpdater() {
+  if (!autoUpdater) return;
+  try {
+    autoUpdater.autoDownload = true;
+    autoUpdater.autoInstallOnAppQuit = true;
+
+    autoUpdater.on('update-available', (info) => {
+      enviarEventoParaFrontend('download-iniciado', info || {});
+    });
+
+    autoUpdater.on('update-downloaded', (info) => {
+      enviarEventoParaFrontend('download-concluido', info || {});
+    });
+
+    autoUpdater.on('error', (err) => {
+      console.warn('[Auto-Update] Aviso ao verificar/descarregar atualização:', err ? err.message : err);
+    });
+
+    const checkResult = autoUpdater.checkForUpdatesAndNotify();
+    if (checkResult && typeof checkResult.catch === 'function') {
+      checkResult.catch((err) => {
+        console.warn('[Auto-Update] Verificação de atualização ignorada:', err ? err.message : err);
+      });
+    }
+  } catch (err) {
+    console.warn('[Auto-Update] Falha ao iniciar autoUpdater:', err.message);
+  }
+}
+
+ipcMain.handle('aplicar-atualizacao', () => {
+  if (autoUpdater && typeof autoUpdater.quitAndInstall === 'function') {
+    setImmediate(() => autoUpdater.quitAndInstall(false, true));
+    return { ok: true };
+  }
+  return { ok: false, erro: 'Módulo de atualização automática indisponível neste modo de execução.' };
+});
+
+ipcMain.on('aplicar-atualizacao', () => {
+  if (autoUpdater && typeof autoUpdater.quitAndInstall === 'function') {
+    setImmediate(() => autoUpdater.quitAndInstall(false, true));
+  }
+});
+
 app.whenReady().then(() => {
   createWindow();
+  iniciarServidorP2P();
+  configurarAutoUpdater();
+
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {
       createWindow();
     }
   });
+});
+
+app.on('will-quit', () => {
+  if (servidorP2P) {
+    try { servidorP2P.close(); } catch (e) {}
+    servidorP2P = null;
+  }
 });
 
 app.on('window-all-closed', () => {
