@@ -94,7 +94,7 @@
   </div>
   <div class="sidebar-footer">
     <div class="sidebar-status" id="sidebar-status" title="Status de sincronização"><i class="ti ti-loader"></i> <span>Carregando...</span></div>
-    <div class="sidebar-versao" id="app-versao"></div>
+    <div class="sidebar-versao" id="app-versao" onclick="abrirModalPatchNotes()" style="cursor:pointer" title="Ver Patch Notes (Log de Atualização)"></div>
   </div>
 </div>
 
@@ -135,7 +135,7 @@
   </div>
 </div>
 
-<div class="main">
+<main class="main" id="main-workspace">
   <div class="ambient-glow" id="ambient-glow" aria-hidden="true"></div>
   <div class="travel-banner" id="travel-banner">
     <div class="travel-banner-left">
@@ -218,7 +218,7 @@
           </div>
           <div id="dash-top3-content"></div>
         </div>
-        <div class="card dash-draggable bento-item animated-border" id="dash-antimetas-card" draggable="true" data-widget-id="anti-metas">
+        <div class="card dash-draggable bento-item" id="dash-antimetas-card" draggable="true" data-widget-id="anti-metas">
           <div class="card-header">
             <div class="card-title"><i class="ti ti-grip-vertical dash-drag-handle"></i><i class="ti ti-flame-off" style="color:#F97316;margin-right:6px"></i>Anti-Metas (Redução de Hábitos)</div>
             <button class="btn btn-sm" onclick="abrirModalAntiMetas()" title="Configurar Anti-Meta"><i class="ti ti-settings"></i></button>
@@ -235,7 +235,7 @@
         <div class="card dash-draggable bento-item" id="dash-ultimos-card" draggable="true" data-widget-id="ultimos-lancamentos">
           <div class="card-header">
             <div class="card-title"><i class="ti ti-grip-vertical dash-drag-handle"></i>Últimos lançamentos</div>
-            <button class="btn btn-sm" onclick="nav('lancamentos')">Ver todos</button>
+            <button class="btn btn-sm" onclick="expandirCardMagicMove(this, 'lancamentos')">Ver todos</button>
           </div>
           <div class="table-wrap"><table><thead><tr><th>Data</th><th>Descrição</th><th>Categoria</th><th>Conta</th><th>Status</th><th style="text-align:right">Valor</th></tr></thead><tbody id="dash-ultimos"></tbody></table></div>
         </div>
@@ -892,7 +892,29 @@
     </div>
 
   </div>
-</div>
+
+  <!-- VISUALIZADOR DE ANEXOS "SPLIT-VIEW" (50% / 50%) -->
+  <aside id="split-viewer" aria-hidden="true">
+    <div class="split-viewer-header">
+      <div class="split-viewer-title-group">
+        <div class="split-viewer-icon"><i class="ti ti-paperclip"></i></div>
+        <div class="split-viewer-texts">
+          <div class="split-viewer-title" id="split-viewer-title">Comprovante / Anexo</div>
+          <div class="split-viewer-subtitle" id="split-viewer-subtitle">Visualização lado a lado (Split-View)</div>
+        </div>
+      </div>
+      <div class="split-viewer-actions">
+        <button type="button" class="btn btn-sm" id="split-viewer-btn-ampliar" onclick="ampliarComprovanteDoSplitViewer()" title="Ampliar em tela cheia"><i class="ti ti-arrows-maximize"></i> Ampliar</button>
+        <button type="button" class="icon-btn" onclick="fecharSplitViewer()" title="Fechar Split-View (Esc)"><i class="ti ti-x"></i></button>
+      </div>
+    </div>
+    <div class="split-viewer-body" id="split-viewer-body">
+      <img id="split-viewer-img" alt="Comprovante do lançamento" style="display:none">
+      <iframe id="split-viewer-iframe" title="Documento PDF do lançamento" style="display:none"></iframe>
+      <div id="split-viewer-fallback" class="split-viewer-meta-card" style="display:none"></div>
+    </div>
+  </aside>
+</main>
 
 <!-- MODAL LANÇAMENTO -->
 <div class="modal-bg" id="modal-lancamento">
@@ -1740,6 +1762,59 @@
 
 <!-- CANVAS DE CELEBRAÇÕES / CONFETTIS (DOPAMINE MILESTONES) -->
 <canvas id="confetti-canvas" aria-hidden="true"></canvas>
+
+<!-- MODAL DE PATCH NOTES (LOG DE ATUALIZAÇÃO) -->
+<div class="modal-bg" id="modal-patch-notes">
+  <div class="modal wide" style="max-width:560px">
+    <div class="modal-head">
+      <div class="modal-title" style="display:flex;align-items:center;gap:8px">
+        <i class="ti ti-sparkles" style="color:var(--accent);font-size:19px"></i>
+        <span>Novidades da Atualização (Patch Notes)</span>
+      </div>
+      <button class="modal-close" onclick="fecharModalPatchNotes()"><i class="ti ti-x"></i></button>
+    </div>
+
+    <div class="patch-notes-hero">
+      <div>
+        <div style="font-size:15px;font-weight:800;color:var(--text)">COFIN Enterprise Edition</div>
+        <div class="patch-date-label" id="patch-notes-date">Atualização de Novembro de 2026</div>
+      </div>
+      <span class="patch-version-pill" id="patch-notes-version-badge"><i class="ti ti-rocket"></i> v1.1.0</span>
+    </div>
+
+    <div class="patch-section">
+      <div class="patch-section-title">✨ Novo</div>
+      <ul class="patch-list" id="patch-list-novo">
+        <li><strong>Termómetro Visual "Ambient Glow":</strong> Iluminação atmosférica reativa ao consumo do Orçamento Mensal (Verde/Azul &lt; 50%, Laranja 50–80%, Vermelho/Púrpura &gt; 80%).</li>
+        <li><strong>Expansão "Magic Move" (View Transitions):</strong> Navegação fluida com morphing nativo entre a Bento Grid do Dashboard e páginas de Cartões, Contas e Lançamentos.</li>
+        <li><strong>Feedback Sonoro Tátil (SoundScape):</strong> Sintetizador acústico nativo em Web Audio API com timbres de cristal ao guardar e graves suaves ao apagar.</li>
+        <li><strong>Visualizador de Anexos "Split-View" (50% / 50%):</strong> Inspeção integrada de comprovantes (Imagens e PDFs) lado a lado com a tabela sem sair do ecrã.</li>
+        <li><strong>✨ Novo: Skeleton Screens em Vidro para carregamentos fluidos:</strong> Estados de carregamento translúcidos com reflexo de luz metálica contínuo (shimmer a 60fps) nos cartões da Bento Grid.</li>
+      </ul>
+    </div>
+
+    <div class="patch-section">
+      <div class="patch-section-title">🛠️ Melhorado/Corrigido</div>
+      <ul class="patch-list" id="patch-list-melhorado">
+        <li>Sincronização Familiar P2P em rede local (porta 45000) com Merge Inteligente por IDs únicos e Auto-Update silencioso (OTA).</li>
+        <li>Modo de Conciliação Bancária em tempo real, Menu de Contexto Nativo (Right-Click) e Celebrações de Metas com física de confettis.</li>
+        <li>Refinamento de responsividade da Bento Grid para adaptação dinâmica ao modo Split-View.</li>
+      </ul>
+    </div>
+
+    <div class="patch-section">
+      <div class="patch-section-title">🗑️ Removido</div>
+      <ul class="patch-list" id="patch-list-removido">
+        <li>Abertura forçada de anexos em janelas externas ou modais bloqueantes por padrão (substituída pelo Split-View lateral com opção de ampliar).</li>
+        <li>Cortes visuais bruscos na transição entre cartões da Bento Grid e vistas detalhadas.</li>
+      </ul>
+    </div>
+
+    <div class="modal-actions" style="margin-top:1.1rem">
+      <button type="button" class="btn btn-primary" onclick="fecharModalPatchNotes()"><i class="ti ti-check"></i> Entendido, explorar novidades</button>
+    </div>
+  </div>
+</div>
 
 <div class="toast" id="toast"></div>
 

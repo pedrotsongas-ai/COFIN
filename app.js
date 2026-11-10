@@ -1,5 +1,6 @@
 /* ================= ESTADO E PERSISTÊNCIA ================= */
-const APP_VERSAO = '2026-10-29 · r8';
+const CURRENT_VERSION = '1.1.0';
+const APP_VERSAO = '1.1.0 · r9';
 const STORAGE_KEY = 'controle-financeiro-dados';
 
 const SUBCATEGORIAS_PADRAO_MAP = {
@@ -45,7 +46,7 @@ let STATE = {
   lixeira: [],              // lançamentos excluídos (recuperáveis por 30 dias)
   excluidosPendentes: [],   // IDs apagados aqui que a planilha ainda pode ter (evita ressuscitar na sincronização)
   recorrentesIgnorados: [], // 'idRecorrência|AAAA-MM' apagados de propósito (a recorrência não recria)
-  config: { lastSync: null, oneDriveLink: null, ultimoMesFechado: null, modoViagem: { ativo: false, nome: '', hashtag: '' }, pastaBackup: null, ultimoBackupSilencioso: null }
+  config: { lastSync: null, oneDriveLink: null, ultimoMesFechado: null, modoViagem: { ativo: false, nome: '', hashtag: '' }, pastaBackup: null, ultimoBackupSilencioso: null, lastSeenVersion: null }
 };
 let importRowsRaw = [];
 let importHeaders = [];
@@ -335,25 +336,70 @@ function animarNumero(elemento, valorFinal, duracao = 600) {
 }
 
 /**
- * 5. Ambient Glow de Saúde Financeira
- * Transiciona a iluminação atmosférica no topo com base na solidez do mês.
+ * 5. Termómetro Visual "Ambient Glow" de Saúde Financeira
+ * Calcula a percentagem do Orçamento Mensal gasto e atualiza --ambient-glow dinamicamente:
+ * < 50%: verde/azul | 50-80%: laranja | > 80%: vermelho/púrpura
  */
 function atualizarAmbientGlow(resultadoMes, receitasMes, despesasMes, saldoDisponivel) {
-  const glow = document.getElementById('ambient-glow');
-  if (!glow) return;
+  const mesAtual = hojeLocalISO().slice(0, 7);
+  let desp = typeof despesasMes === 'number' ? despesasMes : 0;
+  let rec = typeof receitasMes === 'number' ? receitasMes : 0;
+
+  if (typeof despesasMes !== 'number' || typeof receitasMes !== 'number') {
+    desp = 0;
+    rec = 0;
+    (STATE.lancamentos || []).forEach(l => {
+      if (!l || l.ehTransferencia || l.ehMovimentoCofre) return;
+      const m = mesCompetenciaLancamento(l);
+      if (m === mesAtual) {
+        if (l.tipo === 'receita') rec += Number(l.valor) || 0;
+        else desp += Number(l.valor) || 0;
+      }
+    });
+  }
+
+  const orcamentoCategorias = (STATE.categorias || [])
+    .filter(c => c && c.tipo === 'despesa' && Number(c.orcamento) > 0)
+    .reduce((s, c) => s + (Number(c.orcamento) || 0), 0);
+  const orcamentoAntiMetas = (STATE.antiMetas || [])
+    .reduce((s, a) => s + (Number(a && a.limiteMensal) || 0), 0);
+  const rendaFixaAtiva = (STATE.receitasFixas || [])
+    .filter(r => r && r.ativo !== false)
+    .reduce((s, r) => s + (Number(r.valor) || 0), 0);
+
+  const orcamentoMensal = orcamentoCategorias > 0
+    ? orcamentoCategorias
+    : (rec > 0 ? rec : (rendaFixaAtiva > 0 ? rendaFixaAtiva : orcamentoAntiMetas));
+
+  const pctGasto = orcamentoMensal > 0
+    ? (desp / orcamentoMensal) * 100
+    : (desp > 0 ? 85 : 0);
 
   let cor;
-  if (resultadoMes < 0 || saldoDisponivel < 0) {
-    // Projeção negativa / alerta
-    cor = 'rgba(239, 68, 68, 0.20)';
-  } else if (receitasMes > 0 && (despesasMes / receitasMes) >= 0.8) {
-    // Limite próximo / consumo acima de 80%
+  if (pctGasto > 80 || (typeof resultadoMes === 'number' && resultadoMes < 0) || (typeof saldoDisponivel === 'number' && saldoDisponivel < 0)) {
+    // > 80% do orçamento ou saldo negativo: vermelho / púrpura
+    cor = 'rgba(239, 68, 68, 0.22)';
+  } else if (pctGasto >= 50) {
+    // Entre 50% e 80% do orçamento: laranja / âmbar
     cor = 'rgba(245, 158, 11, 0.20)';
   } else {
-    // Saldo folgado / saúde excelente (verde esmeralda / ciano)
-    cor = 'rgba(16, 185, 129, 0.16)';
+    // < 50% do orçamento: verde / azul
+    cor = 'rgba(46, 204, 113, 0.16)';
   }
-  glow.style.background = `radial-gradient(circle, ${cor} 0%, transparent 70%)`;
+
+  if (document.body && document.body.style) {
+    document.body.style.setProperty('--ambient-glow', cor);
+  }
+  if (document.documentElement && document.documentElement.style) {
+    document.documentElement.style.setProperty('--ambient-glow', cor);
+  }
+
+  const glow = document.getElementById('ambient-glow');
+  if (glow) {
+    glow.style.background = `radial-gradient(circle, ${cor} 0%, transparent 70%)`;
+  }
+
+  return { pctGasto: Math.round(pctGasto * 10) / 10, orcamentoMensal, despesasMes: desp, cor };
 }
 
 /**
@@ -1527,11 +1573,28 @@ async function salvarDados() {
   }
 }
 
-/* ================= NAVEGAÇÃO ================= */
+/* ================= NAVEGAÇÃO & EXPANSÃO "MAGIC MOVE" (VIEW TRANSITIONS API) ================= */
 const TITULOS = { dashboard:'Dashboard', lancamentos:'Lançamentos', cartoes:'Cartões & Faturas', recorrentes:'Assinaturas & Recorrentes', cofres:'Metas & Cofres', metas:'Metas & Cofres', dividas:'Dívidas & Terceiros', relatorios:'Relatórios', sync:'Sincronizar OneDrive', config:'Categorias & Contas' };
 const PAGINAS_MAIS = new Set(['recorrentes', 'cofres', 'metas', 'dividas', 'relatorios', 'sync', 'config']);
-function nav(page) {
+
+function limparMarcadoresMagicMove() {
+  document.querySelectorAll('.card-expansivel-ativo').forEach(el => {
+    el.classList.remove('card-expansivel-ativo');
+    if (el.style && el.style.viewTransitionName === 'card-expansivel') {
+      el.style.viewTransitionName = '';
+    }
+  });
+}
+
+function obterCardDestinoMagicMove(page) {
+  const pageEl = document.getElementById('page-' + page);
+  if (!pageEl) return null;
+  return pageEl.querySelector('.card, .cartao-fatura-container, .vault-card, .meta-vault-card, .table-wrap') || pageEl;
+}
+
+function executarTrocaPaginaInterna(page) {
   if (page === 'cofres') page = 'metas';
+  if (typeof fecharSplitViewer === 'function') fecharSplitViewer();
   document.querySelectorAll('.page').forEach(p => p.classList.remove('active', 'fade-in'));
   document.querySelectorAll('.nav-item, .bottom-nav-item, .mobile-more-item').forEach(n => n.classList.remove('active'));
   const pageEl = document.getElementById('page-' + page);
@@ -1564,6 +1627,53 @@ function nav(page) {
   if (page === 'config') renderConfig();
   if (page === 'sync') atualizarStatusMs();
   fecharSidebarMobile();
+}
+
+function expandirCardMagicMove(origemEl, pageDestino) {
+  const destino = pageDestino === 'cofres' ? 'metas' : pageDestino;
+  const cardOrigem = (origemEl && typeof origemEl.closest === 'function')
+    ? (origemEl.closest('.card, .metric, .dash-cartao-row, .dash-conta-row') || origemEl)
+    : document.getElementById('dash-saldo-contas-card');
+
+  if (typeof document !== 'undefined' && typeof document.startViewTransition === 'function' && cardOrigem) {
+    try {
+      limparMarcadoresMagicMove();
+      cardOrigem.classList.add('card-expansivel-ativo');
+      cardOrigem.style.viewTransitionName = 'card-expansivel';
+
+      const transition = document.startViewTransition(() => {
+        cardOrigem.classList.remove('card-expansivel-ativo');
+        cardOrigem.style.viewTransitionName = '';
+        executarTrocaPaginaInterna(destino);
+        const cardDestino = obterCardDestinoMagicMove(destino);
+        if (cardDestino) {
+          cardDestino.classList.add('card-expansivel-ativo');
+          cardDestino.style.viewTransitionName = 'card-expansivel';
+        }
+      });
+
+      if (transition && transition.finished && typeof transition.finished.finally === 'function') {
+        transition.finished.finally(() => {
+          limparMarcadoresMagicMove();
+        });
+      } else {
+        setTimeout(limparMarcadoresMagicMove, 450);
+      }
+      return;
+    } catch (e) {
+      limparMarcadoresMagicMove();
+    }
+  }
+
+  executarTrocaPaginaInterna(destino);
+}
+
+function nav(page, origemEl) {
+  if (origemEl) {
+    expandirCardMagicMove(origemEl, page);
+    return;
+  }
+  executarTrocaPaginaInterna(page);
 }
 function toggleSidebar() {
   const sheet = document.getElementById('mobile-more-sheet');
@@ -2616,7 +2726,7 @@ function renderDashboard() {
         html += nomesContas.map(nome => {
           const saldo = saldos[nome] || 0;
           return `
-            <div class="pendente-row dash-conta-row">
+            <div class="pendente-row dash-conta-row" style="cursor:pointer" onclick="expandirCardMagicMove(this, 'config')" title="Ver detalhes da conta ${escHtml(nome)}">
               <div class="pendente-info">
                 <div class="pendente-desc">
                   <i class="ti ti-building-bank" style="font-size:13px;color:var(--text3);margin-right:5px"></i>${escHtml(nome)}
@@ -2654,7 +2764,7 @@ function renderDashboard() {
           const tooltipInfo = `Cartão ${cartao.nome} · Fatura atual: ${toBRL(totalFatura)}${temLimite ? ` | Limite disponível: ${toBRL(disponivel)} (Total: ${toBRL(limite)} - ${pctUsado.toFixed(0)}% utilizado)` : ''}${temMaisPendencias ? ` | Total comprometido a pagar: ${toBRL(totalPendente)}` : ''}`;
 
           return `
-            <div class="pendente-row dash-cartao-row" onclick="nav('cartoes')" title="${escHtml(tooltipInfo)}">
+            <div class="pendente-row dash-cartao-row" onclick="expandirCardMagicMove(this, 'cartoes')" title="${escHtml(tooltipInfo)}">
               <div class="pendente-info">
                 <div class="pendente-desc">
                   <i class="ti ti-credit-card" style="font-size:13px;color:${cartao.cor || 'var(--accent)'};margin-right:5px"></i>${escHtml(cartao.nome)}
@@ -2697,6 +2807,7 @@ function renderDashboard() {
   renderAntiMetasWidget();
   inicializarSpotlightGlow();
   inicializarEfeito3DCartoes();
+  alternarEstadoCarregamento(false);
 }
 
 /* ================= LANÇAMENTOS ================= */
@@ -3731,7 +3842,9 @@ function verComprovante(dataUri) {
 function verComprovanteLancamento(id) {
   const l = STATE.lancamentos.find(x => x.id === id);
   if (!l) return;
-  if (l.comprovante) {
+  if (typeof abrirSplitViewerLancamento === 'function') {
+    abrirSplitViewerLancamento(l);
+  } else if (l.comprovante) {
     verComprovante(l.comprovante);
   } else if (l.anexoNome || l.anexoPath) {
     toast(`Anexo vinculado: ${l.anexoNome || ''}${l.anexoPath ? ' (' + l.anexoPath + ')' : ''}`, 'ok');
@@ -4027,6 +4140,7 @@ async function salvarLancamento() {
     splitLinhas = [];
     alternarSplitLancamento(false);
     await salvarDados();
+    if (typeof SoundScape !== 'undefined' && SoundScape.playSave) SoundScape.playSave();
     fecharModal('modal-lancamento');
     renderPaginaAtiva();
     sincronizarEmSegundoPlano();
@@ -4249,6 +4363,7 @@ async function salvarLancamento() {
     btnSalvar.classList.remove('btn-loading');
     btnSalvar.classList.add('btn-success');
   }
+  if (typeof SoundScape !== 'undefined' && SoundScape.playSave) SoundScape.playSave();
   await new Promise(res => setTimeout(res, 600));
 
   fecharModal('modal-lancamento');
@@ -4379,6 +4494,7 @@ async function excluirLancamento(id) {
 async function executarExclusaoParcelaUnica(l) {
   STATE.lancamentos = STATE.lancamentos.filter(x => x.id !== l.id);
   const entradaId = registrarExclusao([l], l.descricao || 'Lançamento');
+  if (typeof SoundScape !== 'undefined' && SoundScape.playDelete) SoundScape.playDelete();
   await salvarDados();
   renderPaginaAtiva(); atualizarContagemLixeira();
   sincronizarEmSegundoPlano();
@@ -4391,6 +4507,7 @@ async function executarExclusaoGrupoParcelas(itens, l) {
   const descBase = (l.descricao || 'Compra parcelada').replace(/\s*\(\d+\/\d+\)$/, '').trim();
   const rotulo = `${descBase} (${itens.length} parcelas)`;
   const entradaId = registrarExclusao(itens, rotulo);
+  if (typeof SoundScape !== 'undefined' && SoundScape.playDelete) SoundScape.playDelete();
   await salvarDados();
   renderPaginaAtiva(); atualizarContagemLixeira();
   sincronizarEmSegundoPlano();
@@ -4633,6 +4750,7 @@ async function criarLancamentoRapido() {
   });
   campo.value = '';
   atualizarPreviewSmartAdd();
+  if (typeof SoundScape !== 'undefined' && SoundScape.playSave) SoundScape.playSave();
   await salvarDados();
   renderPaginaAtiva();
   sincronizarEmSegundoPlano();
@@ -4690,6 +4808,7 @@ async function salvarTransferencia() {
     btnSalvar.classList.remove('btn-loading');
     btnSalvar.classList.add('btn-success');
   }
+  if (typeof SoundScape !== 'undefined' && SoundScape.playSave) SoundScape.playSave();
   await new Promise(res => setTimeout(res, 600));
 
   fecharModal('modal-transferencia');
@@ -4713,6 +4832,7 @@ async function excluirTransferencia(grupoId) {
   }
   STATE.lancamentos = STATE.lancamentos.filter(l => l.transferenciaGrupo !== grupoId);
   const entradaId = registrarExclusao(itens, itens[0].descricao || 'Transferência');
+  if (typeof SoundScape !== 'undefined' && SoundScape.playDelete) SoundScape.playDelete();
   await salvarDados();
   renderPaginaAtiva(); atualizarContagemLixeira();
   sincronizarEmSegundoPlano();
@@ -10177,6 +10297,308 @@ function inicializarAutoUpdateOTA() {
   }
 }
 
+/* ================= 3. FEEDBACK SONORO TÁTIL (SOUNDSCAPE - WEB AUDIO API) ================= */
+class SoundScape {
+  static _ctx = null;
+
+  static getContext() {
+    try {
+      if (!SoundScape._ctx) {
+        const AudioCtx = window.AudioContext || window.webkitAudioContext;
+        if (AudioCtx) {
+          SoundScape._ctx = new AudioCtx();
+        }
+      }
+      if (SoundScape._ctx && SoundScape._ctx.state === 'suspended' && typeof SoundScape._ctx.resume === 'function') {
+        SoundScape._ctx.resume().catch(() => {});
+      }
+      return SoundScape._ctx;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  /**
+   * Som agudo e subtil de "vidro / bolha" ao guardar dados
+   */
+  static playSave() {
+    try {
+      const ctx = SoundScape.getContext();
+      if (!ctx) return false;
+      const now = ctx.currentTime;
+
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(880, now);
+      osc.frequency.exponentialRampToValueAtTime(1318.5, now + 0.09);
+
+      gain.gain.setValueAtTime(0.075, now);
+      gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.16);
+
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start(now);
+      osc.stop(now + 0.17);
+      return true;
+    } catch (e) {
+      return false;
+    }
+  }
+
+  /**
+   * Som abafado e grave ao apagar dados
+   */
+  static playDelete() {
+    try {
+      const ctx = SoundScape.getContext();
+      if (!ctx) return false;
+      const now = ctx.currentTime;
+
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(195, now);
+      osc.frequency.exponentialRampToValueAtTime(55, now + 0.18);
+
+      gain.gain.setValueAtTime(0.11, now);
+      gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.21);
+
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start(now);
+      osc.stop(now + 0.22);
+      return true;
+    } catch (e) {
+      return false;
+    }
+  }
+}
+
+/* ================= 4. VISUALIZADOR DE ANEXOS "SPLIT-VIEW" (50% / 50%) ================= */
+let splitViewerLancamentoAtual = null;
+
+function atualizarOffsetTopSplitViewer() {
+  const mainEl = document.getElementById('main-workspace') || document.querySelector('main.main, .main');
+  const topbar = document.querySelector('.topbar');
+  if (!mainEl) return;
+  if (topbar && topbar.offsetHeight > 0) {
+    const offsetTop = (topbar.offsetTop || 0) + topbar.offsetHeight;
+    mainEl.style.setProperty('--split-viewer-top', `${offsetTop}px`);
+  } else {
+    mainEl.style.setProperty('--split-viewer-top', '57px');
+  }
+}
+
+function abrirSplitViewerLancamento(lancamentoOuId) {
+  const l = typeof lancamentoOuId === 'string'
+    ? (STATE.lancamentos || []).find(x => x.id === lancamentoOuId)
+    : lancamentoOuId;
+  if (!l) return;
+
+  const mainEl = document.getElementById('main-workspace') || document.querySelector('main.main, .main');
+  const viewer = document.getElementById('split-viewer');
+  const imgEl = document.getElementById('split-viewer-img');
+  const iframeEl = document.getElementById('split-viewer-iframe');
+  const fallbackEl = document.getElementById('split-viewer-fallback');
+  const titleEl = document.getElementById('split-viewer-title');
+  const subEl = document.getElementById('split-viewer-subtitle');
+  const btnAmpliar = document.getElementById('split-viewer-btn-ampliar');
+
+  if (!mainEl || !viewer) {
+    if (l.comprovante) verComprovante(l.comprovante);
+    return;
+  }
+
+  splitViewerLancamentoAtual = l;
+  atualizarOffsetTopSplitViewer();
+
+  const [a, m, d] = (l.data || '').split('-');
+  const dataFmt = a ? `${d}/${m}/${a}` : (l.data || '-');
+  if (titleEl) titleEl.textContent = l.anexoNome || l.descricao || 'Comprovante anexado';
+  if (subEl) subEl.textContent = `${l.descricao || 'Lançamento'} · ${toBRL(l.valor)} · ${dataFmt} (${l.conta || '-'})`;
+
+  const src = l.comprovante || '';
+  const nomeArq = (l.anexoNome || '').toLowerCase();
+  const pathArq = l.anexoPath || '';
+  const ehPdf = src.startsWith('data:application/pdf') || /\.pdf$/i.test(nomeArq) || /\.pdf$/i.test(pathArq);
+  const ehImagem = src.startsWith('data:image/') || (!!src && !ehPdf);
+
+  if (imgEl) {
+    imgEl.style.display = 'none';
+    imgEl.removeAttribute('src');
+  }
+  if (iframeEl) {
+    iframeEl.style.display = 'none';
+    iframeEl.removeAttribute('src');
+  }
+  if (fallbackEl) {
+    fallbackEl.style.display = 'none';
+    fallbackEl.innerHTML = '';
+  }
+
+  if (ehPdf && (src || pathArq)) {
+    if (iframeEl) {
+      iframeEl.src = src || pathArq;
+      iframeEl.style.display = 'block';
+    }
+    if (btnAmpliar) btnAmpliar.style.display = 'none';
+  } else if (ehImagem && src) {
+    if (imgEl) {
+      imgEl.src = src;
+      imgEl.style.display = 'block';
+    }
+    if (btnAmpliar) btnAmpliar.style.display = '';
+  } else if (fallbackEl) {
+    fallbackEl.style.display = 'block';
+    fallbackEl.innerHTML = `
+      <div style="font-size:36px;color:var(--accent);margin-bottom:10px"><i class="ti ti-file-description"></i></div>
+      <div style="font-weight:700;font-size:14px;color:var(--text);margin-bottom:4px">${escHtml(l.anexoNome || 'Anexo Registrado')}</div>
+      <div class="help-text" style="word-break:break-all">${escHtml(pathArq || 'Referência de anexo salva no lançamento.')}</div>
+    `;
+    if (btnAmpliar) btnAmpliar.style.display = 'none';
+  }
+
+  mainEl.classList.add('split-active');
+  viewer.setAttribute('aria-hidden', 'false');
+}
+
+function fecharSplitViewer() {
+  const mainEl = document.getElementById('main-workspace') || document.querySelector('main.main, .main');
+  const viewer = document.getElementById('split-viewer');
+  const iframeEl = document.getElementById('split-viewer-iframe');
+  if (mainEl) mainEl.classList.remove('split-active');
+  if (viewer) viewer.setAttribute('aria-hidden', 'true');
+  if (iframeEl) iframeEl.removeAttribute('src');
+  splitViewerLancamentoAtual = null;
+}
+
+function ampliarComprovanteDoSplitViewer() {
+  if (splitViewerLancamentoAtual && splitViewerLancamentoAtual.comprovante) {
+    verComprovante(splitViewerLancamentoAtual.comprovante);
+  }
+}
+
+/* ================= 5. SKELETON SCREENS EM VIDRO (PREMIUM LOADING STATE) ================= */
+const BENTO_SKELETON_CARD_IDS = [
+  'dash-chart-card',
+  'dash-saldo-contas-card',
+  'dash-reembolsos-card',
+  'dash-top3-categorias-card',
+  'dash-antimetas-card',
+  'dash-pendentes-card',
+  'dash-ultimos-card'
+];
+
+function alternarEstadoCarregamento(ativo) {
+  const isAtivo = Boolean(ativo);
+  const container = document.getElementById('dash-modular-container');
+  const kpisGrid = document.getElementById('dash-kpis');
+
+  const cardsAlvo = [];
+  BENTO_SKELETON_CARD_IDS.forEach(id => {
+    const el = document.getElementById(id);
+    if (el) cardsAlvo.push(el);
+  });
+  if (container && typeof container.querySelectorAll === 'function') {
+    const extras = container.querySelectorAll('.bento-item, .card.dash-draggable');
+    if (extras && extras.forEach) {
+      extras.forEach(el => {
+        if (el && el.id !== 'dash-kpis' && !cardsAlvo.includes(el)) cardsAlvo.push(el);
+      });
+    }
+  }
+
+  if (isAtivo) {
+    if (kpisGrid) {
+      const kpiCards = typeof kpisGrid.querySelectorAll === 'function' ? kpisGrid.querySelectorAll('.metric') : [];
+      if (kpiCards && kpiCards.length > 0) {
+        kpiCards.forEach(m => m.classList.add('skeleton-glass'));
+      } else {
+        kpisGrid.classList.add('skeleton-glass');
+        if (typeof kpisGrid.setAttribute === 'function') kpisGrid.setAttribute('data-skeleton-temp-kpis', '1');
+        kpisGrid.innerHTML = Array.from({ length: 6 }).map(() => `
+          <div class="metric skeleton-glass" aria-hidden="true">
+            <div class="skeleton-bar sk-title"></div>
+            <div class="skeleton-bar sk-lg" style="margin:8px 0"></div>
+            <div class="skeleton-bar sk-sm"></div>
+            <span class="skeleton-invisible-text">A carregar indicador...</span>
+          </div>
+        `).join('');
+      }
+    }
+
+    cardsAlvo.forEach(card => {
+      card.classList.add('skeleton-glass');
+      if (typeof card.setAttribute === 'function') card.setAttribute('aria-busy', 'true');
+      const jaTemOverlay = typeof card.querySelector === 'function' && card.querySelector('.skeleton-placeholder-overlay');
+      if (!jaTemOverlay && typeof document.createElement === 'function') {
+        const overlay = document.createElement('div');
+        overlay.className = 'skeleton-placeholder-overlay';
+        if (typeof overlay.setAttribute === 'function') overlay.setAttribute('aria-hidden', 'true');
+        overlay.innerHTML = `
+          <div class="skeleton-bar sk-title"></div>
+          <div class="skeleton-bar sk-lg"></div>
+          <div class="skeleton-bar sk-md"></div>
+          <div class="skeleton-bar sk-sm"></div>
+          <span class="skeleton-invisible-text">A carregar dados financeiros...</span>
+        `;
+        if (typeof card.appendChild === 'function') {
+          card.appendChild(overlay);
+        }
+      }
+    });
+  } else {
+    if (kpisGrid) {
+      kpisGrid.classList.remove('skeleton-glass');
+      if (typeof kpisGrid.getAttribute === 'function' && kpisGrid.getAttribute('data-skeleton-temp-kpis') === '1') {
+        if (typeof kpisGrid.removeAttribute === 'function') kpisGrid.removeAttribute('data-skeleton-temp-kpis');
+      }
+      const kpiCards = typeof kpisGrid.querySelectorAll === 'function' ? kpisGrid.querySelectorAll('.metric.skeleton-glass') : [];
+      if (kpiCards && kpiCards.forEach) {
+        kpiCards.forEach(m => m.classList.remove('skeleton-glass'));
+      }
+    }
+
+    cardsAlvo.forEach(card => {
+      card.classList.remove('skeleton-glass');
+      if (typeof card.removeAttribute === 'function') card.removeAttribute('aria-busy');
+      if (typeof card.querySelectorAll === 'function') {
+        const overlays = card.querySelectorAll('.skeleton-placeholder-overlay');
+        if (overlays && overlays.forEach) {
+          overlays.forEach(ov => {
+            if (ov && typeof ov.remove === 'function') ov.remove();
+            else if (ov && ov.parentNode) ov.parentNode.removeChild(ov);
+          });
+        }
+      }
+    });
+  }
+
+  return isAtivo;
+}
+
+/* ================= 6. MODAL DE PATCH NOTES / CHANGELOG ================= */
+function abrirModalPatchNotes() {
+  const badgeEl = document.getElementById('patch-notes-version-badge');
+  if (badgeEl) badgeEl.innerHTML = `<i class="ti ti-rocket"></i> v${CURRENT_VERSION}`;
+  abrirModal('modal-patch-notes');
+}
+
+async function fecharModalPatchNotes() {
+  if (!STATE.config) STATE.config = {};
+  STATE.config.lastSeenVersion = CURRENT_VERSION;
+  fecharModal('modal-patch-notes');
+  await salvarDados();
+}
+
+function verificarPatchNotes() {
+  if (!STATE.config) STATE.config = {};
+  if (STATE.config.lastSeenVersion !== CURRENT_VERSION) {
+    abrirModalPatchNotes();
+  }
+}
+
 /* ================= INIT ================= */
 const contentEl = document.querySelector('.content');
 const topbarEl = document.querySelector('.topbar');
@@ -10217,11 +10639,13 @@ if (dropZoneAnexo) {
 }
 document.querySelectorAll('.modal-bg').forEach(m => m.addEventListener('click', e => {
   if (e.target !== m) return;
-  if (m.id === 'modal-prompt') { cancelarPrompt(); } else { fecharModal(m.id); }
+  if (m.id === 'modal-prompt') { cancelarPrompt(); }
+  else if (m.id === 'modal-patch-notes') { fecharModalPatchNotes(); }
+  else { fecharModal(m.id); }
 }));
 (async function init() {
   sincronizarIconeTema();
-  document.getElementById('app-versao').textContent = 'COFIN · versão ' + APP_VERSAO;
+  document.getElementById('app-versao').textContent = 'COFIN · v' + CURRENT_VERSION + ' (' + APP_VERSAO + ')';
   inicializarModoStealth();
   // Privacidade: liga o "borrador" ANTES de desenhar qualquer tela, pra nenhum valor aparecer nem por um instante.
   try { if (localStorage.getItem(PRIV_CHAVE) === '1') aplicarPrivacidade(true, false); } catch (e) {}
@@ -10236,12 +10660,14 @@ document.querySelectorAll('.modal-bg').forEach(m => m.addEventListener('click', 
   if (document.documentElement.classList.contains('bloqueado')) setTimeout(() => document.getElementById('bloqueio-pin').focus(), 100);
   else iniciarRelogioOcioso();
   atualizarSegurancaUI();
+  alternarEstadoCarregamento(true);
   const veioDoLoginMs = await msTratarRetornoDoLogin(); // voltando da tela de login da Microsoft (site/celular)
   await carregarDados();
   inicializarSyncFamiliarP2P();
   await gerarLancamentosRecorrentes();
   await processarReceitasAutomatizadas();
   renderDashboard();
+  verificarPatchNotes();
   atualizarStatusSync();
   atualizarUIBackup();
   setTimeout(() => { executarBackupSilencioso(false).catch(() => {}); }, 1500);
