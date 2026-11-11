@@ -739,10 +739,10 @@ input:disabled, select:disabled, textarea:disabled {
 }
 
 /* MODAL */
-.modal-bg { display: flex; position: fixed; inset: 0; background: rgba(15, 23, 42, .45); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); z-index: 300; align-items: center; justify-content: center; padding: 1rem; opacity: 0; visibility: hidden; pointer-events: none; transition: opacity .25s ease, visibility .25s ease; }
-.modal-bg.show { opacity: 1; visibility: visible; pointer-events: auto; }
+.modal-bg, .modal-backdrop { display: flex; position: fixed; inset: 0; background: rgba(15, 23, 42, .45); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); z-index: 300; align-items: center; justify-content: center; padding: 1rem; opacity: 0; visibility: hidden; pointer-events: none; transition: opacity .25s ease, visibility .25s ease; }
+.modal-bg.show, .modal-backdrop.show { opacity: 1; visibility: visible; pointer-events: auto; }
 .modal { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg); box-shadow: var(--shadow-lg); width: 100%; max-width: 480px; max-height: 90vh; overflow-y: auto; padding: 1.5rem; transform: translateY(20px) scale(0.96); opacity: 0; transition: transform .32s cubic-bezier(0.34, 1.56, 0.64, 1), opacity .22s ease; }
-.modal-bg.show .modal { transform: translateY(0) scale(1); opacity: 1; }
+.modal-bg.show .modal, .modal-backdrop.show .modal { transform: translateY(0) scale(1); opacity: 1; }
 .modal.wide { max-width: 780px; }
 .modal-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.1rem; }
 .modal-title { font-size: 15px; font-weight: 600; }
@@ -3421,5 +3421,159 @@ body.body-modal-active .bottom-nav {
   content: "•";
   color: var(--accent);
   font-weight: 800;
+  flex-shrink: 0;
+}
+
+/* ==========================================================================
+   FLUXO INTELIGENTE DE PAGAMENTO DE FATURA (CARTÕES DE CRÉDITO)
+   ========================================================================== */
+.cartoes-fatura-hero-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 16px 20px;
+  background: linear-gradient(135deg, rgba(26, 111, 224, 0.08) 0%, var(--surface) 100%);
+  border: 1px solid var(--border2);
+  flex-wrap: wrap;
+}
+
+.cartoes-fatura-hero-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.cartoes-fatura-hero-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.btn-pagar-fatura {
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  transition: transform 0.2s ease, box-shadow 0.2s ease, opacity 0.2s ease;
+}
+
+.btn-pagar-fatura:not(:disabled):hover {
+  transform: translateY(-1px);
+  box-shadow: 0 6px 18px rgba(26, 111, 224, 0.28);
+}
+
+.btn-pagar-fatura:disabled {
+  opacity: 0.52;
+  cursor: not-allowed;
+  background: var(--surface3) !important;
+  color: var(--text3) !important;
+  border-color: var(--border) !important;
+  box-shadow: none !important;
+  transform: none !important;
+}
+
+.badge-fatura-paga,
+.badge-liquidado {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 9px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  background: rgba(16, 185, 129, 0.15);
+  color: #10B981;
+  border: 1px solid rgba(16, 185, 129, 0.32);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.fatura-pagamento-resumo {
+  padding: 16px 18px;
+  border-radius: var(--radius-lg);
+  background: linear-gradient(135deg, rgba(26, 111, 224, 0.12) 0%, var(--surface2) 100%);
+  border: 1px solid var(--border2);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.fatura-pagamento-resumo-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.fatura-pagamento-label {
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  color: var(--text3);
+  text-transform: uppercase;
+}
+
+.fatura-pagamento-valor {
+  font-family: var(--mono);
+  font-size: 26px;
+  font-weight: 800;
+  color: var(--text);
+  letter-spacing: -0.02em;
+  margin: 2px 0;
+}
+
+.fatura-pagamento-meta {
+  font-size: 12px;
+  color: var(--text2);
+}
+
+.fatura-pagamento-preview {
+  margin-top: 12px;
+  padding: 12px 14px;
+  border-radius: var(--radius);
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.fatura-preview-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 12.5px;
+  color: var(--text2);
+}
+
+.fatura-preview-row strong {
+  font-family: var(--mono);
+  font-weight: 700;
+}
+
+.fatura-preview-row-highlight {
+  padding-top: 8px;
+  border-top: 1px dashed var(--border2);
+  color: var(--text);
+  font-weight: 600;
+}
+
+.fatura-pagamento-nota-dre {
+  margin-top: 10px;
+  padding: 9px 12px;
+  border-radius: var(--radius);
+  background: rgba(16, 185, 129, 0.08);
+  border: 1px solid rgba(16, 185, 129, 0.22);
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: 11.5px;
+  color: var(--text2);
+  line-height: 1.4;
+}
+
+.fatura-pagamento-nota-dre i {
+  color: #10B981;
+  font-size: 15px;
+  margin-top: 1px;
   flex-shrink: 0;
 }

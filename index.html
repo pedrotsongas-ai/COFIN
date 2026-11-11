@@ -309,6 +309,21 @@
 
     <!-- CARTÕES & FATURAS -->
     <div id="page-cartoes" class="page">
+      <div class="card cartoes-fatura-hero-bar" id="cartoes-resumo-fatura-bar" style="display:none;margin-bottom:16px">
+        <div class="cartoes-fatura-hero-info">
+          <div class="metric-label" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+            <span>TOTAL DA FATURA</span>
+            <span class="badge badge-fatura-paga" id="cartoes-hero-badge-paga" style="display:none"><i class="ti ti-circle-check"></i> Fatura Paga</span>
+          </div>
+          <div class="metric-value mv-bad valor-sensivel" id="cartoes-hero-total-valor">R$ 0,00</div>
+          <div class="metric-sub" id="cartoes-hero-sub">Fatura do mês selecionado</div>
+        </div>
+        <div class="cartoes-fatura-hero-actions">
+          <button type="button" class="btn btn-primary btn-pagar-fatura" id="btn-hero-pagar-fatura" onclick="abrirModalPagamentoFatura()" disabled>
+            <i class="ti ti-cash-banknote"></i> Pagar Fatura
+          </button>
+        </div>
+      </div>
       <div id="cartoes-content"></div>
       <div id="cartoes-empty" class="empty" style="display:none">
         <div class="empty-illustration-wrap">
@@ -1812,6 +1827,68 @@
 
     <div class="modal-actions" style="margin-top:1.1rem">
       <button type="button" class="btn btn-primary" onclick="fecharModalPatchNotes()"><i class="ti ti-check"></i> Entendido, explorar novidades</button>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL PAGAR FATURA INTELIGENTE -->
+<div class="modal-bg" id="modal-pagar-fatura" onclick="if(event.target === this) fecharModal('modal-pagar-fatura')">
+  <div class="modal" style="max-width:480px">
+    <input type="hidden" id="pagar-fatura-cartao-id">
+    <input type="hidden" id="pagar-fatura-valor-raw">
+    <input type="hidden" id="pagar-fatura-mes">
+    <input type="hidden" id="pagar-fatura-ano">
+
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:.75rem">
+      <div>
+        <div class="modal-title" style="margin-bottom:2px;display:flex;align-items:center;gap:8px">
+          <i class="ti ti-cash-banknote" style="color:var(--accent)"></i> Pagar Fatura do Cartão
+        </div>
+        <div class="help-text" id="pagar-fatura-subtitulo">Liquidação inteligente com restauro automático de limite</div>
+      </div>
+      <button type="button" class="icon-btn" onclick="fecharModal('modal-pagar-fatura')" title="Fechar"><i class="ti ti-x"></i></button>
+    </div>
+
+    <div class="fatura-pagamento-resumo">
+      <div class="fatura-pagamento-resumo-top">
+        <span class="fatura-pagamento-label">TOTAL DA FATURA A PAGAR</span>
+        <span class="badge badge-info" id="pagar-fatura-competencia-pill">--/----</span>
+      </div>
+      <div class="fatura-pagamento-valor valor-sensivel" id="pagar-fatura-valor-total">R$ 0,00</div>
+      <div class="fatura-pagamento-meta" id="pagar-fatura-qtd-itens">0 lançamentos pendentes nesta competência</div>
+    </div>
+
+    <div class="fg" style="margin-top:1rem">
+      <label for="pagar-fatura-conta-origem"><i class="ti ti-building-bank"></i> Conta Bancária de Origem (Débito)</label>
+      <select id="pagar-fatura-conta-origem" onchange="atualizarPreviewSaldoPagamentoFatura()"></select>
+      <span class="help-text">Escolha de qual conta bancária sairá o dinheiro para quitar esta fatura.</span>
+    </div>
+
+    <div class="fatura-pagamento-preview" id="pagar-fatura-preview-box">
+      <div class="fatura-preview-row">
+        <span>Saldo atual na conta:</span>
+        <strong class="valor-sensivel" id="pagar-fatura-saldo-atual">R$ 0,00</strong>
+      </div>
+      <div class="fatura-preview-row">
+        <span>Saldo após pagamento:</span>
+        <strong class="valor-sensivel" id="pagar-fatura-saldo-final">R$ 0,00</strong>
+      </div>
+      <div class="fatura-preview-row fatura-preview-row-highlight">
+        <span><i class="ti ti-lock-open"></i> Limite restituído no cartão:</span>
+        <strong class="valor-sensivel" style="color:var(--good)" id="pagar-fatura-limite-liberado">+ R$ 0,00</strong>
+      </div>
+    </div>
+
+    <div class="fatura-pagamento-nota-dre">
+      <i class="ti ti-shield-check"></i>
+      <span>Classificado como <strong>Transferência/Pagamento de Fatura</strong> (neutro no DRE para não duplicar as despesas individuais do cartão nos relatórios).</span>
+    </div>
+
+    <div class="modal-actions" style="margin-top:1.15rem">
+      <button type="button" class="btn" onclick="fecharModal('modal-pagar-fatura')">Cancelar</button>
+      <button type="button" class="btn btn-primary" id="btn-confirmar-pagamento-fatura" onclick="confirmarPagamentoFatura()">
+        <i class="ti ti-checks"></i> Confirmar Pagamento
+      </button>
     </div>
   </div>
 </div>

@@ -2433,7 +2433,7 @@ function renderDashboard() {
   const mesAtual = hojeLocalISO().slice(0, 7);
   let receitasMes = 0, despesasMes = 0, totalReceitas = 0, totalDespesas = 0;
   STATE.lancamentos.forEach(l => {
-    if (l.ehMovimentoCofre) return;
+    if (l.ehMovimentoCofre || l.ehPagamentoFatura) return;
     const mesLanc = mesCompetenciaLancamento(l);
 
     // Considera apenas transações até o mês atual (ignora parcelas e lançamentos de meses futuros)
@@ -2746,10 +2746,12 @@ function renderDashboard() {
         html += cartoesDash.map(cartao => {
           const compAtual = competenciaFatura(hojeDashISO, cartao.diaFechamento || 1);
           const itensFatura = lancamentosDaFatura(cartao.nome, compAtual.ano, compAtual.mes);
-          const totalFatura = itensFatura.reduce((s, l) => s + l.valor, 0);
+          const totalBrutoFatura = itensFatura.reduce((s, l) => s + l.valor, 0);
+          const totalFatura = itensFatura.filter(l => !estaPago(l) && !l.faturaPaga).reduce((s, l) => s + l.valor, 0);
+          const faturaJaPaga = itensFatura.length > 0 && totalFatura <= 0;
           const temLimite = typeof cartao.limite === 'number' && cartao.limite > 0;
           const limite = temLimite ? cartao.limite : 0;
-          const pendentesCartao = STATE.lancamentos.filter(l => l.conta === cartao.nome && l.tipo === 'despesa' && !estaPago(l));
+          const pendentesCartao = STATE.lancamentos.filter(l => l.conta === cartao.nome && l.tipo === 'despesa' && !estaPago(l) && !l.faturaPaga);
           const totalPendente = pendentesCartao.reduce((s, l) => s + l.valor, 0);
           const disponivel = temLimite ? Math.max(0, limite - totalPendente) : 0;
           const pctUsado = (temLimite && limite > 0) ? Math.min(100, Math.max(0, (totalPendente / limite) * 100)) : 0;
@@ -2761,13 +2763,14 @@ function renderDashboard() {
           const corBarra = pctUsado >= 90 ? 'critico' : (pctUsado >= 70 ? 'aviso' : 'normal');
           const temMaisPendencias = totalPendente > totalFatura;
 
-          const tooltipInfo = `Cartão ${cartao.nome} · Fatura atual: ${toBRL(totalFatura)}${temLimite ? ` | Limite disponível: ${toBRL(disponivel)} (Total: ${toBRL(limite)} - ${pctUsado.toFixed(0)}% utilizado)` : ''}${temMaisPendencias ? ` | Total comprometido a pagar: ${toBRL(totalPendente)}` : ''}`;
+          const tooltipInfo = `Cartão ${cartao.nome} · Fatura atual: ${toBRL(totalFatura)}${faturaJaPaga ? ` (Fatura Paga: ${toBRL(totalBrutoFatura)})` : ''}${temLimite ? ` | Limite disponível: ${toBRL(disponivel)} (Total: ${toBRL(limite)} - ${pctUsado.toFixed(0)}% utilizado)` : ''}${temMaisPendencias ? ` | Total comprometido a pagar: ${toBRL(totalPendente)}` : ''}`;
 
           return `
             <div class="pendente-row dash-cartao-row" onclick="expandirCardMagicMove(this, 'cartoes')" title="${escHtml(tooltipInfo)}">
               <div class="pendente-info">
-                <div class="pendente-desc">
-                  <i class="ti ti-credit-card" style="font-size:13px;color:${cartao.cor || 'var(--accent)'};margin-right:5px"></i>${escHtml(cartao.nome)}
+                <div class="pendente-desc" style="display:flex;align-items:center;gap:5px;flex-wrap:wrap">
+                  <span><i class="ti ti-credit-card" style="font-size:13px;color:${cartao.cor || 'var(--accent)'};margin-right:5px"></i>${escHtml(cartao.nome)}</span>
+                  ${faturaJaPaga ? `<span class="badge badge-fatura-paga" style="font-size:9.5px;padding:1px 6px"><i class="ti ti-circle-check"></i> Fatura Paga</span>` : ''}
                 </div>
                 <div class="pendente-meta">
                   <span>Fatura atual</span>
@@ -2849,10 +2852,18 @@ function categoriaCorrespondeFiltro(catLanc, catFiltro) {
   const parsed = extrairMacroESubcategoria(catLanc);
   return parsed.macro.toLowerCase() === catFiltro.toLowerCase();
 }
-function estaPago(l) { return l.pago !== false; }
+function estaPago(l) {
+  return l.pago !== false || l.faturaPaga === true || l.status === 'Liquidado' || l.status === 'Pago/Efetivado';
+}
 function badgeStatusHTML(l, comClique) {
   const pago = estaPago(l);
   const onclick = comClique ? ` onclick="togglePagamento('${l.id}')" title="Clique para alternar"` : '';
+  if (pago && (l.faturaPaga || l.status === 'Liquidado')) {
+    return `<span class="badge badge-pago badge-liquidado${comClique?' badge-click':''}"${onclick}><i class="ti ti-checks" style="font-size:11px;margin-right:2px"></i>Liquidado</span>`;
+  }
+  if (pago && (l.ehPagamentoFatura || l.status === 'Pago/Efetivado')) {
+    return `<span class="badge badge-pago badge-liquidado${comClique?' badge-click':''}"${onclick}><i class="ti ti-circle-check" style="font-size:11px;margin-right:2px"></i>Pago/Efetivado</span>`;
+  }
   return `<span class="badge ${pago?'badge-pago':'badge-pendente'}${comClique?' badge-click':''}"${onclick}>${pago?'Pago':'Pendente'}</span>`;
 }
 function badgeParcelaHTML(l) {
@@ -3077,7 +3088,7 @@ function renderLancamentos() {
   tbody.innerHTML = lista.map(l => {
     const [a,m,d] = (l.data||'').split('-');
     const dataFmt = a ? `${d}/${m}/${a}` : '-';
-    const acoes = l.ehTransferencia
+    const acoes = (l.ehTransferencia && l.transferenciaGrupo)
       ? `<button class="icon-btn danger" onclick="excluirTransferencia('${l.transferenciaGrupo}')" title="Excluir transferência"><i class="ti ti-trash"></i></button>`
       : `<button class="icon-btn" onclick="abrirModalLancamento('${l.id}')" title="Editar"><i class="ti ti-pencil"></i></button>
          <button class="icon-btn danger" onclick="excluirLancamento('${l.id}')" title="Excluir"><i class="ti ti-trash"></i></button>`;
@@ -3353,7 +3364,12 @@ async function marcarSelecionadosComoPagos() {
 async function togglePagamento(id) {
   const l = STATE.lancamentos.find(x => x.id === id);
   if (!l) return;
-  l.pago = !estaPago(l);
+  const novoEstado = !estaPago(l);
+  l.pago = novoEstado;
+  if (!novoEstado) {
+    l.faturaPaga = false;
+    if (l.status === 'Liquidado' || l.status === 'Pago/Efetivado') delete l.status;
+  }
   l.sincronizado = false;
   await salvarDados();
   renderPaginaAtiva();
@@ -6061,7 +6077,7 @@ function patrimonioAcumulado(numMeses, hashtagFiltro) {
   }
   const primeiroMes = meses[0];
   const baseLancs = (hashtagFiltro ? STATE.lancamentos.filter(l => lancamentoTemHashtag(l, hashtagFiltro)) : STATE.lancamentos)
-    .filter(l => !l.ehMovimentoCofre);
+    .filter(l => !l.ehMovimentoCofre && !l.ehPagamentoFatura);
   let acumulado = baseLancs
     .filter(l => estaPago(l) && mesCompetenciaLancamento(l) < primeiroMes)
     .reduce((s,l) => s + (l.tipo === 'receita' ? 1 : -1) * l.valor, 0);
@@ -6072,26 +6088,345 @@ function patrimonioAcumulado(numMeses, hashtagFiltro) {
   });
 }
 
-/* ================= CARTÕES & FATURAS ================= */
+/* ================= CARTÕES & FATURAS (FLUXO INTELIGENTE DE PAGAMENTO) ================= */
 let estadoFaturaCartao = {};
+let _contextoPagamentoFatura = null;
+
 function navegarFatura(nomeCartao, delta) {
   estadoFaturaCartao[nomeCartao] = (estadoFaturaCartao[nomeCartao] || 0) + delta;
   renderCartoes();
 }
-function pagarFaturaInteira(nomeCartao, ano, mes) {
-  const itens = lancamentosDaFatura(nomeCartao, ano, mes).filter(l => !estaPago(l));
-  if (!itens.length) return;
-  abrirConfirmacao(`Marcar ${itens.length} lançamento(s) dessa fatura como pagos?`, async () => {
-    itens.forEach(l => { l.pago = true; l.sincronizado = false; });
+
+function resolverCartaoPorIdOuNome(idOuNome) {
+  const listaCartoes = Array.isArray(STATE.cartoes) ? STATE.cartoes : [];
+  const listaContasCartao = (STATE.contas || []).filter(c => c.tipo === 'cartao');
+
+  let cartaoInt = null;
+  let cartaoConta = null;
+
+  if (idOuNome) {
+    cartaoInt = listaCartoes.find(c => c.id === idOuNome || c.nome === idOuNome) || null;
+    cartaoConta = listaContasCartao.find(c => c.id === idOuNome || c.nome === idOuNome) || null;
+  } else {
+    cartaoConta = listaContasCartao[0] || null;
+    cartaoInt = listaCartoes[0] || null;
+  }
+
+  if (cartaoInt && !cartaoConta) {
+    cartaoConta = listaContasCartao.find(c => c.nome === cartaoInt.nome || c.id === cartaoInt.id) || null;
+  } else if (cartaoConta && !cartaoInt) {
+    cartaoInt = listaCartoes.find(c => c.nome === cartaoConta.nome || c.id === cartaoConta.id) || null;
+  }
+
+  if (!cartaoInt && !cartaoConta) return null;
+
+  const nome = (cartaoConta && cartaoConta.nome) || (cartaoInt && cartaoInt.nome);
+  const id = (cartaoInt && cartaoInt.id) || (cartaoConta && cartaoConta.id) || nome;
+  const diaFechamento = parseInt((cartaoConta && cartaoConta.diaFechamento) || (cartaoInt && cartaoInt.diaFechamento), 10) || 1;
+  const diaVencimento = parseInt((cartaoConta && cartaoConta.diaVencimento) || (cartaoInt && cartaoInt.diaVencimento), 10) || 10;
+  const limiteTotal = Number((cartaoInt && (cartaoInt.limiteTotal || cartaoInt.limite)) || (cartaoConta && cartaoConta.limite)) || 0;
+
+  return { id, nome, diaFechamento, diaVencimento, limiteTotal, cartaoInt, cartaoConta };
+}
+
+function abrirModalPagamentoFatura(idCartao, mesParam, anoParam) {
+  const infoCartao = resolverCartaoPorIdOuNome(idCartao);
+  if (!infoCartao) {
+    toast('Cartão de crédito não encontrado.', 'err');
+    return;
+  }
+
+  const { id, nome: nomeCartao, diaFechamento } = infoCartao;
+  let mes = parseInt(mesParam, 10);
+  let ano = parseInt(anoParam, 10);
+
+  if (!mes || !ano || isNaN(mes) || isNaN(ano)) {
+    const offset = estadoFaturaCartao[nomeCartao] || 0;
+    const compAtual = competenciaFatura(hojeLocalISO(), diaFechamento);
+    ano = compAtual.ano;
+    mes = compAtual.mes + offset;
+    while (mes > 12) { mes -= 12; ano++; }
+    while (mes < 1) { mes += 12; ano--; }
+  }
+
+  const itensFatura = lancamentosDaFatura(nomeCartao, ano, mes);
+  const itensPendentes = itensFatura.filter(l => !estaPago(l) && !l.faturaPaga);
+  const valorFatura = Math.round(itensPendentes.reduce((s, l) => s + (Number(l.valor) || 0), 0) * 100) / 100;
+
+  if (valorFatura <= 0) {
+    toast('Esta fatura já está liquidada ou não possui saldo pendente.', 'info');
+    return;
+  }
+
+  const contasDebito = (STATE.contas || []).filter(c => c.tipo !== 'cartao');
+  if (!contasDebito.length) {
+    toast('Cadastre pelo menos uma Conta Bancária (Débito) em Categorias & Contas para pagar a fatura.', 'err');
+    return;
+  }
+
+  const saldos = saldoPorConta();
+  const selConta = document.getElementById('pagar-fatura-conta-origem');
+  if (selConta) {
+    selConta.innerHTML = contasDebito.map(c => {
+      const saldoAtual = saldos[c.nome] || 0;
+      return `<option value="${escHtml(c.id || c.nome)}" data-nome="${escHtml(c.nome)}">${escHtml(c.nome)} — Saldo: ${toBRL(saldoAtual)}</option>`;
+    }).join('');
+  }
+
+  const nomesMes = { 1:'Jan',2:'Fev',3:'Mar',4:'Abr',5:'Mai',6:'Jun',7:'Jul',8:'Ago',9:'Set',10:'Out',11:'Nov',12:'Dez' };
+  const competenciaLabel = `${nomesMes[mes] || String(mes).padStart(2, '0')}/${ano}`;
+
+  _contextoPagamentoFatura = {
+    idCartao: id,
+    nomeCartao,
+    valorFatura,
+    mes,
+    ano,
+    qtdItens: itensPendentes.length
+  };
+
+  const inpCartaoId = document.getElementById('pagar-fatura-cartao-id');
+  const inpValorRaw = document.getElementById('pagar-fatura-valor-raw');
+  const inpMes = document.getElementById('pagar-fatura-mes');
+  const inpAno = document.getElementById('pagar-fatura-ano');
+  if (inpCartaoId) inpCartaoId.value = id;
+  if (inpValorRaw) inpValorRaw.value = String(valorFatura);
+  if (inpMes) inpMes.value = String(mes);
+  if (inpAno) inpAno.value = String(ano);
+
+  const elSub = document.getElementById('pagar-fatura-subtitulo');
+  const elComp = document.getElementById('pagar-fatura-competencia-pill');
+  const elValTotal = document.getElementById('pagar-fatura-valor-total');
+  const elQtdItens = document.getElementById('pagar-fatura-qtd-itens');
+  const elLimLib = document.getElementById('pagar-fatura-limite-liberado');
+
+  if (elSub) elSub.textContent = `${nomeCartao} · Competência ${competenciaLabel}`;
+  if (elComp) elComp.textContent = competenciaLabel;
+  if (elValTotal) elValTotal.textContent = toBRL(valorFatura);
+  if (elQtdItens) elQtdItens.textContent = `${itensPendentes.length} lançamento(s) pendente(s) serão marcados como Liquidados`;
+  if (elLimLib) elLimLib.textContent = `+ ${toBRL(valorFatura)}`;
+
+  atualizarPreviewSaldoPagamentoFatura();
+  abrirModal('modal-pagar-fatura');
+}
+
+function atualizarPreviewSaldoPagamentoFatura() {
+  const selConta = document.getElementById('pagar-fatura-conta-origem');
+  const inpValorRaw = document.getElementById('pagar-fatura-valor-raw');
+  const elSaldoAtual = document.getElementById('pagar-fatura-saldo-atual');
+  const elSaldoFinal = document.getElementById('pagar-fatura-saldo-final');
+  if (!selConta || !elSaldoAtual || !elSaldoFinal) return;
+
+  const valConta = selConta.value;
+  const contaObj = (STATE.contas || []).find(c => c.tipo !== 'cartao' && (c.id === valConta || c.nome === valConta));
+  const nomeConta = contaObj ? contaObj.nome : valConta;
+  const saldos = saldoPorConta();
+  const saldoAtual = Number(saldos[nomeConta]) || 0;
+  const valorFatura = Number(inpValorRaw ? inpValorRaw.value : (_contextoPagamentoFatura && _contextoPagamentoFatura.valorFatura)) || 0;
+  const saldoFinal = Math.round((saldoAtual - valorFatura) * 100) / 100;
+
+  elSaldoAtual.textContent = toBRL(saldoAtual);
+  elSaldoAtual.style.color = saldoAtual >= 0 ? 'var(--text)' : 'var(--bad)';
+  elSaldoFinal.textContent = toBRL(saldoFinal);
+  elSaldoFinal.style.color = saldoFinal >= 0 ? 'var(--good)' : 'var(--bad)';
+}
+
+async function confirmarPagamentoFatura(idContaOrigem, idCartao, valorFatura, mes, ano) {
+  // Permite invocação direta pelo botão do modal (sem argumentos) ou programática com parâmetros explícitos
+  if (!idContaOrigem || (typeof idContaOrigem === 'object' && idContaOrigem !== null)) {
+    const selConta = document.getElementById('pagar-fatura-conta-origem');
+    idContaOrigem = selConta ? selConta.value : '';
+  }
+  if (!idCartao) {
+    const inpCartao = document.getElementById('pagar-fatura-cartao-id');
+    idCartao = (inpCartao && inpCartao.value) || (_contextoPagamentoFatura && _contextoPagamentoFatura.idCartao);
+  }
+  if (valorFatura === undefined || valorFatura === null || isNaN(Number(valorFatura))) {
+    const inpVal = document.getElementById('pagar-fatura-valor-raw');
+    valorFatura = inpVal && inpVal.value ? parseFloat(inpVal.value) : (_contextoPagamentoFatura && _contextoPagamentoFatura.valorFatura);
+  }
+  if (!mes) {
+    const inpMes = document.getElementById('pagar-fatura-mes');
+    mes = inpMes && inpMes.value ? parseInt(inpMes.value, 10) : (_contextoPagamentoFatura && _contextoPagamentoFatura.mes);
+  }
+  if (!ano) {
+    const inpAno = document.getElementById('pagar-fatura-ano');
+    ano = inpAno && inpAno.value ? parseInt(inpAno.value, 10) : (_contextoPagamentoFatura && _contextoPagamentoFatura.ano);
+  }
+
+  const contaOrigemObj = (STATE.contas || []).find(c => c.tipo !== 'cartao' && (c.id === idContaOrigem || c.nome === idContaOrigem));
+  const nomeContaOrigem = contaOrigemObj ? contaOrigemObj.nome : String(idContaOrigem || '').trim();
+  if (!nomeContaOrigem) {
+    toast('Selecione uma conta bancária de origem válida.', 'err');
+    return;
+  }
+
+  const infoCartao = resolverCartaoPorIdOuNome(idCartao);
+  if (!infoCartao) {
+    toast('Cartão de crédito não encontrado.', 'err');
+    return;
+  }
+
+  const { id: cartaoIdResolvido, nome: nomeCartao, diaFechamento } = infoCartao;
+  const mesNum = parseInt(mes, 10) || competenciaFatura(hojeLocalISO(), diaFechamento).mes;
+  const anoNum = parseInt(ano, 10) || competenciaFatura(hojeLocalISO(), diaFechamento).ano;
+
+  const itensFatura = lancamentosDaFatura(nomeCartao, anoNum, mesNum);
+  const itensPendentes = itensFatura.filter(l => !estaPago(l) && !l.faturaPaga);
+  const somaPendentes = Math.round(itensPendentes.reduce((s, l) => s + (Number(l.valor) || 0), 0) * 100) / 100;
+  const valorFinal = (typeof valorFatura === 'number' && !isNaN(valorFatura) && valorFatura > 0)
+    ? Math.round(valorFatura * 100) / 100
+    : somaPendentes;
+
+  if (valorFinal <= 0) {
+    toast('Esta fatura já se encontra paga.', 'info');
+    fecharModal('modal-pagar-fatura');
+    return;
+  }
+
+  const btnConfirmar = document.getElementById('btn-confirmar-pagamento-fatura');
+  if (btnConfirmar && btnConfirmar.dataset.morphing === '1') return;
+
+  const executarTransacaoAtomica = async () => {
+    const dataHoje = hojeLocalISO();
+    const idTransacaoPagamento = uid();
+    const refCompetencia = `${String(mesNum).padStart(2, '0')}/${anoNum}`;
+
+    // Ação Atómica (a): Gera o lançamento automático de Saída (Despesa) na conta bancária de origem
+    // Classificado como "Transferência/Pagamento de Fatura" (ehTransferencia: true, ehPagamentoFatura: true)
+    // para abater o saldo bancário sem duplicar gastos por categoria no DRE.
+    const lancamentoPagamento = {
+      id: idTransacaoPagamento,
+      tipo: 'despesa',
+      descricao: `Pagamento Fatura ${nomeCartao}`,
+      valor: valorFinal,
+      data: dataHoje,
+      categoria: 'Transferência/Pagamento de Fatura',
+      conta: nomeContaOrigem,
+      contaOrigemId: contaOrigemObj ? contaOrigemObj.id : idContaOrigem,
+      cartaoId: cartaoIdResolvido,
+      cartaoNome: nomeCartao,
+      faturaMes: mesNum,
+      faturaAno: anoNum,
+      faturaCompetencia: refCompetencia,
+      pago: true,
+      status: 'Pago/Efetivado',
+      ehTransferencia: true,
+      ehPagamentoFatura: true,
+      tags: ['fatura', 'cartao'],
+      sincronizado: false
+    };
+    STATE.lancamentos.push(lancamentoPagamento);
+
+    // Ação Atómica (b): Marca todos os lançamentos de crédito desse cartão nesse mês/ano como liquidados
+    itensFatura.forEach(l => {
+      l.pago = true;
+      l.faturaPaga = true;
+      l.status = 'Liquidado';
+      l.dataPagamentoFatura = dataHoje;
+      l.contaPagamentoFatura = nomeContaOrigem;
+      l.pagamentoFaturaId = idTransacaoPagamento;
+      l.sincronizado = false;
+    });
+
+    // Ação Atómica (c): Atualiza o limite do cartão em STATE.cartoes e STATE.contas (restaura valorFatura ao limite disponível)
+    const pendentesRestantes = (STATE.lancamentos || []).filter(
+      l => l.conta === nomeCartao && l.tipo === 'despesa' && !estaPago(l) && !l.faturaPaga
+    );
+    const novoLimiteUsado = Math.max(0, Math.round(pendentesRestantes.reduce((s, l) => s + (Number(l.valor) || 0), 0) * 100) / 100);
+
+    if (Array.isArray(STATE.cartoes)) {
+      const idxCartao = STATE.cartoes.findIndex(c => c.id === cartaoIdResolvido || c.nome === nomeCartao);
+      if (idxCartao >= 0) {
+        const limTotal = Number(STATE.cartoes[idxCartao].limiteTotal || STATE.cartoes[idxCartao].limite) || 0;
+        STATE.cartoes[idxCartao].limiteUsado = novoLimiteUsado;
+        STATE.cartoes[idxCartao].limiteDisponivel = limTotal > 0 ? Math.max(0, Math.round((limTotal - novoLimiteUsado) * 100) / 100) : 0;
+      }
+    }
+    if (Array.isArray(STATE.contas)) {
+      const idxContaCartao = STATE.contas.findIndex(c => c.tipo === 'cartao' && (c.id === cartaoIdResolvido || c.nome === nomeCartao));
+      if (idxContaCartao >= 0) {
+        const limTotal = Number(STATE.contas[idxContaCartao].limite || STATE.contas[idxContaCartao].limiteTotal) || 0;
+        STATE.contas[idxContaCartao].limiteUsado = novoLimiteUsado;
+        STATE.contas[idxContaCartao].limiteDisponivel = limTotal > 0 ? Math.max(0, Math.round((limTotal - novoLimiteUsado) * 100) / 100) : 0;
+      }
+    }
+
     await salvarDados();
     renderPaginaAtiva();
+    renderDashboard();
+    if (document.getElementById('page-cartoes')) renderCartoes();
     sincronizarEmSegundoPlano();
-    toast('Fatura marcada como paga.', 'ok');
-  }, 'Pagar fatura');
+  };
+
+  const modalEl = document.getElementById('modal-pagar-fatura');
+  if (btnConfirmar && modalEl && modalEl.classList.contains('show') && typeof executarComMorphingButton === 'function') {
+    await executarComMorphingButton(btnConfirmar, executarTransacaoAtomica, () => {
+      fecharModal('modal-pagar-fatura');
+      toast(`Fatura de ${nomeCartao} (${toBRL(valorFinal)}) paga via ${nomeContaOrigem}! Limite restaurado.`, 'ok');
+    });
+  } else {
+    await executarTransacaoAtomica();
+    fecharModal('modal-pagar-fatura');
+    toast(`Fatura de ${nomeCartao} (${toBRL(valorFinal)}) paga via ${nomeContaOrigem}! Limite restaurado.`, 'ok');
+  }
 }
+
+function pagarFaturaInteira(nomeCartao, ano, mes) {
+  abrirModalPagamentoFatura(nomeCartao, mes, ano);
+}
+
 function renderCartoes() {
   const cartoes = STATE.contas.filter(c => c.tipo === 'cartao');
-  document.getElementById('cartoes-empty').style.display = cartoes.length ? 'none' : 'block';
+  const emptyEl = document.getElementById('cartoes-empty');
+  const heroBar = document.getElementById('cartoes-resumo-fatura-bar');
+  if (emptyEl) emptyEl.style.display = cartoes.length ? 'none' : 'block';
+
+  const nomesMes = { 1:'Jan',2:'Fev',3:'Mar',4:'Abr',5:'Mai',6:'Jun',7:'Jul',8:'Ago',9:'Set',10:'Out',11:'Nov',12:'Dez' };
+
+  if (heroBar) {
+    if (!cartoes.length) {
+      heroBar.style.display = 'none';
+    } else {
+      heroBar.style.display = 'flex';
+      const cartaoHero = cartoes[0];
+      const offsetHero = estadoFaturaCartao[cartaoHero.nome] || 0;
+      const compHero = competenciaFatura(hojeLocalISO(), cartaoHero.diaFechamento);
+      let anoH = compHero.ano, mesH = compHero.mes + offsetHero;
+      while (mesH > 12) { mesH -= 12; anoH++; }
+      while (mesH < 1) { mesH += 12; anoH--; }
+      const itensHero = lancamentosDaFatura(cartaoHero.nome, anoH, mesH);
+      const totalBrutoHero = Math.round(itensHero.reduce((s, l) => s + (Number(l.valor) || 0), 0) * 100) / 100;
+      const totalAbertoHero = Math.round(itensHero.filter(l => !estaPago(l) && !l.faturaPaga).reduce((s, l) => s + (Number(l.valor) || 0), 0) * 100) / 100;
+      const faturaPagaHero = itensHero.length > 0 && totalAbertoHero <= 0;
+
+      const elHeroValor = document.getElementById('cartoes-hero-total-valor');
+      const elHeroSub = document.getElementById('cartoes-hero-sub');
+      const elHeroBadge = document.getElementById('cartoes-hero-badge-paga');
+      const btnHeroPagar = document.getElementById('btn-hero-pagar-fatura');
+
+      if (elHeroValor) {
+        elHeroValor.textContent = toBRL(totalAbertoHero);
+        elHeroValor.className = `metric-value ${totalAbertoHero > 0 ? 'mv-bad' : 'mv-ok'} valor-sensivel`;
+      }
+      if (elHeroBadge) {
+        elHeroBadge.style.display = faturaPagaHero ? 'inline-flex' : 'none';
+      }
+      if (elHeroSub) {
+        elHeroSub.textContent = faturaPagaHero
+          ? `${cartaoHero.nome} (${nomesMes[mesH]}/${anoH}) · Fatura liquidada (${toBRL(totalBrutoHero)})`
+          : `${cartaoHero.nome} · Competência ${nomesMes[mesH]}/${anoH} (${itensHero.filter(l => !estaPago(l) && !l.faturaPaga).length} pendente(s))`;
+      }
+      if (btnHeroPagar) {
+        btnHeroPagar.disabled = totalAbertoHero <= 0;
+        btnHeroPagar.innerHTML = faturaPagaHero
+          ? `<i class="ti ti-circle-check"></i> Fatura Paga`
+          : `<i class="ti ti-cash-banknote"></i> Pagar Fatura`;
+        btnHeroPagar.onclick = () => abrirModalPagamentoFatura(cartaoHero.id || cartaoHero.nome, mesH, anoH);
+      }
+    }
+  }
+
   document.getElementById('cartoes-content').innerHTML = cartoes.map(cartao => {
     const offset = estadoFaturaCartao[cartao.nome] || 0;
     const compAtual = competenciaFatura(hojeLocalISO(), cartao.diaFechamento);
@@ -6099,11 +6434,24 @@ function renderCartoes() {
     while (mes > 12) { mes -= 12; ano++; }
     while (mes < 1) { mes += 12; ano--; }
     const itens = lancamentosDaFatura(cartao.nome, ano, mes).sort((a,b) => (a.data||'').localeCompare(b.data||''));
-    const total = itens.reduce((s,l) => s+l.valor, 0);
+    const totalBruto = Math.round(itens.reduce((s,l) => s + (Number(l.valor) || 0), 0) * 100) / 100;
+    const itensPendentes = itens.filter(l => !estaPago(l) && !l.faturaPaga);
+    const totalAberto = Math.round(itensPendentes.reduce((s,l) => s + (Number(l.valor) || 0), 0) * 100) / 100;
+    const faturaJaPaga = itens.length > 0 && totalAberto <= 0;
+
+    // Comprometimento global não pago deste cartão (reduz imediatamente quando a fatura é paga)
+    const pendentesGlobaisCartao = (STATE.lancamentos || []).filter(
+      l => l.conta === cartao.nome && l.tipo === 'despesa' && !estaPago(l) && !l.faturaPaga
+    );
+    const limiteUsadoCartao = Math.round(pendentesGlobaisCartao.reduce((s, l) => s + (Number(l.valor) || 0), 0) * 100) / 100;
+    const limiteTotalCartao = Number(cartao.limite || cartao.limiteTotal) || 0;
+    const limiteDisponivelCartao = limiteTotalCartao > 0 ? Math.max(0, Math.round((limiteTotalCartao - limiteUsadoCartao) * 100) / 100) : 0;
+    const usoLimite = limiteTotalCartao > 0 ? Math.min(100, (limiteUsadoCartao / limiteTotalCartao) * 100) : null;
+
     const vencimento = calcularVencimentoFatura(ano, mes, cartao.diaFechamento, cartao.diaVencimento);
     const [va,vm,vd] = vencimento.split('-');
-    const nomesMes = { 1:'Jan',2:'Fev',3:'Mar',4:'Abr',5:'Mai',6:'Jun',7:'Jul',8:'Ago',9:'Set',10:'Out',11:'Nov',12:'Dez' };
-    const usoLimite = cartao.limite ? Math.min(100, (total / cartao.limite) * 100) : null;
+    const idOuNomeCartao = escHtml(cartao.id || cartao.nome);
+
     return `
     <div class="card" style="margin-bottom:20px">
       <div class="cartao-fatura-container">
@@ -6111,26 +6459,39 @@ function renderCartoes() {
           ${gerarCartaoFisico3DHTML(cartao, mes, ano)}
           <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;justify-content:center;margin-top:2px">
             <button class="btn btn-sm" onclick="abrirModalGerirCartoes()"><i class="ti ti-settings"></i> Configurar Cartão</button>
+            <button class="btn btn-sm btn-primary btn-pagar-fatura" onclick="abrirModalPagamentoFatura('${idOuNomeCartao}', ${mes}, ${ano})" ${totalAberto <= 0 ? 'disabled' : ''}>
+              <i class="ti ${faturaJaPaga ? 'ti-circle-check' : 'ti-cash-banknote'}"></i> ${faturaJaPaga ? 'Fatura Paga' : 'Pagar Fatura'}
+            </button>
           </div>
         </div>
         <div style="min-width:0;width:100%">
           <div class="card-header" style="margin-bottom:.75rem">
-            <div style="display:flex;align-items:center;gap:8px">
+            <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
               <i class="ti ti-credit-card" style="font-size:18px;color:${cartao.cor || 'var(--accent)'}"></i>
-              <div class="card-title" style="font-size:14px;color:var(--text);font-weight:700">${cartao.nome}</div>
+              <div class="card-title" style="font-size:14px;color:var(--text);font-weight:700">${escHtml(cartao.nome)}</div>
+              ${faturaJaPaga ? `<span class="badge badge-fatura-paga"><i class="ti ti-circle-check"></i> Fatura Paga</span>` : ''}
             </div>
             <div style="display:flex;align-items:center;gap:6px">
-              <button class="icon-btn" onclick="navegarFatura('${cartao.nome}', -1)" title="Fatura anterior"><i class="ti ti-chevron-left"></i></button>
+              <button class="icon-btn" onclick="navegarFatura('${escHtml(cartao.nome)}', -1)" title="Fatura anterior"><i class="ti ti-chevron-left"></i></button>
               <span style="font-size:12.5px;font-weight:600;min-width:90px;text-align:center">${nomesMes[mes]}/${ano}</span>
-              <button class="icon-btn" onclick="navegarFatura('${cartao.nome}', 1)" title="Próxima fatura"><i class="ti ti-chevron-right"></i></button>
-              ${itens.some(l=>!estaPago(l)) ? `<button class="btn btn-sm btn-primary" style="margin-left:6px" onclick="pagarFaturaInteira('${cartao.nome}', ${ano}, ${mes})"><i class="ti ti-checks"></i> Pagar fatura</button>` : ''}
+              <button class="icon-btn" onclick="navegarFatura('${escHtml(cartao.nome)}', 1)" title="Próxima fatura"><i class="ti ti-chevron-right"></i></button>
+              <button class="btn btn-sm btn-primary btn-pagar-fatura" style="margin-left:6px" onclick="abrirModalPagamentoFatura('${idOuNomeCartao}', ${mes}, ${ano})" ${totalAberto <= 0 ? 'disabled' : ''}>
+                <i class="ti ${faturaJaPaga ? 'ti-circle-check' : 'ti-cash-banknote'}"></i> ${faturaJaPaga ? 'Fatura Paga' : 'Pagar Fatura'}
+              </button>
             </div>
           </div>
           <div class="grid4" style="margin-bottom:1rem">
-            <div class="metric"><div class="metric-label">Total da fatura</div><div class="metric-value mv-bad valor-sensivel">${toBRL(total)}</div><div class="metric-sub">${itens.length} lançamento(s)</div></div>
+            <div class="metric">
+              <div style="display:flex;align-items:center;justify-content:space-between;gap:4px">
+                <div class="metric-label">Total da fatura</div>
+                ${faturaJaPaga ? `<span class="badge badge-fatura-paga" style="font-size:10px;padding:1px 6px">Liquidado</span>` : ''}
+              </div>
+              <div class="metric-value ${totalAberto > 0 ? 'mv-bad' : 'mv-ok'} valor-sensivel">${toBRL(totalAberto)}</div>
+              <div class="metric-sub">${faturaJaPaga ? `Pago: ${toBRL(totalBruto)} (${itens.length} itens)` : `${itens.length} lançamento(s)`}</div>
+            </div>
             <div class="metric"><div class="metric-label">Vencimento</div><div class="metric-value mv-info" style="font-size:18px">${vd}/${vm}</div><div class="metric-sub">fecha dia ${cartao.diaFechamento || 1}</div></div>
-            <div class="metric"><div class="metric-label">Pendente de pagamento</div><div class="metric-value ${itens.some(l=>!estaPago(l))?'mv-bad':'mv-ok'}">${itens.filter(l=>!estaPago(l)).length}</div><div class="metric-sub">de ${itens.length} itens</div></div>
-            <div class="metric"><div class="metric-label">${cartao.limite ? 'Limite usado' : 'Limite'}</div>${cartao.limite ? `<div class="metric-value ${usoLimite>=90?'mv-bad':'mv-info'}">${usoLimite.toFixed(0)}%</div><div class="metric-sub"><span class="valor-sensivel">${toBRL(total)}</span> de <span class="valor-sensivel">${toBRL(cartao.limite)}</span></div>` : `<div class="metric-value mv-info" style="font-size:13px">Não definido</div><div class="metric-sub">configure em Categorias &amp; Contas</div>`}</div>
+            <div class="metric"><div class="metric-label">Pendente de pagamento</div><div class="metric-value ${itensPendentes.length > 0 ? 'mv-bad' : 'mv-ok'}">${itensPendentes.length}</div><div class="metric-sub">de ${itens.length} itens</div></div>
+            <div class="metric"><div class="metric-label">${limiteTotalCartao ? 'Limite usado' : 'Limite'}</div>${limiteTotalCartao ? `<div class="metric-value ${usoLimite>=90?'mv-bad':'mv-info'}">${usoLimite.toFixed(0)}%</div><div class="metric-sub">Disp: <span class="valor-sensivel" style="color:var(--good);font-weight:700">${toBRL(limiteDisponivelCartao)}</span> · Usado: <span class="valor-sensivel">${toBRL(limiteUsadoCartao)}</span></div>` : `<div class="metric-value mv-info" style="font-size:13px">Não definido</div><div class="metric-sub">configure em Categorias &amp; Contas</div>`}</div>
           </div>
           <div class="table-wrap">
             <table><thead><tr><th>Data</th><th>Descrição</th><th>Categoria</th><th>Status</th><th style="text-align:right">Valor</th></tr></thead><tbody>
@@ -6181,7 +6542,7 @@ function calcularSaldoDisponivelGeral(mesAnoLimite) {
   const mesLimite = mesAnoLimite || hojeLocalISO().slice(0, 7);
   let totalReceitas = 0, totalDespesas = 0;
   STATE.lancamentos.forEach(l => {
-    if (l.ehMovimentoCofre) return;
+    if (l.ehMovimentoCofre || l.ehPagamentoFatura) return;
     const mesLanc = mesCompetenciaLancamento(l);
     if (mesLanc && mesLanc > mesLimite) return; // Ignora parcelas e compras de meses futuros
     if (l.tipo === 'receita') totalReceitas += (Number(l.valor) || 0);
