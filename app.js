@@ -1,6 +1,6 @@
 /* ================= ESTADO E PERSISTÊNCIA ================= */
-const CURRENT_VERSION = '1.1.0';
-const APP_VERSAO = '1.1.0 · r9';
+const CURRENT_VERSION = '1.2.0';
+const APP_VERSAO = '1.2.0 · r10';
 const STORAGE_KEY = 'controle-financeiro-dados';
 
 const SUBCATEGORIAS_PADRAO_MAP = {
@@ -160,8 +160,20 @@ function calcularVencimentoFatura(anoComp, mesComp, diaFechamento, diaVencimento
   return `${aVenc}-${String(mVenc).padStart(2, '0')}-${String(diaReal).padStart(2, '0')}`;
 }
 
+function ehLancamentoPagamentoFatura(l) {
+  if (!l || typeof l !== 'object') return false;
+  if (l.ehPagamentoFatura === true) return true;
+  const cat = String(l.categoria || '').trim().toLowerCase();
+  if (cat === 'transferência/pagamento de fatura' || cat === 'transferencia/pagamento de fatura' || cat === 'pagamento de fatura') {
+    return true;
+  }
+  const desc = String(l.descricao || '').trim();
+  if (/^pagamento\s+(?:de\s+)?fatura\b/i.test(desc)) return true;
+  return false;
+}
+
 function ehLancamentoCartao(l) {
-  if (!l) return false;
+  if (!l || ehLancamentoPagamentoFatura(l)) return false;
   if (l.faturaAno && l.faturaMes) return true;
   if (l.dataVencimentoFatura) return true;
   if (l.parcelaAtual || l.parcelaTotal) return true;
@@ -240,7 +252,18 @@ function normalizarLancamentosCartaoExistentes() {
   if (!Array.isArray(STATE.lancamentos)) return;
   let alterado = false;
   STATE.lancamentos.forEach(l => {
-    if (l.tipo !== 'despesa' || !l.conta || l.ehPagamentoFatura) return;
+    if (!l) return;
+    if (ehLancamentoPagamentoFatura(l)) {
+      if (!l.ehPagamentoFatura || !l.ehTransferencia || l.pago === false || !l.status) {
+        l.ehPagamentoFatura = true;
+        l.ehTransferencia = true;
+        l.pago = true;
+        l.status = l.status || 'Pago/Efetivado';
+        alterado = true;
+      }
+      return;
+    }
+    if (l.tipo !== 'despesa' || !l.conta) return;
     const cartaoConta = (STATE.contas || []).find(c => c.nome === l.conta && c.tipo === 'cartao') || (STATE.cartoes || []).find(c => c.nome === l.conta);
     if (!cartaoConta) return;
 
@@ -266,8 +289,337 @@ function normalizarLancamentosCartaoExistentes() {
       alterado = true;
     }
   });
+  corrigirFaturasPresas();
+  if (reconciliarFaturasPagas()) {
+    alterado = true;
+  }
+  recalcularLimitesCartoes();
   if (alterado) {
     salvarDados();
+  }
+}
+
+/**
+ * Avalia estritamente se um lançamento de cartão teve sua fatura liquidada.
+ * IGNORA status individuais de compra ("Efetivado", "Liquidado", etc.) — depende
+ * EXCLUSIVAMENTE da flag explícita `faturaPaga === true`.
+ */
+function ehItemFaturaPago(l) {
+  return !!(l && l.faturaPaga === true);
+}
+
+/**
+ * Mapeia apenas os lançamentos reais de saída na conta corrente referentes a "Pagamento de Fatura".
+ * Qualquer item de cartão só é considerado pago se possuir correspondência de pagamento em conta corrente.
+ */
+function obterMapaPagamentosDeFaturaReais() {
+  const todosCartoes = [
+    ...(Array.isArray(STATE.cartoes) ? STATE.cartoes : []),
+    ...((STATE.contas || []).filter(c => c && c.tipo === 'cartao'))
+  ];
+  const nomesContasCartaoLower = new Set(todosCartoes.map(c => c && c.nome ? c.nome.toLowerCase() : '').filter(Boolean));
+  const pagamentosPorChave = new Map();
+  const idsPagamentosReais = new Set();
+
+  const encontrarCartaoPorTexto = (texto) => {
+    const limpo = String(texto || '').replace(/^pagamento\s+(?:de\s+)?fatura\s*/i, '').trim().toLowerCase();
+    if (!limpo) return null;
+    return todosCartoes.find(c => c && c.nome && (
+      c.nome.toLowerCase() === limpo ||
+      limpo.includes(c.nome.toLowerCase()) ||
+      c.nome.toLowerCase().includes(limpo)
+    )) || null;
+  };
+
+  (STATE.lancamentos || []).forEach(l => {
+    if (!l || l.tipo !== 'despesa' || !ehLancamentoPagamentoFatura(l)) return;
+    // Garante que é uma saída em conta bancária (não um lançamento fantasma dentro do próprio cartão)
+    const contaOrigemLower = String(l.conta || '').trim().toLowerCase();
+    if (!contaOrigemLower || nomesContasCartaoLower.has(contaOrigemLower)) return;
+
+    let cartaoAlvo = null;
+    if (l.cartaoNome || l.cartaoId) {
+      cartaoAlvo = todosCartoes.find(c => c && (c.nome === l.cartaoNome || c.id === l.cartaoId)) || null;
+    }
+    if (!cartaoAlvo) {
+      cartaoAlvo = encontrarCartaoPorTexto(l.descricao);
+    }
+    const nomeCartao = (cartaoAlvo && cartaoAlvo.nome) || l.cartaoNome || String(l.descricao || '').replace(/^pagamento\s+(?:de\s+)?fatura\s*/i, '').trim();
+    if (!nomeCartao) return;
+
+    let ano = parseInt(l.faturaAno, 10);
+    let mes = parseInt(l.faturaMes, 10);
+
+    if ((!ano || !mes) && l.faturaCompetencia) {
+      const partes = String(l.faturaCompetencia).split(/[/-]/).map(Number);
+      if (partes.length === 2) {
+        if (partes[0] > 1900) { ano = partes[0]; mes = partes[1]; }
+        else { mes = partes[0]; ano = partes[1]; }
+      }
+    }
+
+    if ((!ano || !mes || isNaN(ano) || isNaN(mes)) && l.id) {
+      const refCartao = cartaoAlvo || { nome: nomeCartao, diaFechamento: 1 };
+      const itemVinculado = (STATE.lancamentos || []).find(x => x && x.pagamentoFaturaId === l.id && x.conta === nomeCartao && x.tipo === 'despesa');
+      if (itemVinculado) {
+        const cVinc = calcularCompetenciaLancamentoCartao(itemVinculado, refCartao);
+        ano = cVinc.ano;
+        mes = cVinc.mes;
+      }
+    }
+
+    if (!ano || !mes || isNaN(ano) || isNaN(mes)) {
+      const despesasCartao = (STATE.lancamentos || []).filter(x => x && x.conta === nomeCartao && x.tipo === 'despesa' && !ehLancamentoPagamentoFatura(x));
+      const porComp = new Map();
+      const refCartao = cartaoAlvo || { nome: nomeCartao, diaFechamento: 1 };
+      despesasCartao.forEach(x => {
+        const c = calcularCompetenciaLancamentoCartao(x, refCartao);
+        const k = `${c.ano}-${c.mes}`;
+        if (!porComp.has(k)) porComp.set(k, { ano: c.ano, mes: c.mes, soma: 0 });
+        porComp.get(k).soma = Math.round((porComp.get(k).soma + (Number(x.valor) || 0)) * 100) / 100;
+      });
+
+      const valorPag = Math.round((Number(l.valor) || 0) * 100) / 100;
+      let compEncontrada = null;
+      for (const info of porComp.values()) {
+        if (Math.abs(info.soma - valorPag) <= 0.05) {
+          compEncontrada = info;
+          break;
+        }
+      }
+      if (!compEncontrada && l.data) {
+        const [aData, mData] = String(l.data).split('-').map(Number);
+        if (porComp.has(`${aData}-${mData}`)) {
+          compEncontrada = porComp.get(`${aData}-${mData}`);
+        } else {
+          const compCiclo = competenciaFatura(l.data, (cartaoAlvo && cartaoAlvo.diaFechamento) || 1);
+          compEncontrada = porComp.get(`${compCiclo.ano}-${compCiclo.mes}`) || { ano: aData, mes: mData };
+        }
+      }
+      if (compEncontrada && compEncontrada.ano && compEncontrada.mes) {
+        ano = compEncontrada.ano;
+        mes = compEncontrada.mes;
+      }
+    }
+
+    if (ano && mes && !isNaN(ano) && !isNaN(mes)) {
+      const chaveLower = `${nomeCartao.toLowerCase()}|${ano}-${String(mes).padStart(2, '0')}`;
+      idsPagamentosReais.add(l.id);
+      if (!pagamentosPorChave.has(chaveLower)) {
+        pagamentosPorChave.set(chaveLower, []);
+      }
+      pagamentosPorChave.get(chaveLower).push({ pagamento: l, cartaoAlvo, nomeCartao, ano, mes });
+    }
+  });
+
+  return { pagamentosPorChave, idsPagamentosReais, todosCartoes };
+}
+
+/**
+ * Rotina de Autocorreção (Migration de Estado):
+ * Destrava faturas de cartão que ficaram marcadas com `faturaPaga: true` (ou zeradas
+ * prematuramente por status individual de transação) sem que exista o respectivo
+ * lançamento de "Pagamento de Fatura" na conta corrente para aquele mês/ano.
+ */
+function corrigirFaturasPresas() {
+  if (!STATE || !Array.isArray(STATE.lancamentos)) return 0;
+
+  const { pagamentosPorChave, todosCartoes } = obterMapaPagamentosDeFaturaReais();
+  let corrigidos = 0;
+  let configAlterada = false;
+
+  // Limpa registos órfãos em STATE.config.faturasPagas que não possuam saída real em conta corrente
+  if (STATE.config && STATE.config.faturasPagas && typeof STATE.config.faturasPagas === 'object') {
+    Object.keys(STATE.config.faturasPagas).forEach(k => {
+      const reg = STATE.config.faturasPagas[k];
+      if (!reg || !reg.cartaoNome || !reg.ano || !reg.mes) {
+        delete STATE.config.faturasPagas[k];
+        configAlterada = true;
+        return;
+      }
+      const chaveLower = `${String(reg.cartaoNome).toLowerCase()}|${reg.ano}-${String(reg.mes).padStart(2, '0')}`;
+      if (!pagamentosPorChave.has(chaveLower)) {
+        delete STATE.config.faturasPagas[k];
+        configAlterada = true;
+      }
+    });
+  }
+
+  // Varre todos os lançamentos de Cartão de Crédito e valida contra a conta corrente
+  STATE.lancamentos.forEach(l => {
+    if (!l || l.tipo !== 'despesa' || ehLancamentoPagamentoFatura(l) || !ehLancamentoCartao(l)) return;
+
+    const cartaoAlvo = todosCartoes.find(c => c && c.nome === l.conta) || { nome: l.conta, diaFechamento: 1 };
+    const comp = calcularCompetenciaLancamentoCartao(l, cartaoAlvo);
+    const chaveLower = `${String(l.conta || '').toLowerCase()}|${comp.ano}-${String(comp.mes).padStart(2, '0')}`;
+    const existePagamentoCorrente = pagamentosPorChave.has(chaveLower);
+
+    if (!existePagamentoCorrente) {
+      const tinhaFaturaPaga = ('faturaPaga' in l);
+      const estavaFaturaPagaTrue = l.faturaPaga === true;
+      const tinhaMetaPagamento = !!(l.pagamentoFaturaId || l.dataPagamentoFatura || l.contaPagamentoFatura);
+      const estavaPagoNaFatura = l.pago === true;
+      const statusInconsistente = l.status === 'Liquidado' || l.status === 'Pago' || l.status === 'Pago/Efetivado';
+
+      if (tinhaFaturaPaga) delete l.faturaPaga;
+      if (l.dataPagamentoFatura) delete l.dataPagamentoFatura;
+      if (l.contaPagamentoFatura) delete l.contaPagamentoFatura;
+      if (l.pagamentoFaturaId) delete l.pagamentoFaturaId;
+
+      if (estavaFaturaPagaTrue || tinhaMetaPagamento || estavaPagoNaFatura || statusInconsistente) {
+        l.pago = false;
+        if (statusInconsistente || estavaFaturaPagaTrue) {
+          l.status = 'Pendente';
+        }
+        l.sincronizado = false;
+        corrigidos++;
+      }
+    }
+  });
+
+  if (corrigidos > 0 || configAlterada) {
+    try {
+      persistirStateNoLocalStorage();
+    } catch (e) {
+      console.warn('[Migration] Falha ao gravar correção de faturas no localStorage:', e);
+    }
+    if (corrigidos > 0) {
+      console.info(`[Migration] corrigirFaturasPresas() destravou ${corrigidos} lançamento(s) de cartão sem pagamento em conta corrente.`);
+    }
+  }
+
+  return corrigidos;
+}
+
+/**
+ * Reconcilia os lançamentos de "Pagamento de Fatura" reais da conta corrente
+ * com os respetivos itens da fatura paga. NUNCA promove status individuais ("Liquidado"/"Efetivado")
+ * para `faturaPaga: true` na ausência de pagamento em conta corrente.
+ */
+function reconciliarFaturasPagas() {
+  if (!Array.isArray(STATE.lancamentos)) return false;
+  if (!STATE.config) STATE.config = {};
+  if (!STATE.config.faturasPagas || typeof STATE.config.faturasPagas !== 'object') {
+    STATE.config.faturasPagas = {};
+  }
+
+  let mudou = false;
+  const { pagamentosPorChave } = obterMapaPagamentosDeFaturaReais();
+
+  // 1) Garante integridade dos lançamentos reais de "Pagamento Fatura" presentes em STATE.lancamentos
+  pagamentosPorChave.forEach((listaPags) => {
+    listaPags.forEach(({ pagamento: l, cartaoAlvo, nomeCartao, ano, mes }) => {
+      if (l.ehPagamentoFatura !== true) { l.ehPagamentoFatura = true; mudou = true; }
+      if (l.ehTransferencia !== true) { l.ehTransferencia = true; mudou = true; }
+      if (l.pago !== true) { l.pago = true; mudou = true; }
+      if (!l.status || l.status === 'Pendente') { l.status = 'Pago/Efetivado'; mudou = true; }
+      if (l.cartaoNome !== nomeCartao) { l.cartaoNome = nomeCartao; mudou = true; }
+      if (cartaoAlvo && cartaoAlvo.id && l.cartaoId !== cartaoAlvo.id) { l.cartaoId = cartaoAlvo.id; mudou = true; }
+
+      const refComp = `${String(mes).padStart(2, '0')}/${ano}`;
+      if (l.faturaAno !== ano || l.faturaMes !== mes || l.faturaCompetencia !== refComp) {
+        l.faturaAno = ano;
+        l.faturaMes = mes;
+        l.faturaCompetencia = refComp;
+        mudou = true;
+      }
+
+      const chaveFatura = `${nomeCartao}|${ano}-${String(mes).padStart(2, '0')}`;
+      if (!STATE.config.faturasPagas[chaveFatura]) {
+        STATE.config.faturasPagas[chaveFatura] = {
+          cartaoNome: nomeCartao,
+          ano,
+          mes,
+          valor: Number(l.valor) || 0,
+          dataPagamento: l.data || hojeLocalISO(),
+          contaOrigem: l.conta || '',
+          pagamentoFaturaId: l.id,
+          itensPagosIds: Array.isArray(l.itensPagosIds) ? [...l.itensPagosIds] : undefined
+        };
+        mudou = true;
+      } else if (Array.isArray(l.itensPagosIds) && !Array.isArray(STATE.config.faturasPagas[chaveFatura].itensPagosIds)) {
+        STATE.config.faturasPagas[chaveFatura].itensPagosIds = [...l.itensPagosIds];
+        mudou = true;
+      }
+    });
+  });
+
+  // 2) Restaura `faturaPaga: true` APENAS para faturas que possuem pagamento real em conta corrente
+  Object.entries(STATE.config.faturasPagas).forEach(([k, reg]) => {
+    if (!reg || !reg.cartaoNome || !reg.ano || !reg.mes) return;
+    const chaveLower = `${String(reg.cartaoNome).toLowerCase()}|${reg.ano}-${String(reg.mes).padStart(2, '0')}`;
+    if (!pagamentosPorChave.has(chaveLower)) {
+      delete STATE.config.faturasPagas[k];
+      mudou = true;
+      return;
+    }
+    const dataCorte = reg.dataPagamento || '9999-12-31';
+    const idsPermitidos = Array.isArray(reg.itensPagosIds) ? new Set(reg.itensPagosIds) : null;
+    const itens = lancamentosDaFatura(reg.cartaoNome, reg.ano, reg.mes);
+    itens.forEach(item => {
+      if (item.posPagamentoFatura === true || item.criadoAposPagamentoFatura === true) return;
+      if (idsPermitidos) {
+        if (!idsPermitidos.has(item.id) && item.pagamentoFaturaId !== reg.pagamentoFaturaId) return;
+      } else {
+        if (item.faturaPaga === false) return;
+        const dtItem = item.dataCompra || item.data || '';
+        if (dtItem > dataCorte) return;
+      }
+      if (item.faturaPaga !== true || item.pago !== true) {
+        item.faturaPaga = true;
+        item.pago = true;
+        item.status = 'Liquidado';
+        item.dataPagamentoFatura = item.dataPagamentoFatura || reg.dataPagamento || hojeLocalISO();
+        item.contaPagamentoFatura = item.contaPagamentoFatura || reg.contaOrigem || '';
+        item.pagamentoFaturaId = item.pagamentoFaturaId || reg.pagamentoFaturaId || '';
+        mudou = true;
+      }
+    });
+  });
+
+  return mudou;
+}
+
+/**
+ * Recalcula dinamicamente o limiteUsado e o limiteDisponivel de todos os cartões
+ * avaliando ESTRITAMENTE apenas a flag `faturaPaga === true`.
+ * Transações sem `faturaPaga === true` (mesmo com status "Liquidado" ou "Efetivado")
+ * continuam a consumir o limite até que a fatura seja explicitamente paga.
+ */
+function recalcularLimitesCartoes() {
+  reconciliarFaturasPagas();
+
+  const calcularUsadoCartao = (nomeCartao) => {
+    if (!nomeCartao || !Array.isArray(STATE.lancamentos)) return 0;
+    const despesasEmAberto = STATE.lancamentos.filter(l =>
+      l &&
+      l.conta === nomeCartao &&
+      l.tipo === 'despesa' &&
+      !ehLancamentoPagamentoFatura(l) &&
+      l.faturaPaga !== true
+    );
+    const soma = despesasEmAberto.reduce((acc, l) => acc + (Number(l.valor) || 0), 0);
+    return Math.max(0, Math.round(soma * 100) / 100);
+  };
+
+  if (Array.isArray(STATE.cartoes)) {
+    STATE.cartoes.forEach(cartao => {
+      if (!cartao || !cartao.nome) return;
+      const limiteTotal = Number(cartao.limiteTotal || cartao.limite) || 0;
+      const usado = calcularUsadoCartao(cartao.nome);
+      cartao.limiteUsado = usado;
+      cartao.limiteDisponivel = limiteTotal > 0 ? Math.max(0, Math.round((limiteTotal - usado) * 100) / 100) : 0;
+    });
+  }
+
+  if (Array.isArray(STATE.contas)) {
+    STATE.contas.forEach(conta => {
+      if (!conta || conta.tipo !== 'cartao' || !conta.nome) return;
+      const limiteTotal = Number(conta.limite || conta.limiteTotal) || 0;
+      const usado = calcularUsadoCartao(conta.nome);
+      conta.limiteUsado = usado;
+      conta.limiteDisponivel = limiteTotal > 0 ? Math.max(0, Math.round((limiteTotal - usado) * 100) / 100) : 0;
+    });
   }
 }
 
@@ -279,15 +631,17 @@ function obterInfoCartaoInteligente(cartao) {
   const diaVencimento = parseInt(cartao.diaVencimento, 10) || 10;
   const limiteTotal = Number(cartao.limiteTotal || cartao.limite) || 0;
 
-  const compAtual = competenciaFatura(hoje, diaFechamento);
+  const compAtual = obterCompetenciaFaturaDashboard(cartao.nome, diaFechamento, hoje);
   const itensFaturaAtual = lancamentosDaFatura(cartao.nome, compAtual.ano, compAtual.mes);
   const totalFaturaAtual = itensFaturaAtual.reduce((s, l) => s + l.valor, 0);
-  const totalFaturaPendente = itensFaturaAtual.filter(l => !estaPago(l)).reduce((s, l) => s + l.valor, 0);
+  const totalFaturaPendente = itensFaturaAtual.filter(l => l.faturaPaga !== true).reduce((s, l) => s + (Number(l.valor) || 0), 0);
 
-  // Todo o comprometimento não pago (fatura atual + parcelas futuras)
-  const pendentesCartao = (STATE.lancamentos || []).filter(l => l.conta === cartao.nome && l.tipo === 'despesa' && !estaPago(l));
-  const totalComprometido = pendentesCartao.reduce((s, l) => s + l.valor, 0);
-  const limiteDisponivel = limiteTotal > 0 ? Math.max(0, limiteTotal - totalComprometido) : 0;
+  // Todo o comprometimento da fatura sem flag faturaPaga === true
+  const pendentesCartao = (STATE.lancamentos || []).filter(
+    l => l.conta === cartao.nome && l.tipo === 'despesa' && !ehLancamentoPagamentoFatura(l) && l.faturaPaga !== true
+  );
+  const totalComprometido = Math.round(pendentesCartao.reduce((s, l) => s + (Number(l.valor) || 0), 0) * 100) / 100;
+  const limiteDisponivel = limiteTotal > 0 ? Math.max(0, Math.round((limiteTotal - totalComprometido) * 100) / 100) : 0;
   const pctUsado = (limiteTotal > 0) ? Math.min(100, Math.round((totalComprometido / limiteTotal) * 100)) : 0;
 
   // Vencimento se comprar HOJE
@@ -451,41 +805,34 @@ function atualizarAmbientGlow(resultadoMes, receitasMes, despesasMes, saldoDispo
 
 /**
  * 2. Iluminação Reativa ao Cursor / Spotlight Glow
- * Calcula a posição relativa do cursor e injeta --mouse-x e --mouse-y em cada cartão.
+/**
+ * Aplica o efeito Spotlight Glow em O(1) apenas no cartão atualmente sob o cursor.
  */
 function inicializarSpotlightGlow() {
   if (window._spotlightGlowInit) return;
   window._spotlightGlowInit = true;
 
   let ticking = false;
+  let ultimoEvento = null;
   document.addEventListener('mousemove', (e) => {
-    if (!ticking) {
-      window.requestAnimationFrame(() => {
-        const cards = document.querySelectorAll('.card, .metric, .melhor-cartao-hero');
-        for (let i = 0; i < cards.length; i++) {
-          const card = cards[i];
-          const rect = card.getBoundingClientRect();
-          if (
-            e.clientX >= rect.left - 50 &&
-            e.clientX <= rect.right + 50 &&
-            e.clientY >= rect.top - 50 &&
-            e.clientY <= rect.bottom + 50
-          ) {
-            const x = e.clientX - rect.left;
-            const y = e.clientY - rect.top;
-            card.style.setProperty('--mouse-x', `${x}px`);
-            card.style.setProperty('--mouse-y', `${y}px`);
-          }
-        }
-        ticking = false;
-      });
-      ticking = true;
-    }
+    ultimoEvento = e;
+    if (ticking) return;
+    ticking = true;
+    window.requestAnimationFrame(() => {
+      ticking = false;
+      const ev = ultimoEvento;
+      if (!ev || !ev.target || typeof ev.target.closest !== 'function') return;
+      const card = ev.target.closest('.card, .metric');
+      if (!card) return;
+      const rect = card.getBoundingClientRect();
+      card.style.setProperty('--mouse-x', `${ev.clientX - rect.left}px`);
+      card.style.setProperty('--mouse-y', `${ev.clientY - rect.top}px`);
+    });
   }, { passive: true });
 }
 
 /**
- * 3. Cartões de Crédito Físicos 3D (HTML Template & Efeito de Inclinação)
+ * 3. Cartões de Crédito Físicos 3D (HTML Template & Efeito de Inclinação via Event Delegation)
  */
 function gerarCartaoFisico3DHTML(cartao, compMes, compAno) {
   const corBase = cartao.cor || '#1A6FE0';
@@ -496,7 +843,7 @@ function gerarCartaoFisico3DHTML(cartao, compMes, compAno) {
   const grad = `linear-gradient(135deg, ${corBase} 0%, #0d1a2d 100%)`;
 
   return `
-    <div class="credit-card-3d-wrap" style="--card-glow:${corBase}55">
+    <div class="credit-card-3d-wrap" style="--card-glow:${escHtml(corBase)}55">
       <div class="credit-card-3d" style="background:${grad}">
         <div class="card-holographic"></div>
         <div class="card-3d-top" style="display:flex;justify-content:space-between;align-items:center;position:relative;z-index:2">
@@ -533,50 +880,58 @@ function gerarCartaoFisico3DHTML(cartao, compMes, compAno) {
   `;
 }
 
+function resetarInclinacaoCartao3D(wrap) {
+  if (!wrap) return;
+  const card = wrap.querySelector('.credit-card-3d');
+  if (!card) return;
+  card.style.transition = 'transform 0.45s cubic-bezier(0.16, 1, 0.3, 1)';
+  card.style.transform = 'rotateX(0deg) rotateY(0deg) scale3d(1, 1, 1)';
+}
+
 function inicializarEfeito3DCartoes() {
-  document.querySelectorAll('.credit-card-3d-wrap').forEach(wrap => {
-    if (wrap.dataset.tiltInit === '1') return;
-    wrap.dataset.tiltInit = '1';
+  const container = document.getElementById('cartoes-content');
+  if (!container || container.dataset.tiltDelegado === '1') return;
+  container.dataset.tiltDelegado = '1';
+
+  let wrapAtivo = null;
+  let rafId = null;
+
+  container.addEventListener('mousemove', (e) => {
+    const wrap = e.target && e.target.closest ? e.target.closest('.credit-card-3d-wrap') : null;
+    if (wrap !== wrapAtivo) {
+      if (wrapAtivo) resetarInclinacaoCartao3D(wrapAtivo);
+      wrapAtivo = wrap;
+    }
+    if (!wrap) return;
     const card = wrap.querySelector('.credit-card-3d');
     if (!card) return;
 
-    let rafId = null;
-    wrap.addEventListener('mousemove', (e) => {
-      const rect = wrap.getBoundingClientRect();
-      const x = e.clientX - rect.left;
-      const y = e.clientY - rect.top;
-      const centerX = rect.width / 2;
-      const centerY = rect.height / 2;
-      // Ângulos suaves: máximo de 14 graus para não distorcer o cartão
-      const rotateY = ((x - centerX) / centerX) * 14;
-      const rotateX = -((y - centerY) / centerY) * 14;
+    const rect = wrap.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+    const centerX = rect.width / 2;
+    const centerY = rect.height / 2;
+    const rotateY = ((x - centerX) / centerX) * 14;
+    const rotateX = -((y - centerY) / centerY) * 14;
 
-      if (rafId) cancelAnimationFrame(rafId);
-      rafId = requestAnimationFrame(() => {
-        card.style.transform = `rotateX(${rotateX.toFixed(2)}deg) rotateY(${rotateY.toFixed(2)}deg) scale3d(1.02, 1.02, 1.02)`;
-        const holo = card.querySelector('.card-holographic');
-        if (holo) {
-          const holoX = Math.round((x / rect.width) * 100);
-          const holoY = Math.round((y / rect.height) * 100);
-          holo.style.backgroundPosition = `${holoX}% ${holoY}%`;
-        }
-      });
-    });
-
-    wrap.addEventListener('mouseleave', () => {
-      if (rafId) cancelAnimationFrame(rafId);
-      card.style.transition = 'transform 0.45s cubic-bezier(0.16, 1, 0.3, 1)';
-      card.style.transform = 'rotateX(0deg) rotateY(0deg) scale3d(1, 1, 1)';
-    });
-
-    wrap.addEventListener('mouseenter', () => {
+    if (rafId) cancelAnimationFrame(rafId);
+    rafId = requestAnimationFrame(() => {
       card.style.transition = 'transform 0.08s ease-out';
+      card.style.transform = `rotateX(${rotateX.toFixed(2)}deg) rotateY(${rotateY.toFixed(2)}deg) scale3d(1.02, 1.02, 1.02)`;
+      const holo = card.querySelector('.card-holographic');
+      if (holo) {
+        holo.style.backgroundPosition = `${Math.round((x / rect.width) * 100)}% ${Math.round((y / rect.height) * 100)}%`;
+      }
     });
-  });
-}
+  }, { passive: true });
 
-function renderWidgetMelhorCartao() {
-  // Widget desativado
+  container.addEventListener('mouseleave', () => {
+    if (rafId) cancelAnimationFrame(rafId);
+    if (wrapAtivo) {
+      resetarInclinacaoCartao3D(wrapAtivo);
+      wrapAtivo = null;
+    }
+  });
 }
 
 function abrirModalGerirCartoes() {
@@ -704,7 +1059,6 @@ async function salvarCartaoInteligente() {
   await salvarDados();
   cancelarEdicaoCartaoInteligente();
   renderListaCartoesInteligentes();
-  renderWidgetMelhorCartao();
   popularContasSelect();
   renderPaginaAtiva();
   renderDashboard();
@@ -720,7 +1074,6 @@ function excluirCartaoInteligente(id) {
     STATE.contas = (STATE.contas || []).filter(x => x.id !== id && x.nome !== c.nome);
     await salvarDados();
     renderListaCartoesInteligentes();
-    renderWidgetMelhorCartao();
     popularContasSelect();
     toast('Cartão removido.', 'ok');
   }, 'Excluir Cartão');
@@ -802,33 +1155,31 @@ function calcularSimuladorParcelado() {
   };
 
   const banner = document.getElementById('sim-parc-veredito-banner');
+  const cardVista = document.getElementById('sim-card-avista');
+  const cardParc = document.getElementById('sim-card-parcelado');
+  if (cardVista) cardVista.classList.toggle('sim-card-vencedor', aVistaVence);
+  if (cardParc) cardParc.classList.toggle('sim-card-vencedor', !aVistaVence);
+
   if (banner) {
+    banner.className = `sim-veredito-box ${aVistaVence ? 'veredito-avista' : 'veredito-parcelado'}`;
     if (aVistaVence) {
-      banner.style.background = 'rgba(16, 185, 129, 0.12)';
-      banner.style.border = '1px solid rgba(16, 185, 129, 0.35)';
       banner.innerHTML = `
-        <div style="display:flex;align-items:center;gap:10px">
-          <i class="ti ti-cash" style="font-size:24px;color:var(--good)"></i>
-          <div>
-            <div style="font-weight:800;font-size:15px;color:var(--good)">Veredito: Pague no PIX / À Vista!</div>
-            <div style="font-size:12.5px;color:var(--text);margin-top:2px">
-              O desconto à vista de <strong>${descontoPct}% (${toBRL(descontoReais)})</strong> supera os rendimentos que você teria no Cofre (<strong>${toBRL(totalRendimentoAcumulado)}</strong>).
-              Você garante um ganho líquido real de <strong class="valor-sensivel" style="color:var(--good)">${toBRL(diferenca)}</strong> no ato da compra.
-            </div>
+        <i class="ti ti-cash" style="font-size:24px"></i>
+        <div>
+          <div class="sim-veredito-titulo">Veredito: Pague no PIX / À Vista!</div>
+          <div class="sim-veredito-sub">
+            O desconto à vista de <strong>${descontoPct}% (${toBRL(descontoReais)})</strong> supera os rendimentos que você teria no Cofre (<strong>${toBRL(totalRendimentoAcumulado)}</strong>).
+            Você garante um ganho líquido real de <strong class="valor-sensivel">${toBRL(diferenca)}</strong> no ato da compra.
           </div>
         </div>
       `;
     } else {
-      banner.style.background = 'rgba(26, 111, 224, 0.12)';
-      banner.style.border = '1px solid rgba(26, 111, 224, 0.35)';
       banner.innerHTML = `
-        <div style="display:flex;align-items:center;gap:10px">
-          <i class="ti ti-credit-card" style="font-size:24px;color:var(--accent)"></i>
-          <div>
-            <div style="font-weight:800;font-size:15px;color:var(--accent)">Veredito: Parcele no Cartão e guarde o valor no Cofre!</div>
-            <div style="font-size:12.5px;color:var(--text);margin-top:2px">
-              Parcelando em <strong>${parcelas}x sem juros</strong> de <strong>${toBRL(valorParcela)}</strong> e deixando o montante rendendo a <strong>${(taxaMensal*100).toFixed(2)}% a.m.</strong>, você acumula <strong class="valor-sensivel" style="color:var(--accent)">${toBRL(totalRendimentoAcumulado)}</strong> de rendimento líquido, superando o desconto à vista em <strong class="valor-sensivel" style="color:var(--good)">${toBRL(diferenca)}</strong>!
-            </div>
+        <i class="ti ti-credit-card" style="font-size:24px"></i>
+        <div>
+          <div class="sim-veredito-titulo">Veredito: Parcele no Cartão e guarde o valor no Cofre!</div>
+          <div class="sim-veredito-sub">
+            Parcelando em <strong>${parcelas}x sem juros</strong> de <strong>${toBRL(valorParcela)}</strong> e deixando o montante rendendo a <strong>${(taxaMensal * 100).toFixed(2)}% a.m.</strong>, você acumula <strong class="valor-sensivel">${toBRL(totalRendimentoAcumulado)}</strong> de rendimento líquido, superando o desconto à vista em <strong class="valor-sensivel">${toBRL(diferenca)}</strong>!
           </div>
         </div>
       `;
@@ -1537,7 +1888,7 @@ async function excluirSnapshot(idOuMesAno) {
 
 async function carregarDados() {
   try {
-    const dadosSalvos = localStorage.getItem(STORAGE_KEY);
+    const dadosSalvos = localStorage.getItem(STORAGE_KEY) || localStorage.getItem('STATE');
     if (dadosSalvos) {
       // Se já tem dados guardados no PC, carrega eles
       STATE = Object.assign(STATE, JSON.parse(dadosSalvos));
@@ -1548,8 +1899,12 @@ async function carregarDados() {
     if (!Array.isArray(STATE.cartoes)) STATE.cartoes = [];
     if (!Array.isArray(STATE.historicoPatrimonio)) STATE.historicoPatrimonio = [];
     if (!Array.isArray(STATE.receitasFixas)) STATE.receitasFixas = [];
+    if (!STATE.config) STATE.config = { lastSync: null, oneDriveLink: null, ultimoMesFechado: null, faturasPagas: {} };
+    if (!STATE.config.faturasPagas || typeof STATE.config.faturasPagas !== 'object') STATE.config.faturasPagas = {};
     sincronizarEstruturaCartoes();
     normalizarLancamentosCartaoExistentes();
+    corrigirFaturasPresas();
+    recalcularLimitesCartoes();
     normalizarConciliacaoLancamentos();
     if (!STATE.regras) STATE.regras = [];
     if (!Array.isArray(STATE.antiMetas)) STATE.antiMetas = [];
@@ -1585,6 +1940,7 @@ async function carregarDados() {
     if (STATE.config && STATE.config.webhookMake && document.getElementById('sync-webhook-make')) {
       document.getElementById('sync-webhook-make').value = STATE.config.webhookMake;
     }
+    localStorage.removeItem('STATE');
     definirCorDestaque((STATE.config && STATE.config.accentColor) || '#1A6FE0', false);
     aplicarEstadoSidebar();
     atualizarUIModoViagem();
@@ -1609,18 +1965,28 @@ async function salvarWebhookMake() {
   toast('Webhook do Make salvo com sucesso!', 'ok');
 }
 
+function persistirStateNoLocalStorage() {
+  const serializado = JSON.stringify(STATE);
+  localStorage.setItem(STORAGE_KEY, serializado);
+  try { localStorage.removeItem('STATE'); } catch (e) {}
+  if (window.electronAPI && typeof window.electronAPI.atualizarCacheP2P === 'function') {
+    try { window.electronAPI.atualizarCacheP2P(STATE); } catch (e) {}
+  }
+}
+
 async function salvarDados() {
   if (window.__apagandoDados) return;
-  try { 
+  try {
     normalizarConciliacaoLancamentos();
-    // Guarda tudo silenciosamente no armazenamento interno do app
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(STATE)); 
-    if (window.electronAPI && typeof window.electronAPI.atualizarCacheP2P === 'function') {
-      try { window.electronAPI.atualizarCacheP2P(STATE); } catch (e) {}
+    recalcularLimitesCartoes();
+    persistirStateNoLocalStorage();
+  } catch (e) {
+    console.error("Erro ao salvar:", e);
+    if (e && e.name === 'QuotaExceededError') {
+      toast('Armazenamento local cheio! Exclua anexos antigos ou exporte um backup JSON.', 'err');
+    } else {
+      toast('Erro ao salvar no armazenamento local.', 'err');
     }
-  } catch (e) { 
-    console.error("Erro ao salvar:", e); 
-    toast('Erro ao salvar no armazenamento local.', 'err'); 
   }
 }
 
@@ -1970,13 +2336,11 @@ function limparFormularioModal(modalEl) {
     if (typeof comprovanteAtual !== 'undefined') comprovanteAtual = null;
     if (typeof anexoMetaAtual !== 'undefined') anexoMetaAtual = null;
     if (typeof splitLinhas !== 'undefined') splitLinhas = [];
-    if (typeof atualizarUIComprovante === 'function') atualizarUIComprovante();
+    if (typeof renderComprovanteArea === 'function') renderComprovanteArea();
     const wrapGarantia = document.getElementById('lanc-garantia-wrap');
     if (wrapGarantia) wrapGarantia.style.display = 'none';
     const wrapSplit = document.getElementById('lanc-split-wrap');
     if (wrapSplit) wrapSplit.style.display = 'none';
-    const wrapRec = document.getElementById('lanc-recorrencia-wrap');
-    if (wrapRec) wrapRec.style.display = 'none';
     const wrapRachar = document.getElementById('lanc-rachar-wrap');
     if (wrapRachar) wrapRachar.style.display = 'none';
     const chkRachar = document.getElementById('lanc-rachar-chk');
@@ -2231,14 +2595,6 @@ function atualizarIconesTema(corHex) {
   const bloqImg = document.getElementById('bloqueio-logo');
   if (bloqImg) bloqImg.src = src;
   try {
-    const enviarIcone = (dataUrl) => {
-      if (window.electronAPI && typeof window.electronAPI.setWindowIcon === 'function') {
-        window.electronAPI.setWindowIcon(dataUrl);
-      } else if (typeof require === 'function') {
-        const { ipcRenderer } = require('electron');
-        ipcRenderer.send('cofin:set-window-icon', dataUrl);
-      }
-    };
     if (ehElectron()) {
       const img = new Image();
       img.onload = () => {
@@ -2249,7 +2605,9 @@ function atualizarIconesTema(corHex) {
           const ctx = canvas.getContext('2d');
           ctx.drawImage(img, 0, 0, 128, 128);
           const pngUrl = canvas.toDataURL('image/png');
-          enviarIcone(pngUrl);
+          if (window.electronAPI && typeof window.electronAPI.setWindowIcon === 'function') {
+            window.electronAPI.setWindowIcon(pngUrl);
+          }
         } catch (e) {
           enviarIcone(src);
         }
@@ -2479,24 +2837,76 @@ function inicializarDragDropDashboard() {
   };
 }
 
+/**
+ * Verifica se uma despesa de cartão já foi liquidada através de um lançamento de
+ * "Transferência/Pagamento de Fatura" na conta corrente, anulando a dívida do cartão
+ * no cálculo do Património Líquido / Saldo Geral para evitar qualquer duplicação.
+ */
+function despesaCartaoAnuladaPorPagamentoFatura(l) {
+  if (!l || ehLancamentoPagamentoFatura(l) || !ehLancamentoCartao(l) || l.tipo !== 'despesa') return false;
+  if (l.faturaPaga !== true) return false;
+  // Verifica se existe o lançamento de saída ("Pagamento Fatura") na conta bancária
+  const temSaidaConta = (STATE.lancamentos || []).some(p => {
+    if (!ehLancamentoPagamentoFatura(p)) return false;
+    if (l.pagamentoFaturaId && p.id === l.pagamentoFaturaId) return true;
+    const nomeC = p.cartaoNome || String(p.descricao || '').replace(/^pagamento\s+(?:de\s+)?fatura\s*/i, '').trim();
+    if (nomeC && l.conta && nomeC.toLowerCase() === l.conta.toLowerCase()) {
+      if (p.faturaAno && p.faturaMes && l.faturaAno && l.faturaMes) {
+        return Number(p.faturaAno) === Number(l.faturaAno) && Number(p.faturaMes) === Number(l.faturaMes);
+      }
+      return true;
+    }
+    return false;
+  });
+  return temSaidaConta;
+}
+
 function renderDashboard() {
   migrarCofresParaMetas();
+  recalcularLimitesCartoes();
   const mesAtual = hojeLocalISO().slice(0, 7);
   let receitasMes = 0, despesasMes = 0, totalReceitas = 0, totalDespesas = 0;
   STATE.lancamentos.forEach(l => {
-    if (l.ehMovimentoCofre || l.ehPagamentoFatura) return;
+    if (l.ehMovimentoCofre) return;
+    const ehPagFatura = ehLancamentoPagamentoFatura(l);
+    const ehCartao = !ehPagFatura && ehLancamentoCartao(l);
     const mesLanc = mesCompetenciaLancamento(l);
 
-    // Considera apenas transações até o mês atual (ignora parcelas e lançamentos de meses futuros)
-    if (!mesLanc || mesLanc <= mesAtual) {
-      if (l.tipo === 'receita') totalReceitas += l.valor;
-      else totalDespesas += l.valor;
+    // Proteção do Saldo Geral / Património:
+    // - Se for "Transferência/Pagamento de Fatura" (ehPagFatura), o dinheiro já saiu da conta corrente:
+    //   abate no saldo geral (totalDespesas) quando a despesa do cartão foi anulada pela flag faturaPaga.
+    // - Se for despesa de cartão com faturaPaga === true e houver a transação de Pagamento de Fatura,
+    //   a dívida do cartão está anulada (não soma novamente em totalDespesas).
+    // - Se for despesa de cartão sem faturaPaga === true, entra como Dívida de Cartão.
+    if (ehPagFatura) {
+      const dataMesPag = (l.data || '').slice(0, 7);
+      if (!dataMesPag || dataMesPag <= mesAtual) {
+        totalDespesas += (Number(l.valor) || 0);
+      }
+      return;
     }
 
-    // Apenas transações da competência do mês atual
-    if (mesLanc === mesAtual && !l.ehTransferencia) {
-      if (l.tipo === 'receita') receitasMes += l.valor;
-      else despesasMes += l.valor;
+    if (ehCartao && l.tipo === 'despesa') {
+      if (l.faturaPaga === true) {
+        if (!despesaCartaoAnuladaPorPagamentoFatura(l) && (!mesLanc || mesLanc <= mesAtual)) {
+          totalDespesas += (Number(l.valor) || 0);
+        }
+      } else {
+        const dataCompraMes = (l.data || '').slice(0, 7);
+        const ehParcelaFutura = (l.parcelaTotal > 1 && l.parcelaAtual > 1 && dataCompraMes > mesAtual);
+        if (!ehParcelaFutura && (!mesLanc || mesLanc <= mesAtual || dataCompraMes <= mesAtual)) {
+          totalDespesas += (Number(l.valor) || 0);
+        }
+      }
+    } else if (!mesLanc || mesLanc <= mesAtual) {
+      if (l.tipo === 'receita') totalReceitas += (Number(l.valor) || 0);
+      else totalDespesas += (Number(l.valor) || 0);
+    }
+
+    // Apenas transações da competência do mês atual (exclui transferências e pagamento de fatura para não duplicar categorias)
+    if (mesLanc === mesAtual && !l.ehTransferencia && !ehPagFatura) {
+      if (l.tipo === 'receita') receitasMes += (Number(l.valor) || 0);
+      else despesasMes += (Number(l.valor) || 0);
     }
   });
   const totalGuardadoMetas = calcularTotalGuardadoMetas();
@@ -2577,8 +2987,8 @@ function renderDashboard() {
   const em3DiasISO = hojeLocalISO(3);
   const listaCartoes = (STATE.cartoes && STATE.cartoes.length) ? STATE.cartoes : (STATE.contas || []).filter(c => c.tipo === 'cartao');
   listaCartoes.forEach(cartao => {
-    // Agrupa todos os lançamentos não pagos deste cartão por fatura (ano-mes)
-    const pendentes = (STATE.lancamentos || []).filter(l => l.conta === cartao.nome && l.tipo === 'despesa' && !estaPago(l));
+    // Agrupa todos os lançamentos sem faturaPaga === true deste cartão por fatura (ano-mes)
+    const pendentes = (STATE.lancamentos || []).filter(l => l.conta === cartao.nome && l.tipo === 'despesa' && !ehLancamentoPagamentoFatura(l) && l.faturaPaga !== true);
     const porFatura = {};
     pendentes.forEach(l => {
       const comp = calcularCompetenciaLancamentoCartao(l, cartao);
@@ -2640,11 +3050,11 @@ function renderDashboard() {
     const exibidos = insights.slice(0, 2);
     contInsights.style.display = exibidos.length ? 'grid' : 'none';
     contInsights.innerHTML = exibidos.map(ins => `
-      <div class="insight-card ins-${ins.tipo}">
-        <div class="insight-icon"><i class="ti ${ins.icone.toLowerCase()}"></i></div>
+      <div class="insight-card ins-${escHtml(ins.tipo)}">
+        <div class="insight-icon"><i class="ti ${escHtml(ins.icone.toLowerCase())}"></i></div>
         <div class="insight-body">
-          <div class="insight-title">${ins.titulo}</div>
-          <div class="insight-text">${ins.texto}</div>
+          <div class="insight-title">${escHtml(ins.titulo)}</div>
+          <div class="insight-text">${escHtml(ins.texto)}</div>
         </div>
       </div>`).join('');
   }
@@ -2726,8 +3136,8 @@ function renderDashboard() {
         : `<button type="button" class="btn btn-sm" onclick="togglePagamento('${l.id}')"><i class="ti ti-check"></i> Marcar como paga</button>`;
       return `<div class="pendente-row">
         <div class="pendente-info">
-          <div class="pendente-desc">${l.descricao || '-'}${badgeParcelaHTML(l)}</div>
-          <div class="pendente-meta">${dataFmt} · ${l.categoria || '-'}</div>
+          <div class="pendente-desc">${escHtml(l.descricao || '-')}${badgeParcelaHTML(l)}</div>
+          <div class="pendente-meta">${dataFmt} · ${escHtml(l.categoria || '-')}</div>
         </div>
         <div style="display:flex;align-items:center;gap:10px;flex-shrink:0">
           <div class="pendente-valor ${l.tipo==='receita'?'mv-ok':'mv-bad'}">${l.tipo==='receita'?'+':'-'} ${toBRL(l.valor)}</div>
@@ -2800,14 +3210,21 @@ function renderDashboard() {
         html += cartoesDash.map(cartao => {
           const compAtual = obterCompetenciaFaturaDashboard(cartao.nome, cartao.diaFechamento || 1, hojeDashISO);
           const itensFatura = lancamentosDaFatura(cartao.nome, compAtual.ano, compAtual.mes);
-          const totalBrutoFatura = itensFatura.reduce((s, l) => s + l.valor, 0);
-          const totalFatura = itensFatura.filter(l => !estaPago(l) && !l.faturaPaga).reduce((s, l) => s + l.valor, 0);
+          const totalBrutoFatura = Math.round(itensFatura.reduce((s, l) => s + (Number(l.valor) || 0), 0) * 100) / 100;
+          const totalFatura = Math.round(
+            itensFatura
+              .filter(l => l.faturaPaga !== true)
+              .reduce((s, l) => s + (Number(l.valor) || 0), 0) * 100
+          ) / 100;
+          const faturaSemSaldo = totalFatura === 0;
           const faturaJaPaga = itensFatura.length > 0 && totalFatura <= 0;
-          const temLimite = typeof cartao.limite === 'number' && cartao.limite > 0;
-          const limite = temLimite ? cartao.limite : 0;
-          const pendentesCartao = STATE.lancamentos.filter(l => l.conta === cartao.nome && l.tipo === 'despesa' && !estaPago(l) && !l.faturaPaga);
-          const totalPendente = pendentesCartao.reduce((s, l) => s + l.valor, 0);
-          const disponivel = temLimite ? Math.max(0, limite - totalPendente) : 0;
+          const limite = Number(cartao.limite || cartao.limiteTotal) || 0;
+          const temLimite = limite > 0;
+          const pendentesCartao = STATE.lancamentos.filter(
+            l => l.conta === cartao.nome && l.tipo === 'despesa' && !ehLancamentoPagamentoFatura(l) && l.faturaPaga !== true
+          );
+          const totalPendente = Math.round(pendentesCartao.reduce((s, l) => s + (Number(l.valor) || 0), 0) * 100) / 100;
+          const disponivel = temLimite ? Math.max(0, Math.round((limite - totalPendente) * 100) / 100) : 0;
           const pctUsado = (temLimite && limite > 0) ? Math.min(100, Math.max(0, (totalPendente / limite) * 100)) : 0;
 
           const venc = calcularVencimentoFatura(compAtual.ano, compAtual.mes, cartao.diaFechamento || 1, cartao.diaVencimento || 10);
@@ -2824,7 +3241,7 @@ function renderDashboard() {
             <div class="pendente-row dash-cartao-row" onclick="if(!event.target.closest('.btn-pagar-fatura')) expandirCardMagicMove(this, 'cartoes')" title="${escHtml(tooltipInfo)}">
               <div class="pendente-info">
                 <div class="pendente-desc" style="display:flex;align-items:center;gap:5px;flex-wrap:wrap">
-                  <span><i class="ti ti-credit-card" style="font-size:13px;color:${cartao.cor || 'var(--accent)'};margin-right:5px"></i>${escHtml(cartao.nome)}</span>
+                  <span><i class="ti ti-credit-card" style="font-size:13px;color:${escHtml(cartao.cor || 'var(--accent)')};margin-right:5px"></i>${escHtml(cartao.nome)}</span>
                   ${faturaJaPaga ? `<span class="badge badge-fatura-paga" style="font-size:9.5px;padding:1px 6px"><i class="ti ti-circle-check"></i> Fatura Paga</span>` : ''}
                 </div>
                 <div class="pendente-meta">
@@ -2833,8 +3250,8 @@ function renderDashboard() {
                   ${cartao.diaFechamento ? `<span>·</span><span>Fecha dia ${cartao.diaFechamento}</span>` : ''}
                 </div>
                 <div style="margin-top:6px">
-                  <button type="button" class="btn btn-sm btn-primary btn-pagar-fatura" data-cartao-id="${idCartaoAttr}" data-mes="${compAtual.mes}" data-ano="${compAtual.ano}" style="padding:3px 10px;font-size:11px" ${totalFatura <= 0 ? 'disabled' : ''}>
-                    <i class="ti ${faturaJaPaga ? 'ti-circle-check' : 'ti-cash-banknote'}"></i> ${faturaJaPaga ? 'Fatura Paga' : 'Pagar Fatura'}
+                  <button type="button" class="btn btn-sm btn-primary btn-pagar-fatura" data-cartao-id="${idCartaoAttr}" data-mes="${compAtual.mes}" data-ano="${compAtual.ano}" style="padding:3px 10px;font-size:11px" ${faturaSemSaldo ? 'disabled' : ''}>
+                    <i class="ti ${faturaSemSaldo ? 'ti-circle-check' : 'ti-cash-banknote'}"></i> ${faturaSemSaldo ? 'Fatura Paga' : 'Pagar Fatura'}
                   </button>
                 </div>
               </div>
@@ -2890,7 +3307,7 @@ function popularFiltros() {
   fCat.value = [...fCat.options].some(o => o.value === catAtual) ? catAtual : '';
   const fTag = document.getElementById('f-tag');
   const tagAtual = fTag.value;
-  fTag.innerHTML = '<option value="">Todas as tags</option>' + todasAsTags().map(t => `<option value="${t}">#${t}</option>`).join('');
+  fTag.innerHTML = '<option value="">Todas as tags</option>' + todasAsTags().map(t => `<option value="${escHtml(t)}">#${escHtml(t)}</option>`).join('');
   fTag.value = [...fTag.options].some(o => o.value === tagAtual) ? tagAtual : '';
 
   // Filtro de Conta / Cartão
@@ -2914,19 +3331,32 @@ function categoriaCorrespondeFiltro(catLanc, catFiltro) {
 }
 function estaPago(l) {
   if (!l) return false;
-  if (ehLancamentoCartao(l) && l.tipo === 'despesa' && !l.ehPagamentoFatura) {
-    return l.faturaPaga === true || l.status === 'Liquidado';
+  if (ehLancamentoPagamentoFatura(l)) {
+    return l.pago !== false;
   }
-  return l.pago !== false || l.faturaPaga === true || l.status === 'Liquidado' || l.status === 'Pago/Efetivado';
+  if (ehLancamentoCartao(l) && l.tipo === 'despesa') {
+    return l.faturaPaga === true;
+  }
+  return l.pago !== false || l.status === 'Liquidado' || l.status === 'Pago/Efetivado';
 }
 function badgeStatusHTML(l, comClique) {
-  const pago = estaPago(l);
   const onclick = comClique ? ` onclick="togglePagamento('${l.id}')" title="Clique para alternar"` : '';
-  if (pago && (l.faturaPaga || l.status === 'Liquidado')) {
-    return `<span class="badge badge-pago badge-liquidado${comClique?' badge-click':''}"${onclick}><i class="ti ti-checks" style="font-size:11px;margin-right:2px"></i>Liquidado</span>`;
+  if (ehLancamentoCartao(l) && l.tipo === 'despesa' && !ehLancamentoPagamentoFatura(l)) {
+    const faturaQuitada = l.faturaPaga === true;
+    if (faturaQuitada) {
+      return `<span class="badge badge-pago badge-liquidado${comClique?' badge-click':''}"${onclick}><i class="ti ti-checks" style="font-size:11px;margin-right:2px"></i>Liquidado</span>`;
+    }
+    const tipTrans = l.status && l.status !== 'Pendente'
+      ? `Transação: ${escHtml(l.status)} · Fatura Pendente`
+      : 'Pendente de pagamento da fatura';
+    return `<span class="badge badge-pendente${comClique?' badge-click':''}"${onclick} title="${tipTrans}">Pendente</span>`;
   }
+  const pago = estaPago(l);
   if (pago && (l.ehPagamentoFatura || l.status === 'Pago/Efetivado')) {
     return `<span class="badge badge-pago badge-liquidado${comClique?' badge-click':''}"${onclick}><i class="ti ti-circle-check" style="font-size:11px;margin-right:2px"></i>Pago/Efetivado</span>`;
+  }
+  if (pago && l.status === 'Liquidado') {
+    return `<span class="badge badge-pago badge-liquidado${comClique?' badge-click':''}"${onclick}><i class="ti ti-checks" style="font-size:11px;margin-right:2px"></i>Liquidado</span>`;
   }
   return `<span class="badge ${pago?'badge-pago':'badge-pendente'}${comClique?' badge-click':''}"${onclick}>${pago?'Pago':'Pendente'}</span>`;
 }
@@ -2964,7 +3394,7 @@ function linhaLancamento(l) {
     <td>${dataFmt}</td>
     <td>${formatarDescricaoComHashtags(l.descricao)}${badgeParcelaHTML(l)}${badgesTagsHTML(l)}${comprovanteIconHTML(l)}</td>
     <td><span class="badge badge-cat">${escHtml(formatarCategoriaExibicao(l.categoria))}</span></td>
-    <td>${l.conta || '-'}</td>
+    <td>${escHtml(l.conta || '-')}</td>
     <td>${badgeStatusHTML(l, false)}</td>
     <td style="text-align:right">${badgeValorHTML(l)}</td>
   </tr>`;
@@ -3045,8 +3475,8 @@ function renderCalendarioFinanceiro(listaFiltrada) {
       const classe = l.tipo === 'receita' ? 'rec' : 'desp';
       const sinal = l.tipo === 'receita' ? '+' : '-';
       const acao = l.ehTransferencia ? '' : `onclick="abrirModalLancamento('${l.id}')"`;
-      return `<div class="cal-pill ${classe}" ${acao} title="${(l.descricao || '').replace(/"/g, '&quot;')} (${toBRL(l.valor)})">
-        <span style="overflow:hidden;text-overflow:ellipsis">${l.descricao || '-'}</span>
+      return `<div class="cal-pill ${classe}" ${acao} title="${escHtml(l.descricao || '')} (${toBRL(l.valor)})">
+        <span style="overflow:hidden;text-overflow:ellipsis">${escHtml(l.descricao || '-')}</span>
         <span>${sinal}${toBRL(l.valor)}</span>
       </div>`;
     }).join('');
@@ -3106,8 +3536,17 @@ function aplicarEstiloTabela() {
     btn.innerHTML = '<i class="ti ti-layout-cards"></i> Estilo Cards';
   }
 }
-function renderLancamentos() {
-  popularFiltros();
+let _timerBuscaLancamentos = null;
+function agendarRenderLancamentos() {
+  clearTimeout(_timerBuscaLancamentos);
+  _timerBuscaLancamentos = setTimeout(() => {
+    renderLancamentos({ pularFiltros: true });
+  }, 180);
+}
+
+function renderLancamentos(opcoes) {
+  const pularFiltros = Boolean(opcoes && opcoes.pularFiltros);
+  if (!pularFiltros) popularFiltros();
   atualizarContagemLixeira();
   aplicarEstiloTabela(); // Aplica o estilo (Tabela/Cards) baseado na escolha salva
   const mes = document.getElementById('f-mes').value;
@@ -3132,9 +3571,9 @@ function renderLancamentos() {
   if (tagFiltro) {
     const gastos = lista.filter(l => l.tipo === 'despesa' && !l.ehTransferencia).reduce((s,l) => s + l.valor, 0);
     const entradas = lista.filter(l => l.tipo === 'receita' && !l.ehTransferencia).reduce((s,l) => s + l.valor, 0);
-    const cats = gastosPorCategoria(lista).slice(0, 4).map(([c, v]) => `${c}: ${toBRL(v)}`).join(' · ');
+    const cats = gastosPorCategoria(lista).slice(0, 4).map(([c, v]) => `${escHtml(c)}: ${toBRL(v)}`).join(' · ');
     resumoTag.style.display = '';
-    resumoTag.innerHTML = `<i class="ti ti-tag" style="flex-shrink:0"></i><div><strong>#${tagFiltro}</strong> — gasto total ${toBRL(gastos)}${entradas ? ` · entradas ${toBRL(entradas)}` : ''} · ${lista.length} lançamento(s)${cats ? `<br><span style="font-weight:400">Por categoria: ${cats}</span>` : ''}</div>`;
+    resumoTag.innerHTML = `<i class="ti ti-tag" style="flex-shrink:0"></i><div><strong>#${escHtml(tagFiltro)}</strong> — gasto total ${toBRL(gastos)}${entradas ? ` · entradas ${toBRL(entradas)}` : ''} · ${lista.length} lançamento(s)${cats ? `<br><span style="font-weight:400">Por categoria: ${cats}</span>` : ''}</div>`;
   } else {
     resumoTag.style.display = 'none';
   }
@@ -3169,13 +3608,13 @@ function renderLancamentos() {
       ? ` onclick="clicarItemConciliacao('${l.id}', this, event)"`
       : '';
     const subCatsBadge = (l.subTransacoes && l.subTransacoes.length)
-      ? ` <span class="badge badge-cat" title="${l.subTransacoes.map(s => s.categoria + ': ' + toBRL(s.valor)).join(' | ')}"><i class="ti ti-arrows-split-2"></i> ${l.subTransacoes.length} cats</span>`
+      ? ` <span class="badge badge-cat" title="${escHtml(l.subTransacoes.map(s => s.categoria + ': ' + toBRL(s.valor)).join(' | '))}"><i class="ti ti-arrows-split-2"></i> ${l.subTransacoes.length} cats</span>`
       : '';
     return `<tr data-id="${l.id}"${classesTr ? ` class="${classesTr}"` : ''}${attrCliqueTr}>
       <td>${chkConcil}${dataFmt}</td>
       <td>${formatarDescricaoComHashtags(l.descricao)}${badgeParcelaHTML(l)}${subCatsBadge}${badgesTagsHTML(l)}${comprovanteIconHTML(l)}</td>
       <td><span class="badge badge-cat">${escHtml(formatarCategoriaExibicao(l.categoria))}</span></td>
-      <td>${l.conta || '-'}</td>
+      <td>${escHtml(l.conta || '-')}</td>
       <td>${badgeStatusHTML(l, !l.ehTransferencia && !modoConciliacaoAtivo)}</td>
       <td style="text-align:right">${badgeValorHTML(l)}</td>
       <td class="concil-acoes" style="text-align:right;white-space:nowrap">${acoes}</td>
@@ -3405,15 +3844,18 @@ async function marcarSelecionadosComoPagos() {
     return;
   }
   let alterados = 0;
+  let ignoradosCartao = 0;
   STATE.lancamentos.forEach(l => {
-    if (conciliacaoSelecionados.has(l.id) && !estaPago(l)) {
-      l.pago = true;
-      if (ehLancamentoCartao(l) && l.tipo === 'despesa' && !l.ehPagamentoFatura) {
-        l.faturaPaga = true;
-        l.status = 'Liquidado';
+    if (conciliacaoSelecionados.has(l.id)) {
+      if (ehLancamentoCartao(l) && l.tipo === 'despesa' && !ehLancamentoPagamentoFatura(l)) {
+        ignoradosCartao++;
+        return;
       }
-      l.sincronizado = false;
-      alterados++;
+      if (!estaPago(l)) {
+        l.pago = true;
+        l.sincronizado = false;
+        alterados++;
+      }
     }
   });
   const totalSel = conciliacaoSelecionados.size;
@@ -3427,23 +3869,29 @@ async function marcarSelecionadosComoPagos() {
   await salvarDados();
   renderPaginaAtiva();
   sincronizarEmSegundoPlano();
-  toast(alterados ? `${alterados} lançamento(s) marcado(s) como pago(s)!` : `${totalSel} lançamento(s) já estavam pagos.`, 'ok');
+  if (ignoradosCartao > 0 && alterados === 0) {
+    toast('Compras de cartão só são liquidadas pelo botão "Pagar Fatura".', 'info');
+  } else {
+    toast(alterados ? `${alterados} lançamento(s) marcado(s) como pago(s)!` : `${totalSel} lançamento(s) já estavam pagos.`, 'ok');
+  }
 }
 async function togglePagamento(id) {
   const l = STATE.lancamentos.find(x => x.id === id);
   if (!l) return;
+  if (ehLancamentoCartao(l) && l.tipo === 'despesa' && !ehLancamentoPagamentoFatura(l)) {
+    if (l.faturaPaga === true) {
+      toast('Esta fatura já foi liquidada via Pagamento de Fatura na conta corrente.', 'info');
+      return;
+    }
+    const cartao = (STATE.contas || []).find(c => c.nome === l.conta && c.tipo === 'cartao') || (STATE.cartoes || []).find(c => c.nome === l.conta);
+    const comp = calcularCompetenciaLancamentoCartao(l, cartao || { nome: l.conta, diaFechamento: 1 });
+    abrirModalPagamentoFatura(l.conta, comp.mes, comp.ano);
+    return;
+  }
   const novoEstado = !estaPago(l);
   l.pago = novoEstado;
-  if (ehLancamentoCartao(l) && l.tipo === 'despesa' && !l.ehPagamentoFatura) {
-    l.faturaPaga = novoEstado;
-    if (novoEstado) {
-      l.status = 'Liquidado';
-    } else if (l.status === 'Liquidado' || l.status === 'Pago/Efetivado') {
-      delete l.status;
-    }
-  } else if (!novoEstado) {
-    l.faturaPaga = false;
-    if (l.status === 'Liquidado' || l.status === 'Pago/Efetivado') delete l.status;
+  if (!novoEstado && (l.status === 'Liquidado' || l.status === 'Pago/Efetivado')) {
+    delete l.status;
   }
   l.sincronizado = false;
   await salvarDados();
@@ -3555,7 +4003,7 @@ function atualizarResumoSplit() {
   }
 }
 function popularContasSelect() {
-  document.getElementById('lanc-conta').innerHTML = STATE.contas.map(c => `<option value="${c.nome}">${c.nome}</option>`).join('');
+  document.getElementById('lanc-conta').innerHTML = STATE.contas.map(c => `<option value="${escHtml(c.nome)}">${escHtml(c.nome)}</option>`).join('');
 }
 function sugerirCategoriaPorRegra() {
   const campoDesc = document.getElementById('lanc-descricao');
@@ -3645,13 +4093,28 @@ function todasAsTags() {
 }
 function formatarDescricaoComHashtags(desc) {
   const txt = String(desc || '-');
-  return txt.replace(/#[\wÀ-ÿ]+/g, '<span class="hashtag" onclick="event.stopPropagation(); filtrarPorHashtag(\'$&\')">$&</span>');
+  const regex = /#[\wÀ-ÿ]+/g;
+  let resultado = '';
+  let ultimoIndice = 0;
+  let match;
+  while ((match = regex.exec(txt)) !== null) {
+    if (match.index > ultimoIndice) {
+      resultado += escHtml(txt.slice(ultimoIndice, match.index));
+    }
+    const tagEsc = escHtml(match[0]);
+    resultado += `<span class="hashtag" data-hashtag="${tagEsc}" onclick="event.stopPropagation(); filtrarPorHashtag(this.dataset.hashtag)">${tagEsc}</span>`;
+    ultimoIndice = regex.lastIndex;
+  }
+  if (ultimoIndice < txt.length) {
+    resultado += escHtml(txt.slice(ultimoIndice));
+  }
+  return resultado || '-';
 }
 function badgesTagsHTML(l) {
   const inlineSet = new Set(extrairHashtagsDescricao(l.descricao).map(t => t.toLowerCase()));
   return (l.tags || [])
     .filter(t => !inlineSet.has(t.toLowerCase()))
-    .map(t => `<span class="hashtag" onclick="event.stopPropagation(); filtrarPorHashtag('#${t.replace(/'/g, "\\'")}')">#${t}</span>`)
+    .map(t => `<span class="hashtag" data-hashtag="#${escHtml(t)}" onclick="event.stopPropagation(); filtrarPorHashtag(this.dataset.hashtag)">#${escHtml(t)}</span>`)
     .join('');
 }
 function filtrarPorHashtag(tagRaw) {
@@ -3800,7 +4263,7 @@ function abrirModalRevisaoExtrato(itens) {
   itensExtratoEmRevisao = itens.map(it => ({ ...it }));
   const selConta = document.getElementById('extrato-rev-conta');
   if (selConta) {
-    selConta.innerHTML = STATE.contas.map(c => `<option value="${c.nome}">${c.nome}</option>`).join('');
+    selConta.innerHTML = STATE.contas.map(c => `<option value="${escHtml(c.nome)}">${escHtml(c.nome)}</option>`).join('');
   }
   renderListaRevisaoExtrato();
   abrirModal('modal-revisao-extrato');
@@ -3827,7 +4290,7 @@ function renderListaRevisaoExtrato() {
     const optsCat = construirOptionsCategoriasHTML(it.tipo || '', it.categoria);
     return `<div class="extrato-rev-row">
       <div style="font-family:var(--mono);font-size:11.5px;color:var(--text3)">${dataFmt}</div>
-      <div style="min-width:0"><input type="text" value="${(it.descricao || '').replace(/"/g, '&quot;')}" oninput="itensExtratoEmRevisao[${idx}].descricao = this.value" style="padding:5px 8px;font-size:12px"></div>
+      <div style="min-width:0"><input type="text" value="${escHtml(it.descricao || '')}" oninput="itensExtratoEmRevisao[${idx}].descricao = this.value" style="padding:5px 8px;font-size:12px"></div>
       <div style="text-align:right;font-weight:700" class="${it.tipo === 'receita' ? 'mv-ok' : 'mv-bad'}">${it.tipo === 'receita' ? '+' : '-'} ${toBRL(it.valor)}</div>
       <div><select onchange="itensExtratoEmRevisao[${idx}].categoria = this.value" style="padding:5px 8px;font-size:12px">${optsCat}</select></div>
       <div style="text-align:right"><button class="icon-btn danger" type="button" onclick="removerItemRevisaoExtrato(${idx})" title="Ignorar este item"><i class="ti ti-trash"></i></button></div>
@@ -4208,7 +4671,7 @@ async function salvarLancamento() {
           categoria: sub.categoria, conta, valor: sub.valor,
           origem: 'manual', sincronizado: false,
           pago: cartaoConta ? false : pago,
-          faturaPaga: cartaoConta ? false : undefined,
+          posPagamentoFatura: (cartaoConta && faturaAno && faturaMes && STATE.config && STATE.config.faturasPagas && STATE.config.faturasPagas[`${conta}|${faturaAno}-${String(faturaMes).padStart(2, '0')}`]) ? true : undefined,
           tags,
           faturaAno, faturaMes, dataVencimentoFatura,
           subTransacoes: idxSub === 0 ? subTransacoes : undefined,
@@ -4330,6 +4793,7 @@ async function salvarLancamento() {
         ...anterior,
         tipo, data: dataLancamento, dataCompra, descricao, categoria, conta, valor: valorTotal,
         pago: cartaoConta ? (anterior.faturaPaga === true) : pago,
+        faturaPaga: cartaoConta ? (anterior.faturaPaga === true ? true : undefined) : anterior.faturaPaga,
         faturaAno, faturaMes, dataVencimentoFatura,
         comprovante: comprovanteAtual || undefined,
         anexoNome, anexoPath,
@@ -4381,7 +4845,7 @@ async function salvarLancamento() {
         totalParcelas: parcelas,
         faturaAno, faturaMes, dataVencimentoFatura,
         pago: false,
-        faturaPaga: cartaoConta ? false : undefined,
+        posPagamentoFatura: (cartaoConta && faturaAno && faturaMes && STATE.config && STATE.config.faturasPagas && STATE.config.faturasPagas[`${conta}|${faturaAno}-${String(faturaMes).padStart(2, '0')}`]) ? true : undefined,
         tags,
         ehReembolsavel: i === 1 ? !!ehReembolsavel : undefined,
         reembolsoDevedor: i === 1 ? devedorReembolso : undefined,
@@ -4415,7 +4879,7 @@ async function salvarLancamento() {
       origem: 'manual', sincronizado: false,
       faturaAno, faturaMes, dataVencimentoFatura,
       pago: cartaoConta ? false : pago,
-      faturaPaga: cartaoConta ? false : undefined,
+      posPagamentoFatura: (cartaoConta && faturaAno && faturaMes && STATE.config && STATE.config.faturasPagas && STATE.config.faturasPagas[`${conta}|${faturaAno}-${String(faturaMes).padStart(2, '0')}`]) ? true : undefined,
       tags,
       ehReembolsavel: !!ehReembolsavel,
       reembolsoDevedor: devedorReembolso,
@@ -4995,12 +5459,12 @@ function renderConfig() {
   document.getElementById('conta-list').innerHTML = STATE.contas.map((c,i) => {
     if (c.tipo === 'cartao') {
       const info = [c.diaFechamento ? `fecha dia ${c.diaFechamento}` : null, c.diaVencimento ? `vence dia ${c.diaVencimento}` : null].filter(Boolean).join(' · ');
-      return `<span class="tag"><i class="ti ti-credit-card" style="opacity:.6"></i> ${c.nome} <span class="badge badge-cat" style="margin-left:4px">${info}</span>
+      return `<span class="tag"><i class="ti ti-credit-card" style="opacity:.6"></i> ${escHtml(c.nome)} <span class="badge badge-cat" style="margin-left:4px">${escHtml(info)}</span>
         <button onclick="editarConta(${i})" title="Editar"><i class="ti ti-pencil"></i></button>
         <button onclick="removerConta(${i})" title="Remover"><i class="ti ti-x"></i></button></span>`;
     }
     const saldo = saldos[c.nome] || 0;
-    return `<span class="tag">${c.nome} <span class="badge ${saldo>=0?'badge-pago':'badge-pendente'}" style="margin-left:4px">${toBRL(saldo)}</span>
+    return `<span class="tag">${escHtml(c.nome)} <span class="badge ${saldo>=0?'badge-pago':'badge-pendente'}" style="margin-left:4px">${toBRL(saldo)}</span>
       <button onclick="abrirModalConciliacaoPorIndice(${i})" title="Conciliar saldo desta conta"><i class="ti ti-scale"></i></button>
       <button onclick="editarConta(${i})" title="Editar"><i class="ti ti-pencil"></i></button>
       <button onclick="removerConta(${i})" title="Remover"><i class="ti ti-x"></i></button></span>`;
@@ -5015,7 +5479,7 @@ function renderConfig() {
   const elRegraList = document.getElementById('regra-list');
   if (elRegraList) {
     elRegraList.innerHTML = (STATE.regras || []).map((r,i) => {
-      const catFmt = formatarCategoriaExibicao(r.categoriaDesejada || r.categoria);
+      const catFmt = escHtml(formatarCategoriaExibicao(r.categoriaDesejada || r.categoria));
       const subFmt = r.subcategoria ? ` › ${escHtml(r.subcategoria)}` : '';
       const contaFmt = (r.contaId || r.conta) ? ` <span class="badge badge-cat tag-regra-badge">${escHtml(r.contaId || r.conta)}</span>` : '';
       return `<span class="tag">"${escHtml(r.palavraChave)}" → ${catFmt}${subFmt}${contaFmt}<button onclick="removerRegra(${i})"><i class="ti ti-x"></i></button></span>`;
@@ -5296,7 +5760,7 @@ function popularCategoriaRecorrenteSelect() {
   if ([...sel.options].some(o => o.value === atual)) sel.value = atual;
 }
 function popularContaRecorrenteSelect() {
-  document.getElementById('rec-conta').innerHTML = STATE.contas.map(c => `<option value="${c.nome}">${c.nome}</option>`).join('');
+  document.getElementById('rec-conta').innerHTML = STATE.contas.map(c => `<option value="${escHtml(c.nome)}">${escHtml(c.nome)}</option>`).join('');
 }
 function popularDiaRecorrenteSelect() {
   const sel = document.getElementById('rec-dia');
@@ -5426,9 +5890,9 @@ function renderRecorrentes() {
   tbody.innerHTML = lista.map(r => {
     const [a,m,d] = proximaCobranca(r).split('-');
     return `<tr>
-      <td>${r.nome}</td>
-      <td><span class="badge badge-cat">${r.categoria || '-'}</span></td>
-      <td>${r.conta || '-'}</td>
+      <td>${escHtml(r.nome)}</td>
+      <td><span class="badge badge-cat">${escHtml(r.categoria || '-')}</span></td>
+      <td>${escHtml(r.conta || '-')}</td>
       <td>${r.diaCobranca}</td>
       <td>${r.ativa ? `${d}/${m}/${a}` : '-'}</td>
       <td><span class="badge ${r.ativa?'badge-pago':'badge-pendente'} badge-click" onclick="toggleRecorrenteAtiva('${r.id}')" title="Clique para pausar/reativar">${r.ativa ? 'Ativa' : 'Pausada'}</span></td>
@@ -6137,7 +6601,7 @@ function lancamentosDaFatura(nomeCartao, ano, mes) {
   const anoAlvo = parseInt(ano, 10);
   const mesAlvo = parseInt(mes, 10);
   return (STATE.lancamentos || []).filter(l => {
-    if (l.conta !== nomeCartao || l.tipo !== 'despesa' || l.ehPagamentoFatura) return false;
+    if (!l || l.conta !== nomeCartao || l.tipo !== 'despesa' || ehLancamentoPagamentoFatura(l)) return false;
     const comp = calcularCompetenciaLancamentoCartao(l, cartao);
     return comp.ano === anoAlvo && comp.mes === mesAlvo;
   });
@@ -6148,34 +6612,45 @@ function obterCompetenciaFaturaDashboard(nomeCartao, diaFechamento, dataRefISO) 
   const [anoRef, mesRef] = ref.split('-').map(Number);
   const compCiclo = competenciaFatura(ref, diaFechamento || 1);
 
-  // 1) Se o mês civil atual tiver lançamentos em aberto, prioriza exibir a fatura do mês civil atual
+  // 1) Se o mês civil atual tiver lançamentos sem a flag faturaPaga === true, prioriza exibir a fatura do mês civil atual
   const itensMesCivil = lancamentosDaFatura(nomeCartao, anoRef, mesRef);
-  const pendentesMesCivil = itensMesCivil.filter(l => !estaPago(l) && !l.faturaPaga);
+  const pendentesMesCivil = itensMesCivil.filter(l => l.faturaPaga !== true);
   if (pendentesMesCivil.length > 0) {
     return { ano: anoRef, mes: mesRef };
   }
 
-  // 2) Se a competência do ciclo atual (ex: mês seguinte quando dia >= diaFechamento) tiver lançamentos em aberto, exibe-a
+  // 2) Se a competência do ciclo atual (ex: mês seguinte quando dia >= diaFechamento) tiver lançamentos sem faturaPaga === true, exibe-a
   const itensCiclo = lancamentosDaFatura(nomeCartao, compCiclo.ano, compCiclo.mes);
-  const pendentesCiclo = itensCiclo.filter(l => !estaPago(l) && !l.faturaPaga);
+  const pendentesCiclo = itensCiclo.filter(l => l.faturaPaga !== true);
   if (pendentesCiclo.length > 0) {
     return compCiclo;
   }
 
-  // 3) Se houver qualquer outra fatura em aberto no cartão, prioriza a mais antiga pendente
+  // 3) Se houver fatura anterior/atual em atraso (até o ciclo atual) sem faturaPaga === true, prioriza a mais antiga pendente
+  // (Não avança automaticamente para parcelas de meses futuros quando a fatura atual foi liquidada)
   const cartao = (STATE.contas || []).find(c => c.nome === nomeCartao && c.tipo === 'cartao') || (STATE.cartoes || []).find(c => c.nome === nomeCartao);
-  const todosPendentes = (STATE.lancamentos || []).filter(
-    l => l.conta === nomeCartao && l.tipo === 'despesa' && !l.ehPagamentoFatura && !estaPago(l) && !l.faturaPaga
-  );
-  if (todosPendentes.length > 0) {
-    const comps = todosPendentes
+  const todosPendentesAteCiclo = (STATE.lancamentos || []).filter(l => {
+    if (!l || l.conta !== nomeCartao || l.tipo !== 'despesa' || ehLancamentoPagamentoFatura(l)) return false;
+    if (l.faturaPaga === true) return false;
+    const c = calcularCompetenciaLancamentoCartao(l, cartao);
+    return (c.ano < compCiclo.ano) || (c.ano === compCiclo.ano && c.mes <= compCiclo.mes);
+  });
+  if (todosPendentesAteCiclo.length > 0) {
+    const comps = todosPendentesAteCiclo
       .map(l => calcularCompetenciaLancamentoCartao(l, cartao))
       .sort((a, b) => (a.ano !== b.ano ? a.ano - b.ano : a.mes - b.mes));
     return comps[0];
   }
 
-  // 4) Se não há pendências mas o mês civil atual tem fatura já paga (e o ciclo seguinte está vazio), exibe o mês civil atual
+  // 4) Se a fatura do mês civil atual ou do ciclo atual possui lançamentos e todos têm faturaPaga === true,
+  // mantém essa competência em exibição para apresentar "R$ 0,00" e a tag "Fatura Paga"
   if (itensMesCivil.length > 0 && itensCiclo.length === 0) {
+    return { ano: anoRef, mes: mesRef };
+  }
+  if (itensCiclo.length > 0) {
+    return compCiclo;
+  }
+  if (itensMesCivil.length > 0) {
     return { ano: anoRef, mes: mesRef };
   }
 
@@ -6285,13 +6760,13 @@ function abrirModalPagamentoFatura(idCartao, mesParam, anoParam) {
   }
 
   let itensFatura = lancamentosDaFatura(nomeCartao, ano, mes);
-  let itensPendentes = itensFatura.filter(l => !estaPago(l) && !l.faturaPaga);
+  let itensPendentes = itensFatura.filter(l => l.faturaPaga !== true);
 
   // Fallback: se a competência informada não tiver saldo pendente, verifica se há fatura ativa pendente no cartão
   if (itensPendentes.length === 0) {
     const compFallback = obterCompetenciaFaturaDashboard(nomeCartao, diaFechamento, hojeLocalISO());
     const itensFallback = lancamentosDaFatura(nomeCartao, compFallback.ano, compFallback.mes);
-    const pendentesFallback = itensFallback.filter(l => !estaPago(l) && !l.faturaPaga);
+    const pendentesFallback = itensFallback.filter(l => l.faturaPaga !== true);
     if (pendentesFallback.length > 0) {
       ano = compFallback.ano;
       mes = compFallback.mes;
@@ -6421,7 +6896,7 @@ async function confirmarPagamentoFatura(idContaOrigem, idCartao, valorFatura, me
   const anoNum = parseInt(ano, 10) || competenciaFatura(hojeLocalISO(), diaFechamento).ano;
 
   const itensFatura = lancamentosDaFatura(nomeCartao, anoNum, mesNum);
-  const itensPendentes = itensFatura.filter(l => !estaPago(l) && !l.faturaPaga);
+  const itensPendentes = itensFatura.filter(l => l.faturaPaga !== true);
   const somaPendentes = Math.round(itensPendentes.reduce((s, l) => s + (Number(l.valor) || 0), 0) * 100) / 100;
   const valorFinal = (typeof valorFatura === 'number' && !isNaN(valorFatura) && valorFatura > 0)
     ? Math.round(valorFatura * 100) / 100
@@ -6458,6 +6933,7 @@ async function confirmarPagamentoFatura(idContaOrigem, idCartao, valorFatura, me
       faturaMes: mesNum,
       faturaAno: anoNum,
       faturaCompetencia: refCompetencia,
+      itensPagosIds: itensPendentes.map(l => l.id),
       pago: true,
       status: 'Pago/Efetivado',
       ehTransferencia: true,
@@ -6467,40 +6943,49 @@ async function confirmarPagamentoFatura(idContaOrigem, idCartao, valorFatura, me
     };
     STATE.lancamentos.push(lancamentoPagamento);
 
-    // Ação Atómica (b): Marca todos os lançamentos de crédito desse cartão nesse mês/ano como liquidados
-    itensFatura.forEach(l => {
+    // Ação Atómica (b): Marca todos os lançamentos pendentes dessa fatura como pagos explicitamente via faturaPaga === true
+    itensPendentes.forEach(l => {
       l.pago = true;
       l.faturaPaga = true;
       l.status = 'Liquidado';
+      delete l.posPagamentoFatura;
+      delete l.criadoAposPagamentoFatura;
       l.dataPagamentoFatura = dataHoje;
       l.contaPagamentoFatura = nomeContaOrigem;
       l.pagamentoFaturaId = idTransacaoPagamento;
       l.sincronizado = false;
     });
 
-    // Ação Atómica (c): Atualiza o limite do cartão em STATE.cartoes e STATE.contas (restaura valorFatura ao limite disponível)
-    const pendentesRestantes = (STATE.lancamentos || []).filter(
-      l => l.conta === nomeCartao && l.tipo === 'despesa' && !estaPago(l) && !l.faturaPaga
-    );
-    const novoLimiteUsado = Math.max(0, Math.round(pendentesRestantes.reduce((s, l) => s + (Number(l.valor) || 0), 0) * 100) / 100);
-
-    if (Array.isArray(STATE.cartoes)) {
-      const idxCartao = STATE.cartoes.findIndex(c => c.id === cartaoIdResolvido || c.nome === nomeCartao);
-      if (idxCartao >= 0) {
-        const limTotal = Number(STATE.cartoes[idxCartao].limiteTotal || STATE.cartoes[idxCartao].limite) || 0;
-        STATE.cartoes[idxCartao].limiteUsado = novoLimiteUsado;
-        STATE.cartoes[idxCartao].limiteDisponivel = limTotal > 0 ? Math.max(0, Math.round((limTotal - novoLimiteUsado) * 100) / 100) : 0;
-      }
+    // Regista permanentemente a liquidação da fatura em STATE.config.faturasPagas
+    if (!STATE.config) STATE.config = {};
+    if (!STATE.config.faturasPagas || typeof STATE.config.faturasPagas !== 'object') {
+      STATE.config.faturasPagas = {};
     }
-    if (Array.isArray(STATE.contas)) {
-      const idxContaCartao = STATE.contas.findIndex(c => c.tipo === 'cartao' && (c.id === cartaoIdResolvido || c.nome === nomeCartao));
-      if (idxContaCartao >= 0) {
-        const limTotal = Number(STATE.contas[idxContaCartao].limite || STATE.contas[idxContaCartao].limiteTotal) || 0;
-        STATE.contas[idxContaCartao].limiteUsado = novoLimiteUsado;
-        STATE.contas[idxContaCartao].limiteDisponivel = limTotal > 0 ? Math.max(0, Math.round((limTotal - novoLimiteUsado) * 100) / 100) : 0;
-      }
-    }
+    const chaveFaturaPaga = `${nomeCartao}|${anoNum}-${String(mesNum).padStart(2, '0')}`;
+    const regAnterior = STATE.config.faturasPagas[chaveFaturaPaga];
+    const idsExistentesReg = (regAnterior && Array.isArray(regAnterior.itensPagosIds)) ? regAnterior.itensPagosIds : [];
+    const todosIdsPagos = [...new Set([...idsExistentesReg, ...itensPendentes.map(l => l.id)])];
+    STATE.config.faturasPagas[chaveFaturaPaga] = {
+      cartaoNome: nomeCartao,
+      cartaoId: cartaoIdResolvido,
+      ano: anoNum,
+      mes: mesNum,
+      valor: valorFinal,
+      dataPagamento: dataHoje,
+      contaOrigem: nomeContaOrigem,
+      pagamentoFaturaId: idTransacaoPagamento,
+      itensPagosIds: todosIdsPagos
+    };
 
+    // Ação Atómica (c): Recalcula dinamicamente o limiteUsado e limiteDisponivel em STATE.cartoes e STATE.contas
+    recalcularLimitesCartoes();
+
+    // Persistência imediata e síncrona no localStorage + pipeline salvarDados()
+    try {
+      persistirStateNoLocalStorage();
+    } catch (errStorage) {
+      console.error('Erro na gravação imediata do localStorage:', errStorage);
+    }
     await salvarDados();
     renderPaginaAtiva();
     renderDashboard();
@@ -6526,6 +7011,7 @@ function pagarFaturaInteira(nomeCartao, ano, mes) {
 }
 
 function renderCartoes() {
+  recalcularLimitesCartoes();
   const cartoes = STATE.contas.filter(c => c.tipo === 'cartao');
   const emptyEl = document.getElementById('cartoes-empty');
   const heroBar = document.getElementById('cartoes-resumo-fatura-bar');
@@ -6540,14 +7026,16 @@ function renderCartoes() {
       heroBar.style.display = 'flex';
       const cartaoHero = cartoes[0];
       const offsetHero = estadoFaturaCartao[cartaoHero.nome] || 0;
-      const compHero = competenciaFatura(hojeLocalISO(), cartaoHero.diaFechamento);
+      const compHero = obterCompetenciaFaturaDashboard(cartaoHero.nome, cartaoHero.diaFechamento || 1, hojeLocalISO());
       let anoH = compHero.ano, mesH = compHero.mes + offsetHero;
       while (mesH > 12) { mesH -= 12; anoH++; }
       while (mesH < 1) { mesH += 12; anoH--; }
       const itensHero = lancamentosDaFatura(cartaoHero.nome, anoH, mesH);
       const totalBrutoHero = Math.round(itensHero.reduce((s, l) => s + (Number(l.valor) || 0), 0) * 100) / 100;
-      const totalAbertoHero = Math.round(itensHero.filter(l => !estaPago(l) && !l.faturaPaga).reduce((s, l) => s + (Number(l.valor) || 0), 0) * 100) / 100;
-      const faturaPagaHero = itensHero.length > 0 && totalAbertoHero <= 0;
+      const itensPendentesHero = itensHero.filter(l => l.faturaPaga !== true);
+      const totalAbertoHero = Math.round(itensPendentesHero.reduce((s, l) => s + (Number(l.valor) || 0), 0) * 100) / 100;
+      const faturaSemSaldoHero = totalAbertoHero === 0;
+      const faturaPagaHeroComItens = itensHero.length > 0 && faturaSemSaldoHero;
 
       const elHeroValor = document.getElementById('cartoes-hero-total-valor');
       const elHeroSub = document.getElementById('cartoes-hero-sub');
@@ -6559,21 +7047,21 @@ function renderCartoes() {
         elHeroValor.className = `metric-value ${totalAbertoHero > 0 ? 'mv-bad' : 'mv-ok'} valor-sensivel`;
       }
       if (elHeroBadge) {
-        elHeroBadge.style.display = faturaPagaHero ? 'inline-flex' : 'none';
+        elHeroBadge.style.display = faturaPagaHeroComItens ? 'inline-flex' : 'none';
       }
       if (elHeroSub) {
-        elHeroSub.textContent = faturaPagaHero
-          ? `${cartaoHero.nome} (${nomesMes[mesH]}/${anoH}) · Fatura liquidada (${toBRL(totalBrutoHero)})`
-          : `${cartaoHero.nome} · Competência ${nomesMes[mesH]}/${anoH} (${itensHero.filter(l => !estaPago(l) && !l.faturaPaga).length} pendente(s))`;
+        elHeroSub.textContent = faturaPagaHeroComItens
+          ? `${cartaoHero.nome} (${nomesMes[mesH]}/${anoH}) · Fatura Paga (${toBRL(totalBrutoHero)})`
+          : `${cartaoHero.nome} · Competência ${nomesMes[mesH]}/${anoH} (${itensPendentesHero.length} pendente(s))`;
       }
       if (btnHeroPagar) {
-        btnHeroPagar.disabled = totalAbertoHero <= 0;
+        btnHeroPagar.disabled = faturaSemSaldoHero;
         btnHeroPagar.setAttribute('data-cartao-id', cartaoHero.id || cartaoHero.nome);
         btnHeroPagar.setAttribute('data-mes', String(mesH));
         btnHeroPagar.setAttribute('data-ano', String(anoH));
         btnHeroPagar.removeAttribute('onclick');
         btnHeroPagar.onclick = null;
-        btnHeroPagar.innerHTML = faturaPagaHero
+        btnHeroPagar.innerHTML = faturaSemSaldoHero
           ? `<i class="ti ti-circle-check"></i> Fatura Paga`
           : `<i class="ti ti-cash-banknote"></i> Pagar Fatura`;
       }
@@ -6582,19 +7070,21 @@ function renderCartoes() {
 
   document.getElementById('cartoes-content').innerHTML = cartoes.map(cartao => {
     const offset = estadoFaturaCartao[cartao.nome] || 0;
-    const compAtual = competenciaFatura(hojeLocalISO(), cartao.diaFechamento);
+    const compAtual = obterCompetenciaFaturaDashboard(cartao.nome, cartao.diaFechamento || 1, hojeLocalISO());
     let ano = compAtual.ano, mes = compAtual.mes + offset;
     while (mes > 12) { mes -= 12; ano++; }
     while (mes < 1) { mes += 12; ano--; }
     const itens = lancamentosDaFatura(cartao.nome, ano, mes).sort((a,b) => (a.data||'').localeCompare(b.data||''));
     const totalBruto = Math.round(itens.reduce((s,l) => s + (Number(l.valor) || 0), 0) * 100) / 100;
-    const itensPendentes = itens.filter(l => !estaPago(l) && !l.faturaPaga);
+    // Avalia ESTRITAMENTE apenas lançamentos sem a flag faturaPaga === true
+    const itensPendentes = itens.filter(l => l.faturaPaga !== true);
     const totalAberto = Math.round(itensPendentes.reduce((s,l) => s + (Number(l.valor) || 0), 0) * 100) / 100;
-    const faturaJaPaga = itens.length > 0 && totalAberto <= 0;
+    const faturaSemSaldo = totalAberto === 0;
+    const faturaJaPaga = itens.length > 0 && faturaSemSaldo;
 
-    // Comprometimento global não pago deste cartão (reduz imediatamente quando a fatura é paga)
+    // Comprometimento global em aberto deste cartão: soma APENAS itens com faturaPaga !== true
     const pendentesGlobaisCartao = (STATE.lancamentos || []).filter(
-      l => l.conta === cartao.nome && l.tipo === 'despesa' && !estaPago(l) && !l.faturaPaga
+      l => l.conta === cartao.nome && l.tipo === 'despesa' && !ehLancamentoPagamentoFatura(l) && l.faturaPaga !== true
     );
     const limiteUsadoCartao = Math.round(pendentesGlobaisCartao.reduce((s, l) => s + (Number(l.valor) || 0), 0) * 100) / 100;
     const limiteTotalCartao = Number(cartao.limite || cartao.limiteTotal) || 0;
@@ -6612,8 +7102,8 @@ function renderCartoes() {
           ${gerarCartaoFisico3DHTML(cartao, mes, ano)}
           <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;justify-content:center;margin-top:2px">
             <button type="button" class="btn btn-sm" onclick="abrirModalGerirCartoes()"><i class="ti ti-settings"></i> Configurar Cartão</button>
-            <button type="button" class="btn btn-sm btn-primary btn-pagar-fatura" data-cartao-id="${idOuNomeCartao}" data-mes="${mes}" data-ano="${ano}" ${totalAberto <= 0 ? 'disabled' : ''}>
-              <i class="ti ${faturaJaPaga ? 'ti-circle-check' : 'ti-cash-banknote'}"></i> ${faturaJaPaga ? 'Fatura Paga' : 'Pagar Fatura'}
+            <button type="button" class="btn btn-sm btn-primary btn-pagar-fatura" data-cartao-id="${idOuNomeCartao}" data-mes="${mes}" data-ano="${ano}" ${faturaSemSaldo ? 'disabled' : ''}>
+              <i class="ti ${faturaSemSaldo ? 'ti-circle-check' : 'ti-cash-banknote'}"></i> ${faturaSemSaldo ? 'Fatura Paga' : 'Pagar Fatura'}
             </button>
           </div>
         </div>
@@ -6625,11 +7115,11 @@ function renderCartoes() {
               ${faturaJaPaga ? `<span class="badge badge-fatura-paga"><i class="ti ti-circle-check"></i> Fatura Paga</span>` : ''}
             </div>
             <div style="display:flex;align-items:center;gap:6px">
-              <button class="icon-btn" onclick="navegarFatura('${escHtml(cartao.nome)}', -1)" title="Fatura anterior"><i class="ti ti-chevron-left"></i></button>
+              <button class="icon-btn" data-cartao-nome="${escHtml(cartao.nome)}" onclick="navegarFatura(this.dataset.cartaoNome, -1)" title="Fatura anterior"><i class="ti ti-chevron-left"></i></button>
               <span style="font-size:12.5px;font-weight:600;min-width:90px;text-align:center">${nomesMes[mes]}/${ano}</span>
-              <button class="icon-btn" onclick="navegarFatura('${escHtml(cartao.nome)}', 1)" title="Próxima fatura"><i class="ti ti-chevron-right"></i></button>
-              <button type="button" class="btn btn-sm btn-primary btn-pagar-fatura" style="margin-left:6px" data-cartao-id="${idOuNomeCartao}" data-mes="${mes}" data-ano="${ano}" ${totalAberto <= 0 ? 'disabled' : ''}>
-                <i class="ti ${faturaJaPaga ? 'ti-circle-check' : 'ti-cash-banknote'}"></i> ${faturaJaPaga ? 'Fatura Paga' : 'Pagar Fatura'}
+              <button class="icon-btn" data-cartao-nome="${escHtml(cartao.nome)}" onclick="navegarFatura(this.dataset.cartaoNome, 1)" title="Próxima fatura"><i class="ti ti-chevron-right"></i></button>
+              <button type="button" class="btn btn-sm btn-primary btn-pagar-fatura" style="margin-left:6px" data-cartao-id="${idOuNomeCartao}" data-mes="${mes}" data-ano="${ano}" ${faturaSemSaldo ? 'disabled' : ''}>
+                <i class="ti ${faturaSemSaldo ? 'ti-circle-check' : 'ti-cash-banknote'}"></i> ${faturaSemSaldo ? 'Fatura Paga' : 'Pagar Fatura'}
               </button>
             </div>
           </div>
@@ -6650,7 +7140,7 @@ function renderCartoes() {
             <table><thead><tr><th>Data</th><th>Descrição</th><th>Categoria</th><th>Status</th><th style="text-align:right">Valor</th></tr></thead><tbody>
               ${itens.length ? itens.map(l => {
                 const [a,m,d] = (l.data||'').split('-');
-                return `<tr><td>${d}/${m}/${a}</td><td>${l.descricao||'-'}${badgeParcelaHTML(l)}</td><td><span class="badge badge-cat">${l.categoria||'-'}</span></td><td>${badgeStatusHTML(l, true)}</td><td style="text-align:right" class="valor-sensivel">${toBRL(l.valor)}</td></tr>`;
+                return `<tr><td>${d}/${m}/${a}</td><td>${escHtml(l.descricao || '-')}${badgeParcelaHTML(l)}</td><td><span class="badge badge-cat">${escHtml(l.categoria || '-')}</span></td><td>${badgeStatusHTML(l, true)}</td><td style="text-align:right" class="valor-sensivel">${toBRL(l.valor)}</td></tr>`;
               }).join('') : `<tr><td colspan="5" style="text-align:center;color:var(--text3);padding:1.5rem 0">Nenhum lançamento nessa fatura.</td></tr>`}
             </tbody></table>
           </div>
@@ -6660,6 +7150,7 @@ function renderCartoes() {
   }).join('');
   inicializarEfeito3DCartoes();
 }
+const renderizarFaturaCartao = renderCartoes;
 
 /**
  * Delegação Global de Eventos (Event Delegation) para todos os botões .btn-pagar-fatura
@@ -6717,12 +7208,39 @@ function calcularTotalGuardadoMetas() {
   return Math.round((somaMetas + somaCofres) * 100) / 100;
 }
 function calcularSaldoDisponivelGeral(mesAnoLimite) {
+  recalcularLimitesCartoes();
   const mesLimite = mesAnoLimite || hojeLocalISO().slice(0, 7);
   let totalReceitas = 0, totalDespesas = 0;
   STATE.lancamentos.forEach(l => {
-    if (l.ehMovimentoCofre || l.ehPagamentoFatura) return;
+    if (l.ehMovimentoCofre) return;
+    const ehPagFatura = ehLancamentoPagamentoFatura(l);
+    const ehCartao = !ehPagFatura && ehLancamentoCartao(l);
     const mesLanc = mesCompetenciaLancamento(l);
-    if (mesLanc && mesLanc > mesLimite) return; // Ignora parcelas e compras de meses futuros
+
+    if (ehPagFatura) {
+      const dataMesPag = (l.data || '').slice(0, 7);
+      if (!dataMesPag || dataMesPag <= mesLimite) {
+        totalDespesas += (Number(l.valor) || 0);
+      }
+      return;
+    }
+
+    if (ehCartao && l.tipo === 'despesa') {
+      if (l.faturaPaga === true) {
+        if (!despesaCartaoAnuladaPorPagamentoFatura(l) && (!mesLanc || mesLanc <= mesLimite)) {
+          totalDespesas += (Number(l.valor) || 0);
+        }
+      } else {
+        const dataCompraMes = (l.data || '').slice(0, 7);
+        const ehParcelaFutura = (l.parcelaTotal > 1 && l.parcelaAtual > 1 && dataCompraMes > mesLimite);
+        if (!ehParcelaFutura && (!mesLanc || mesLanc <= mesLimite || dataCompraMes <= mesLimite)) {
+          totalDespesas += (Number(l.valor) || 0);
+        }
+      }
+      return;
+    }
+
+    if (mesLanc && mesLanc > mesLimite) return; // Ignora lançamentos de meses futuros
     if (l.tipo === 'receita') totalReceitas += (Number(l.valor) || 0);
     else totalDespesas += (Number(l.valor) || 0);
   });
@@ -7157,8 +7675,8 @@ function renderDividas() {
     const [a,m,dd] = (d.data||'').split('-');
     const dataFmt = a ? `${dd}/${m}/${a}` : '-';
     return `<tr>
-      <td>${d.pessoa}</td>
-      <td>${d.descricao || '-'}</td>
+      <td>${escHtml(d.pessoa)}</td>
+      <td>${escHtml(d.descricao || '-')}</td>
       <td>${dataFmt}</td>
       <td><span class="badge badge-cat">${d.direcao === 'receber' ? 'Ela me deve' : 'Eu devo a ela'}</span></td>
       <td><span class="badge ${d.quitada?'badge-pago':'badge-pendente'} badge-click" onclick="toggleQuitarDivida('${d.id}')" title="Clique pra alternar">${d.quitada ? 'Quitada' : 'Pendente'}</span></td>
@@ -7542,7 +8060,13 @@ function aplicarPrivacidade(ligada, persistir) {
   document.documentElement.classList.toggle('privacidade-ativa', ligada);
   if (document.body) document.body.classList.toggle('privacidade-ativa', ligada);
   if (persistir !== false) { try { localStorage.setItem(PRIV_CHAVE, ligada ? '1' : '0'); } catch (e) {} }
-  if (ligada) { ativarObservadorPrivacidade(); blindarValores(document.body); }
+  if (ligada) {
+    ativarObservadorPrivacidade();
+    blindarValores(document.body);
+  } else if (observadorPrivacidade) {
+    observadorPrivacidade.disconnect();
+    observadorPrivacidade = null;
+  }
   const icone = document.getElementById('icone-privacidade');
   if (icone) icone.className = ligada ? 'ti ti-eye-off' : 'ti ti-eye';
   const lbl = document.getElementById('label-privacidade');
@@ -7561,18 +8085,15 @@ function temPin() { const c = lerConfigPin(); return !!(c && c.hash); }
 function bytesParaB64(buf) { let s = ''; new Uint8Array(buf).forEach(b => { s += String.fromCharCode(b); }); return btoa(s); }
 function b64ParaBytes(b64) { const s = atob(b64); const u = new Uint8Array(s.length); for (let i = 0; i < s.length; i++) u[i] = s.charCodeAt(i); return u; }
 function exigirCripto() {
-  const temSubtle = !!(window.crypto && window.crypto.subtle);
-  if (!temSubtle && typeof require !== 'function') throw new Error('Este ambiente não suporta a proteção por PIN (precisa de uma conexão segura, https).');
+  if (!(window.crypto && window.crypto.subtle)) {
+    throw new Error('Este ambiente não suporta a proteção por PIN (Web Crypto indisponível).');
+  }
 }
 async function derivarPin(pin, salBytes, iteracoes) {
   exigirCripto();
-  if (window.crypto && window.crypto.subtle) {
-    const chave = await window.crypto.subtle.importKey('raw', new TextEncoder().encode(pin), 'PBKDF2', false, ['deriveBits']);
-    const bits = await window.crypto.subtle.deriveBits({ name: 'PBKDF2', hash: 'SHA-256', salt: salBytes, iterations: iteracoes }, chave, 256);
-    return bytesParaB64(bits);
-  }
-  // Electron sem "contexto seguro" na página: usa a criptografia do próprio Node (mesmo algoritmo, mesmo resultado)
-  return bytesParaB64(require('crypto').pbkdf2Sync(pin, Buffer.from(salBytes), iteracoes, 32, 'sha256'));
+  const chave = await window.crypto.subtle.importKey('raw', new TextEncoder().encode(pin), 'PBKDF2', false, ['deriveBits']);
+  const bits = await window.crypto.subtle.deriveBits({ name: 'PBKDF2', hash: 'SHA-256', salt: salBytes, iterations: iteracoes }, chave, 256);
+  return bytesParaB64(bits);
 }
 function iguaisEmTempoConstante(a, b) {
   if (a.length !== b.length) return false;
@@ -7643,7 +8164,13 @@ function apagarDadosDoAparelho() {
     return;
   }
   window.__apagandoDados = true; // impede qualquer salvamento em segundo plano de recriar os dados antes de recarregar
-  try { localStorage.removeItem(STORAGE_KEY); localStorage.removeItem(PIN_CHAVE); localStorage.removeItem(MS_CHAVE); localStorage.removeItem(MS_PKCE_CHAVE); } catch (e) {}
+  try {
+    localStorage.removeItem(STORAGE_KEY);
+    localStorage.removeItem('STATE');
+    localStorage.removeItem(PIN_CHAVE);
+    localStorage.removeItem(MS_CHAVE);
+    localStorage.removeItem(MS_PKCE_CHAVE);
+  } catch (e) {}
   recarregarApp();
 }
 // Bloqueio automático por inatividade
@@ -7748,9 +8275,6 @@ function ipcInvocar(canal, dados) {
   if (window.electronAPI && typeof window.electronAPI.invocar === 'function') {
     return window.electronAPI.invocar(canal, dados);
   }
-  if (typeof require === 'function') {
-    return require('electron').ipcRenderer.invoke(canal, dados);
-  }
   return Promise.reject(new Error('Electron IPC indisponível'));
 }
 function irParaUrl(url) { location.assign(url); }
@@ -7776,14 +8300,12 @@ function base64Url(bytes) {
 }
 function gerarAleatorio(arr) {
   if (window.crypto && window.crypto.getRandomValues) { window.crypto.getRandomValues(arr); return arr; }
-  if (typeof require === 'function') { arr.set(require('crypto').randomBytes(arr.length)); return arr; }
   throw new Error('Este ambiente não tem gerador de números aleatórios seguro.');
 }
 function aleatorioB64Url(n) { return base64Url(gerarAleatorio(new Uint8Array(n))); }
 async function sha256Bytes(texto) {
   const dados = new TextEncoder().encode(texto);
   if (window.crypto && window.crypto.subtle) return new Uint8Array(await window.crypto.subtle.digest('SHA-256', dados));
-  if (typeof require === 'function') return new Uint8Array(require('crypto').createHash('sha256').update(Buffer.from(dados)).digest());
   throw new Error('Este ambiente não suporta SHA-256.');
 }
 async function desafioPkce(verifier) { return base64Url(await sha256Bytes(verifier)); }
@@ -8045,7 +8567,8 @@ const CABECALHO_PLANILHA = [
   'ParcelaGrupo','ParcelaAtual','ParcelaTotal','RecorrenteID','Tags',
   'TransferenciaGrupo','TransferenciaContraparte',
   'GarantiaFim','GarantiaMeses','AnexoNome','AnexoPath',
-  'EhReembolsavel','ReembolsoDevedor','Reembolsado','Conciliado'
+  'EhReembolsavel','ReembolsoDevedor','Reembolsado','Conciliado',
+  'FaturaPaga','EhPagamentoFatura','FaturaCompetencia'
 ];
 function montarPlanilhaBytes(linhas) {
   const ws = XLSX.utils.json_to_sheet(linhas || lancamentosParaLinhas(), { header: CABECALHO_PLANILHA });
@@ -8119,7 +8642,7 @@ async function cicloGraph() {
 }
 // Comparação "de conteúdo" entre o que havia antes e o que há depois de mesclar (a ordem dos campos não conta).
 function impressaoCanonica(l) {
-  return JSON.stringify([l.id, l.tipo, l.data, l.descricao, l.categoria, l.conta, Number(l.valor), estaPago(l), (l.tags || []).join('|'),
+  return JSON.stringify([l.id, l.tipo, l.data, l.descricao, l.categoria, l.conta, Number(l.valor), estaPago(l), l.faturaPaga === true, (l.tags || []).join('|'),
     l.parcelaGrupo || '', l.parcelaAtual || 0, l.parcelaTotal || 0, l.recorrenteId || '', l.transferenciaGrupo || '',
     l.garantiaFim || '', l.garantiaMeses || 0, l.anexoNome || '', l.anexoPath || '',
     l.ehReembolsavel || false, l.reembolsoDevedor || '', l.reembolsado || false]);
@@ -8941,10 +9464,12 @@ async function importarBackup(file) {
 
 function exportarBackup() {
   const blob = new Blob([JSON.stringify(STATE, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
-  a.href = URL.createObjectURL(blob);
+  a.href = url;
   a.download = 'controle-financeiro-backup-' + hojeLocalISO() + '.json';
   a.click();
+  setTimeout(() => { try { URL.revokeObjectURL(url); } catch (e) {} }, 1000);
 }
 function apagarTudo() {
   const total = STATE.lancamentos.length;
@@ -8988,18 +9513,21 @@ function trechoDoConteudo(buf) {
 async function tentarBuscarOneDrive(link) {
   const original = comCacheBuster(link);
   const api = converterParaLinkDireto(link);
-  // No Electron o link original já funciona direto (sem CORS); no navegador o link da API é o mais promissor.
-  const candidatos = (ehElectron() ? [original, api] : [api, original]).filter(Boolean);
-  const metodos = [
-    { nome: 'direto', montar: u => u },
-    { nome: 'proxy próprio (Netlify)', montar: u => '/.netlify/functions/onedrive-proxy?url=' + encodeURIComponent(u) },
-    { nome: 'corsproxy.io', montar: u => 'https://corsproxy.io/?' + encodeURIComponent(u) },
-    { nome: 'allorigins.win', montar: u => 'https://api.allorigins.win/raw?url=' + encodeURIComponent(u) }
-  ];
+  const usaProxyElectron = !!(ehElectron() && window.electronAPI && typeof window.electronAPI.fetchOneDrive === 'function');
+  const candidatos = (usaProxyElectron ? [original, api] : [api, original]).filter(Boolean);
+  const metodos = usaProxyElectron
+    ? [{ nome: 'proxy IPC seguro (Electron)', montar: u => u, viaElectronIpc: true }]
+    : [
+        { nome: 'direto', montar: u => u },
+        { nome: 'proxy próprio (Netlify)', montar: u => '/.netlify/functions/onedrive-proxy?url=' + encodeURIComponent(u) },
+        { nome: 'corsproxy.io', montar: u => 'https://corsproxy.io/?' + encodeURIComponent(u) },
+        { nome: 'allorigins.win', montar: u => 'https://api.allorigins.win/raw?url=' + encodeURIComponent(u) }
+      ];
   const estrategias = [];
   metodos.forEach(m => candidatos.forEach(u => estrategias.push({
     nome: m.nome + (u === api ? ' · link da API' : ' · link original'),
-    url: m.montar(u)
+    url: m.montar(u),
+    viaElectronIpc: !!m.viaElectronIpc
   })));
 
   const log = [];
@@ -9013,16 +9541,33 @@ async function tentarBuscarOneDrive(link) {
       const ctrl = typeof AbortController !== 'undefined' ? new AbortController() : null;
       const timer = ctrl ? setTimeout(() => ctrl.abort(), 15000) : null;
       try {
-        const resp = await fetch(estrategia.url, { cache: 'no-store', signal: ctrl ? ctrl.signal : undefined });
-        if (!resp.ok) {
-          let detalhe = '';
-          try { detalhe = (await resp.text()).replace(/\s+/g, ' ').slice(0, 160); } catch (e2) { /* corpo não textual, ignora */ }
-          ultimoErro = new Error(`[${estrategia.nome}] HTTP ${resp.status}${detalhe ? ' — ' + detalhe : ''}`);
-          log.push(`${rotulo} → HTTP ${resp.status}${detalhe ? ' — ' + detalhe : ''}`);
-          console.warn('Sincronização OneDrive — tentativa falhou:', ultimoErro.message);
-          continue;
+        let buf;
+        if (estrategia.viaElectronIpc) {
+          const rIpc = await window.electronAPI.fetchOneDrive(estrategia.url);
+          if (!rIpc || !rIpc.ok) {
+            const det = (rIpc && rIpc.erro) ? ` — ${rIpc.erro}` : '';
+            const statusStr = rIpc && rIpc.status ? `HTTP ${rIpc.status}` : 'Falha IPC';
+            ultimoErro = new Error(`[${estrategia.nome}] ${statusStr}${det}`);
+            log.push(`${rotulo} → ${statusStr}${det}`);
+            console.warn('Sincronização OneDrive — tentativa falhou:', ultimoErro.message);
+            continue;
+          }
+          const bin = atob(rIpc.dataBase64 || '');
+          const bytes = new Uint8Array(bin.length);
+          for (let k = 0; k < bin.length; k++) bytes[k] = bin.charCodeAt(k);
+          buf = bytes.buffer;
+        } else {
+          const resp = await fetch(estrategia.url, { cache: 'no-store', signal: ctrl ? ctrl.signal : undefined });
+          if (!resp.ok) {
+            let detalhe = '';
+            try { detalhe = (await resp.text()).replace(/\s+/g, ' ').slice(0, 160); } catch (e2) { /* corpo não textual, ignora */ }
+            ultimoErro = new Error(`[${estrategia.nome}] HTTP ${resp.status}${detalhe ? ' — ' + detalhe : ''}`);
+            log.push(`${rotulo} → HTTP ${resp.status}${detalhe ? ' — ' + detalhe : ''}`);
+            console.warn('Sincronização OneDrive — tentativa falhou:', ultimoErro.message);
+            continue;
+          }
+          buf = await resp.arrayBuffer();
         }
-        const buf = await resp.arrayBuffer();
         if (!pareceArquivoExcel(buf)) {
           const trecho = trechoDoConteudo(buf);
           ultimoErro = new Error(`[${estrategia.nome}] recebi ${buf.byteLength} bytes, mas não é uma planilha${trecho ? ' (começa com: "' + trecho + '")' : ''}`);
@@ -9275,7 +9820,9 @@ function mesclarLinhasNaBase(linhas, mapa, modoSincronizacaoTotal) {
     if (idPlanilha) idsExistentes.add(idPlanilha); else chavesExistentes.add(chave);
 
     let pago = true;
-    if (mapa.status && row[mapa.status]) pago = !String(row[mapa.status]).toLowerCase().includes('pend');
+    const statusRawPlanilha = (mapa.status && row[mapa.status]) ? String(row[mapa.status]).trim() : '';
+    const statusLower = statusRawPlanilha.toLowerCase();
+    if (statusRawPlanilha) pago = !statusLower.includes('pend');
 
     const lerCampoRow = (nomes) => {
       for (const n of nomes) {
@@ -9288,6 +9835,29 @@ function mesclarLinhasNaBase(linhas, mapa, modoSincronizacaoTotal) {
 
     const antigo = (idPlanilha ? locaisExistentes.get(idPlanilha) : null) || locaisPorChave.get(chave);
     const grupoTransf = lerCampoRow(['TransferenciaGrupo']) || (antigo && antigo.transferenciaGrupo) || '';
+
+    const categoriaFinal = (mapa.categoria && row[mapa.categoria]) ? String(row[mapa.categoria]).trim() : ((antigo && antigo.categoria) || aplicarRegraCategorizacao(descricao) || 'Importado');
+    const contaFinal = (mapa.conta && row[mapa.conta]) ? String(row[mapa.conta]).trim() : ((antigo && antigo.conta) || '');
+
+    const rawFaturaPaga = lerCampoRow(['FaturaPaga', 'Fatura Paga', 'faturaPaga']).toLowerCase();
+    const rawEhPagFatura = lerCampoRow(['EhPagamentoFatura', 'Eh Pagamento Fatura', 'ehPagamentoFatura']).toLowerCase();
+    const faturaCompetencia = lerCampoRow(['FaturaCompetencia', 'Fatura Competencia', 'faturaCompetencia']) || (antigo && antigo.faturaCompetencia) || undefined;
+
+    const ehPagFaturaDetectado =
+      rawEhPagFatura === 'sim' || rawEhPagFatura === 'true' || rawEhPagFatura === '1' ||
+      !!(antigo && antigo.ehPagamentoFatura === true) ||
+      ehLancamentoPagamentoFatura({ descricao, categoria: categoriaFinal });
+
+    const faturaPagaDetectada = !ehPagFaturaDetectado && (
+      rawFaturaPaga === 'sim' || rawFaturaPaga === 'true' || rawFaturaPaga === '1' ||
+      !!(antigo && antigo.faturaPaga === true)
+    );
+
+    const statusFinal = faturaPagaDetectada
+      ? 'Liquidado'
+      : (ehPagFaturaDetectado
+        ? 'Pago/Efetivado'
+        : (statusRawPlanilha || (antigo && antigo.status) || undefined));
 
     // GARANTIA & ANEXOS:
     // Prioriza o que está na planilha; se a planilha ainda não tiver as colunas (versão anterior),
@@ -9312,22 +9882,40 @@ function mesclarLinhasNaBase(linhas, mapa, modoSincronizacaoTotal) {
     const rawConciliado = lerCampoRow(['Conciliado', 'conciliado']);
     const conciliado = (rawConciliado.toLowerCase() === 'sim' || rawConciliado === 'true' || rawConciliado === '1') ? true : !!(antigo && antigo.conciliado === true);
 
+    const ehDespesaCartaoLinha = !ehPagFaturaDetectado && tipo === 'despesa' && ehContaCartaoConcil(contaFinal);
+    const pagoFinalLinha = ehDespesaCartaoLinha
+      ? (faturaPagaDetectada === true)
+      : ((faturaPagaDetectada || ehPagFaturaDetectado) ? true : pago);
+
     novosDaPlanilha.push({
       id: idPlanilha || uid(), tipo, data, descricao,
-      categoria: (mapa.categoria && row[mapa.categoria]) ? String(row[mapa.categoria]).trim() : (aplicarRegraCategorizacao(descricao) || 'Importado'),
-      conta: (mapa.conta && row[mapa.conta]) ? String(row[mapa.conta]).trim() : '',
+      categoria: categoriaFinal,
+      conta: contaFinal,
       valor: valorNum, origem: 'onedrive',
       sincronizado: !(grupoTransf && !row['TransferenciaGrupo']), // a planilha ainda não sabe que é transferência: reenvia pra ela aprender
-      pago,
-      ehTransferencia: grupoTransf ? true : undefined,
+      pago: pagoFinalLinha,
+      faturaPaga: faturaPagaDetectada ? true : undefined,
+      status: statusFinal,
+      ehPagamentoFatura: ehPagFaturaDetectado ? true : undefined,
+      ehTransferencia: (grupoTransf || ehPagFaturaDetectado || (antigo && antigo.ehTransferencia)) ? true : undefined,
       transferenciaGrupo: grupoTransf || undefined,
       transferenciaContraparte: lerCampoRow(['TransferenciaContraparte']) || (antigo && antigo.transferenciaContraparte) || undefined,
+      cartaoId: (antigo && antigo.cartaoId) || undefined,
+      cartaoNome: (antigo && antigo.cartaoNome) || undefined,
+      faturaAno: (antigo && antigo.faturaAno) || undefined,
+      faturaMes: (antigo && antigo.faturaMes) || undefined,
+      faturaCompetencia,
+      dataCompra: (antigo && antigo.dataCompra) || undefined,
+      dataVencimentoFatura: (antigo && antigo.dataVencimentoFatura) || undefined,
+      dataPagamentoFatura: (antigo && antigo.dataPagamentoFatura) || undefined,
+      contaPagamentoFatura: (antigo && antigo.contaPagamentoFatura) || undefined,
+      pagamentoFaturaId: (antigo && antigo.pagamentoFaturaId) || undefined,
       comprovante,
-      parcelaGrupo: lerCampoRow(['ParcelaGrupo']) || undefined,
-      parcelaAtual: lerCampoRow(['ParcelaAtual']) ? parseInt(lerCampoRow(['ParcelaAtual']), 10) : undefined,
-      parcelaTotal: lerCampoRow(['ParcelaTotal']) ? parseInt(lerCampoRow(['ParcelaTotal']), 10) : undefined,
-      recorrenteId: lerCampoRow(['RecorrenteID']) || undefined,
-      tags: lerCampoRow(['Tags']) ? parseTags(lerCampoRow(['Tags'])) : undefined,
+      parcelaGrupo: lerCampoRow(['ParcelaGrupo']) || (antigo && antigo.parcelaGrupo) || undefined,
+      parcelaAtual: lerCampoRow(['ParcelaAtual']) ? parseInt(lerCampoRow(['ParcelaAtual']), 10) : ((antigo && antigo.parcelaAtual) || undefined),
+      parcelaTotal: lerCampoRow(['ParcelaTotal']) ? parseInt(lerCampoRow(['ParcelaTotal']), 10) : ((antigo && antigo.parcelaTotal) || undefined),
+      recorrenteId: lerCampoRow(['RecorrenteID']) || (antigo && antigo.recorrenteId) || undefined,
+      tags: lerCampoRow(['Tags']) ? parseTags(lerCampoRow(['Tags'])) : ((antigo && antigo.tags) || undefined),
       garantiaFim,
       garantiaMeses,
       anexoNome,
@@ -9343,6 +9931,9 @@ function mesclarLinhasNaBase(linhas, mapa, modoSincronizacaoTotal) {
   STATE.lancamentos = modoSincronizacaoTotal
     ? [...novosDaPlanilha, ...baseAnterior]
     : [...STATE.lancamentos, ...novosDaPlanilha];
+
+  corrigirFaturasPresas();
+  recalcularLimitesCartoes();
 
   return { novos, ignorados, baseAnterior };
 }
@@ -10147,6 +10738,7 @@ async function duplicarLancamentoContexto(id) {
   }
 
   const descSemParcela = String(original.descricao || 'Lançamento').replace(/\s*\(\d+\/\d+\)$/, '').trim();
+  const copiaCartao = ehLancamentoCartao(original);
   const copia = {
     id: uid(),
     tipo: original.tipo || 'despesa',
@@ -10158,7 +10750,7 @@ async function duplicarLancamentoContexto(id) {
     valor: Number(original.valor) || 0,
     origem: 'manual',
     sincronizado: false,
-    pago: estaPago(original),
+    pago: copiaCartao ? false : estaPago(original),
     conciliado: false,
     faturaAno: original.faturaAno || undefined,
     faturaMes: original.faturaMes || undefined,
@@ -10524,7 +11116,7 @@ function salvarIPParceiroP2P(valor) {
   if (!STATE.config) STATE.config = {};
   STATE.config.ipParceiroP2P = String(valor || '').trim();
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(STATE));
+    persistirStateNoLocalStorage();
   } catch (e) {}
 }
 
@@ -10670,6 +11262,7 @@ async function mesclarEstadoP2P(dadosExternos, silencioso = false) {
 
     migrarCofresParaMetas();
     sincronizarEstruturaCartoes();
+    recalcularLimitesCartoes();
 
     if (!STATE.config) STATE.config = {};
     const agoraFmt = new Date().toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' });
@@ -10864,10 +11457,9 @@ function exibirToastAtualizacaoPronta(info) {
 }
 
 async function forcarVerificacaoUpdateDebug() {
-  const btn = document.getElementById('btn-forçar-update');
+  const btn = document.getElementById('btn-forcar-update');
   if (!window.electronAPI || typeof window.electronAPI.verificarAtualizacoesAgora !== 'function') {
-    const msg = 'API do Electron (verificarAtualizacoesAgora) indisponível. Execute a aplicação via Electron.';
-    console.error('[Auto-Update Debug]:', msg);
+    const msg = 'Verificação automática de atualizações disponível apenas no aplicativo Desktop.';
     atualizarPainelDebugUpdate(msg, 'erro');
     toast('⚠️ ' + msg, 'bad');
     return { ok: false, erro: msg };
@@ -10875,26 +11467,26 @@ async function forcarVerificacaoUpdateDebug() {
 
   try {
     if (btn) btn.disabled = true;
-    atualizarPainelDebugUpdate('A consultar GitHub Releases (pedrotsongas-ai/COFIN)...', 'info');
-    toast('🔍 A procurar atualizações no GitHub...', 'ok');
+    atualizarPainelDebugUpdate('Consultando servidor de lançamentos no GitHub...', 'info');
+    toast('🔍 Procurando atualizações...', 'ok');
 
     const res = await window.electronAPI.verificarAtualizacoesAgora();
     if (res && res.ok === false && res.erro) {
       console.error('[Auto-Update Erro]:', res.erro);
-      atualizarPainelDebugUpdate(`Erro retornado pelo autoUpdater: ${res.erro}`, 'erro');
+      atualizarPainelDebugUpdate(`Erro retornado na verificação: ${res.erro}`, 'erro');
       if (Date.now() - ultimoErroUpdateTimestamp > 800) {
         ultimoErroUpdateTimestamp = Date.now();
         toast(`❌ Erro no Update: ${String(res.erro).slice(0, 120)}`, 'bad');
       }
     } else if (res && res.updateInfo) {
       const vRemota = res.updateInfo.version || 'desconhecida';
-      atualizarPainelDebugUpdate(`Resposta do GitHub recebida · Versão remota: v${vRemota} (Versão local: v${CURRENT_VERSION})`, 'ok');
+      atualizarPainelDebugUpdate(`Versão disponível no repositório: v${vRemota} (Instalada: v${CURRENT_VERSION})`, 'ok');
     }
     return res;
   } catch (err) {
     const msg = (err && err.message) ? err.message : String(err);
     console.error('[Auto-Update Exceção]:', msg);
-    atualizarPainelDebugUpdate(`Exceção IPC ao procurar atualização: ${msg}`, 'erro');
+    atualizarPainelDebugUpdate(`Falha ao procurar atualização: ${msg}`, 'erro');
     toast(`❌ Falha ao procurar atualização: ${msg.slice(0, 120)}`, 'bad');
     return { ok: false, erro: msg };
   } finally {
@@ -10903,7 +11495,7 @@ async function forcarVerificacaoUpdateDebug() {
 }
 
 function inicializarAutoUpdateOTA() {
-  const btnForcar = document.getElementById('btn-forçar-update');
+  const btnForcar = document.getElementById('btn-forcar-update');
   if (btnForcar && !btnForcar._listenerRegistrado) {
     btnForcar._listenerRegistrado = true;
     btnForcar.addEventListener('click', forcarVerificacaoUpdateDebug);
@@ -10966,10 +11558,7 @@ class SoundScape {
     }
   }
 
-  /**
-   * Som agudo e subtil de "vidro / bolha" ao guardar dados
-   */
-  static playSave() {
+  static _reproduzirTom({ freqInicial, freqFinal, rampFreqEm, gainInicial, rampGainEm, duracao }) {
     try {
       const ctx = SoundScape.getContext();
       if (!ctx) return false;
@@ -10978,16 +11567,20 @@ class SoundScape {
       const osc = ctx.createOscillator();
       const gain = ctx.createGain();
       osc.type = 'sine';
-      osc.frequency.setValueAtTime(880, now);
-      osc.frequency.exponentialRampToValueAtTime(1318.5, now + 0.09);
+      osc.frequency.setValueAtTime(freqInicial, now);
+      osc.frequency.exponentialRampToValueAtTime(freqFinal, now + rampFreqEm);
 
-      gain.gain.setValueAtTime(0.075, now);
-      gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.16);
+      gain.gain.setValueAtTime(gainInicial, now);
+      gain.gain.exponentialRampToValueAtTime(0.0001, now + rampGainEm);
 
       osc.connect(gain);
       gain.connect(ctx.destination);
+      osc.onended = () => {
+        try { osc.disconnect(); } catch (e) {}
+        try { gain.disconnect(); } catch (e) {}
+      };
       osc.start(now);
-      osc.stop(now + 0.17);
+      osc.stop(now + duracao);
       return true;
     } catch (e) {
       return false;
@@ -10995,31 +11588,31 @@ class SoundScape {
   }
 
   /**
+   * Som agudo e subtil de "vidro / bolha" ao guardar dados
+   */
+  static playSave() {
+    return SoundScape._reproduzirTom({
+      freqInicial: 880,
+      freqFinal: 1318.5,
+      rampFreqEm: 0.09,
+      gainInicial: 0.075,
+      rampGainEm: 0.16,
+      duracao: 0.17
+    });
+  }
+
+  /**
    * Som abafado e grave ao apagar dados
    */
   static playDelete() {
-    try {
-      const ctx = SoundScape.getContext();
-      if (!ctx) return false;
-      const now = ctx.currentTime;
-
-      const osc = ctx.createOscillator();
-      const gain = ctx.createGain();
-      osc.type = 'sine';
-      osc.frequency.setValueAtTime(195, now);
-      osc.frequency.exponentialRampToValueAtTime(55, now + 0.18);
-
-      gain.gain.setValueAtTime(0.11, now);
-      gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.21);
-
-      osc.connect(gain);
-      gain.connect(ctx.destination);
-      osc.start(now);
-      osc.stop(now + 0.22);
-      return true;
-    } catch (e) {
-      return false;
-    }
+    return SoundScape._reproduzirTom({
+      freqInicial: 195,
+      freqFinal: 55,
+      rampFreqEm: 0.18,
+      gainInicial: 0.11,
+      rampGainEm: 0.21,
+      duracao: 0.22
+    });
   }
 }
 
@@ -11291,6 +11884,15 @@ document.querySelectorAll('.modal-bg').forEach(m => m.addEventListener('click', 
   else if (m.id === 'modal-patch-notes') { fecharModalPatchNotes(); }
   else { fecharModal(m.id); }
 }));
+document.addEventListener('click', (e) => {
+  const navBtn = e.target && e.target.closest
+    ? e.target.closest('.nav-item[data-page], .bottom-nav-item[data-page], .mobile-more-item[data-page]')
+    : null;
+  if (!navBtn) return;
+  const targetPage = navBtn.getAttribute('data-page');
+  if (targetPage) nav(targetPage);
+});
+
 (async function init() {
   sincronizarIconeTema();
   document.getElementById('app-versao').textContent = 'COFIN · v' + CURRENT_VERSION + ' (' + APP_VERSAO + ')';
@@ -11321,12 +11923,10 @@ document.querySelectorAll('.modal-bg').forEach(m => m.addEventListener('click', 
   setTimeout(() => { executarBackupSilencioso(false).catch(() => {}); }, 1500);
   if (document.readyState === 'complete') {
     setTimeout(verificarViradaDeMesAutomatica, 250);
-    setTimeout(() => processarReceitasAutomatizadas(), 300);
   } else {
     window.addEventListener('load', () => {
       setTimeout(verificarViradaDeMesAutomatica, 250);
-      processarReceitasAutomatizadas();
-    });
+    }, { once: true });
   }
   // Não usa "await" aqui de propósito: a tela já aparece com os dados locais na hora,
   // e a planilha é carregada por cima, em segundo plano, sem travar a abertura do app.
@@ -11351,6 +11951,11 @@ function impressaoDigital(l) {
 function lancamentosParaLinhas() {
   return STATE.lancamentos.map(l => {
     const dataFormatada = l.data ? l.data.split('-').reverse().join('/') : '';
+    const ehPagFatura = ehLancamentoPagamentoFatura(l);
+    const ehFaturaQuitada = !ehPagFatura && l.faturaPaga === true;
+    const statusPlanilha = ehFaturaQuitada
+      ? 'Liquidado'
+      : (ehPagFatura ? 'Pago/Efetivado' : (ehLancamentoCartao(l) && l.tipo === 'despesa' ? (l.status || 'Pendente') : (estaPago(l) ? 'Pago' : 'Pendente')));
     return {
       "Data": dataFormatada,
       "Descrição": l.descricao || '',
@@ -11358,7 +11963,7 @@ function lancamentosParaLinhas() {
       "Tipo": l.tipo === 'receita' ? 'Receita' : 'Despesa',
       "Valor": l.valor || 0,
       "Conta": l.conta || '',
-      "Status": estaPago(l) ? 'Pago' : 'Pendente',
+      "Status": statusPlanilha,
       "ID": l.id || '',
       "ParcelaGrupo": l.parcelaGrupo || '',
       "ParcelaAtual": l.parcelaAtual || '',
@@ -11374,7 +11979,10 @@ function lancamentosParaLinhas() {
       "EhReembolsavel": l.ehReembolsavel ? 'Sim' : '',
       "ReembolsoDevedor": l.reembolsoDevedor || '',
       "Reembolsado": l.reembolsado ? 'Sim' : '',
-      "Conciliado": l.conciliado ? 'Sim' : ''
+      "Conciliado": l.conciliado ? 'Sim' : '',
+      "FaturaPaga": ehFaturaQuitada ? 'Sim' : '',
+      "EhPagamentoFatura": ehPagFatura ? 'Sim' : '',
+      "FaturaCompetencia": l.faturaCompetencia || (l.faturaMes && l.faturaAno ? `${String(l.faturaMes).padStart(2, '0')}/${l.faturaAno}` : '')
     };
   });
 }
@@ -11530,13 +12138,6 @@ function windowControl(action) {
   try {
     if (window.electronAPI && typeof window.electronAPI.windowControl === 'function') {
       window.electronAPI.windowControl(action);
-      return;
-    }
-    if (ehElectron() && typeof require === 'function') {
-      const { ipcRenderer } = require('electron');
-      if (action === 'minimize') ipcRenderer.send('win:minimize');
-      else if (action === 'maximize') ipcRenderer.send('win:maximize');
-      else if (action === 'close') ipcRenderer.send('win:close');
     }
   } catch (e) {
     console.error('Erro no controle da janela:', e);
@@ -11570,10 +12171,6 @@ function inicializarControlesJanela() {
       if (typeof window.electronAPI.isMaximized === 'function') {
         window.electronAPI.isMaximized().then(atualizarBotaoMax).catch(() => {});
       }
-    } else if (typeof require === 'function') {
-      const { ipcRenderer } = require('electron');
-      ipcRenderer.on('win:maximized-status', (event, isMax) => atualizarBotaoMax(isMax));
-      ipcRenderer.invoke('win:is-maximized').then(atualizarBotaoMax).catch(() => {});
     }
   } catch (e) {}
 

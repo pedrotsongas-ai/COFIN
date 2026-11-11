@@ -71,16 +71,21 @@ function createWindow () {
     icon: path.join(__dirname, 'build', 'icon.ico'),
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
-      nodeIntegration: true,
+      nodeIntegration: false,
       contextIsolation: true,
-      webSecurity: false // <--- AQUI DESLIGAMOS O CORS
+      webSecurity: true
     }
   });
   mainWindow = win;
-  
+
   win.maximize();
   win.show();
   win.loadFile('index.html');
+
+  // Inicia a verificação automática somente após o renderer registrar os listeners IPC
+  win.webContents.once('did-finish-load', () => {
+    dispararVerificacaoInicialUpdates();
+  });
 
   // Notificar o renderer sobre o estado de maximização
   win.on('maximize', () => {
@@ -146,22 +151,37 @@ ipcMain.handle('escolher-pasta', async (evento) => {
   }
 });
 
+function sanitizarNomeBackup(nomeBruto, fallbackPadrao) {
+  const base = path.basename(String(nomeBruto || '').trim());
+  const limpo = base.replace(/[^a-zA-Z0-9._-]/g, '_');
+  if (!limpo || limpo === '.' || limpo === '..') return fallbackPadrao;
+  return limpo.toLowerCase().endsWith('.json') ? limpo : `${limpo}.json`;
+}
+
 ipcMain.handle('salvar-backup', async (_evento, params) => {
   try {
     const { dadosJson, caminhoDestino, nomeArquivo } = params || {};
-    if (!caminhoDestino) {
+    if (!caminhoDestino || typeof caminhoDestino !== 'string') {
       return { ok: false, erro: 'Caminho de pasta de destino não fornecido.' };
     }
-    if (!fs.existsSync(caminhoDestino)) {
-      return { ok: false, erro: `A pasta selecionada não existe ou foi removida: ${caminhoDestino}` };
+    const dirResolvido = path.resolve(caminhoDestino);
+    if (!fs.existsSync(dirResolvido) || !fs.statSync(dirResolvido).isDirectory()) {
+      return { ok: false, erro: `A pasta selecionada não existe ou é inválida: ${caminhoDestino}` };
     }
 
     const agora = new Date();
     const ano = agora.getFullYear();
     const mes = String(agora.getMonth() + 1).padStart(2, '0');
     const dia = String(agora.getDate()).padStart(2, '0');
-    const nomeFinal = nomeArquivo || `cofin_backup_${ano}${mes}${dia}.json`;
-    const caminhoCompleto = path.join(caminhoDestino, nomeFinal);
+    const fallbackPadrao = `cofin_backup_${ano}${mes}${dia}.json`;
+    const nomeFinal = sanitizarNomeBackup(nomeArquivo, fallbackPadrao);
+    const caminhoCompleto = path.resolve(dirResolvido, nomeFinal);
+
+    // Garante que o destino resolvido permaneça estritamente dentro da pasta escolhida
+    const prefixoDir = dirResolvido.endsWith(path.sep) ? dirResolvido : `${dirResolvido}${path.sep}`;
+    if (!caminhoCompleto.startsWith(prefixoDir)) {
+      return { ok: false, erro: 'Nome de arquivo inválido fora da pasta de destino.' };
+    }
 
     const conteudo = typeof dadosJson === 'string' ? dadosJson : JSON.stringify(dadosJson, null, 2);
     await fs.promises.writeFile(caminhoCompleto, conteudo, 'utf8');
@@ -253,6 +273,39 @@ ipcMain.handle('cofin:ms-token', async (_evento, { url, body }) => {
   return { status: resposta.status, json };
 });
 
+function ehHostOneDrivePermitido(hostname) {
+  const host = String(hostname || '').toLowerCase();
+  return /^(api\.onedrive\.com|onedrive\.live\.com|1drv\.ms|1drv\.com|.+\.sharepoint\.com|.+\.files\.1drv\.com|.+\.storage\.live\.com|.+\.livefilestore\.com)$/i.test(host);
+}
+
+ipcMain.handle('cofin:fetch-onedrive', async (_evento, urlAlvo) => {
+  let parsed;
+  try {
+    parsed = new URL(String(urlAlvo || ''));
+  } catch (e) {
+    return { ok: false, status: 400, erro: 'URL inválida para OneDrive.' };
+  }
+  if (parsed.protocol !== 'https:' || !ehHostOneDrivePermitido(parsed.hostname)) {
+    return { ok: false, status: 403, erro: 'Domínio não autorizado para proxy OneDrive.' };
+  }
+  try {
+    const resp = await fetch(parsed.toString(), { redirect: 'follow' });
+    const finalParsed = new URL(resp.url || parsed.toString());
+    if (finalParsed.protocol !== 'https:' || !ehHostOneDrivePermitido(finalParsed.hostname)) {
+      return { ok: false, status: 403, erro: 'Redirecionamento externo bloqueado por segurança.' };
+    }
+    const buf = Buffer.from(await resp.arrayBuffer());
+    return {
+      ok: resp.ok,
+      status: resp.status,
+      contentType: resp.headers.get('content-type') || '',
+      dataBase64: buf.toString('base64')
+    };
+  } catch (err) {
+    return { ok: false, status: 0, erro: err.message || 'Falha ao buscar planilha no OneDrive.' };
+  }
+});
+
 /* ================= INFRAESTRUTURA P2P (REDE LOCAL PORTA 45000) ================= */
 function obterIPLocal() {
   try {
@@ -279,82 +332,95 @@ function obterIPLocal() {
   }
 }
 
-async function obterStateLocalAtual() {
-  const win = obterJanelaAtiva();
-  if (win && win.webContents && !win.webContents.isDestroyed()) {
-    try {
-      const raw = await Promise.race([
-        win.webContents.executeJavaScript('localStorage.getItem("controle-financeiro-dados")', true),
-        new Promise((_, rej) => setTimeout(() => rej(new Error('Timeout localStorage')), 2500))
-      ]);
-      if (raw && typeof raw === 'string') {
-        const parsed = JSON.parse(raw);
-        if (parsed && typeof parsed === 'object') {
-          cacheStateLocalP2P = parsed;
-          return parsed;
-        }
-      }
-    } catch (e) {}
+function ehIPPrivadoLAN(ipBruto) {
+  let ip = String(ipBruto || '').trim();
+  if (ip.startsWith('::ffff:')) ip = ip.slice(7);
+  if (!ip) return false;
+  if (ip === '127.0.0.1' || ip === '::1') return true;
+  if (/^10\./.test(ip)) return true;
+  if (/^192\.168\./.test(ip)) return true;
+  if (/^172\.(1[6-9]|2\d|3[0-1])\./.test(ip)) return true;
+  if (/^(fe80:|fc00:|fd[0-9a-f]{2}:)/i.test(ip)) return true;
+  return false;
+}
+
+function sanitizarStateP2P(state) {
+  if (!state || typeof state !== 'object' || Array.isArray(state)) {
+    return { lancamentos: [], cofres: [], metas: [] };
   }
+  const copia = { ...state };
+  if (copia.config && typeof copia.config === 'object') {
+    const { webhookMake, ...configSeguro } = copia.config;
+    copia.config = configSeguro;
+  }
+  return copia;
+}
+
+function obterStateLocalAtual() {
   return cacheStateLocalP2P || { lancamentos: [], cofres: [], metas: [] };
+}
+
+function responderJson(res, statusCode, objeto) {
+  res.writeHead(statusCode, { 'Content-Type': 'application/json; charset=utf-8' });
+  res.end(JSON.stringify(objeto));
 }
 
 function iniciarServidorP2P() {
   if (servidorP2P) return;
 
-  servidorP2P = http.createServer(async (req, res) => {
-    res.setHeader('Access-Control-Allow-Origin', '*');
-    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
-
-    if (req.method === 'OPTIONS') {
-      res.writeHead(204);
-      res.end();
+  servidorP2P = http.createServer((req, res) => {
+    const ipRemoto = (req.socket && req.socket.remoteAddress) || '';
+    if (!ehIPPrivadoLAN(ipRemoto)) {
+      responderJson(res, 403, { ok: false, erro: 'Acesso permitido apenas na rede local.' });
       return;
     }
 
-    if (req.method === 'GET') {
-      res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
-      res.end(JSON.stringify({ ok: true, app: 'COFIN', ip: obterIPLocal(), porta: PORTA_P2P }));
+    const caminho = String((req.url || '/').split('?')[0]);
+
+    if (req.method === 'GET' && (caminho === '/' || caminho === '/status')) {
+      responderJson(res, 200, { ok: true, app: 'COFIN', ip: obterIPLocal(), porta: PORTA_P2P });
       return;
     }
 
-    if (req.method === 'POST') {
-      let bodyChunks = [];
+    if (req.method === 'POST' && caminho === '/sync') {
+      if (req.headers['x-cofin-client'] !== 'COFIN-P2P/1') {
+        responderJson(res, 401, { ok: false, erro: 'Cabeçalho de cliente COFIN P2P ausente.' });
+        return;
+      }
+
+      const bodyChunks = [];
       let totalBytes = 0;
+      let payloadExcedido = false;
       const LIMITE_BYTES = 50 * 1024 * 1024; // 50 MB
 
       req.on('data', (chunk) => {
+        if (payloadExcedido) return;
         totalBytes += chunk.length;
         if (totalBytes > LIMITE_BYTES) {
+          payloadExcedido = true;
+          responderJson(res, 413, { ok: false, erro: 'Payload excede o limite de 50 MB.' });
           req.destroy();
           return;
         }
         bodyChunks.push(chunk);
       });
 
-      req.on('end', async () => {
+      req.on('end', () => {
+        if (payloadExcedido) return;
         try {
           const rawBody = Buffer.concat(bodyChunks).toString('utf8');
           const stateParceiro = JSON.parse(rawBody);
 
           if (!stateParceiro || typeof stateParceiro !== 'object' || Array.isArray(stateParceiro)) {
-            res.writeHead(400, { 'Content-Type': 'application/json; charset=utf-8' });
-            res.end(JSON.stringify({ ok: false, erro: 'O STATE enviado é malformado ou inválido.' }));
+            responderJson(res, 400, { ok: false, erro: 'O STATE enviado é malformado ou inválido.' });
             return;
           }
 
-          // Obtém o STATE local antes/durante o merge para devolver na resposta ao parceiro
-          const stateLocal = await obterStateLocalAtual();
-
-          // Envia o STATE recebido do parceiro para o frontend realizar o Merge Inteligente
-          enviarEventoParaFrontend('receber-sync', stateParceiro);
-
-          res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
-          res.end(JSON.stringify(stateLocal));
+          const stateLocal = obterStateLocalAtual();
+          enviarEventoParaFrontend('receber-sync', sanitizarStateP2P(stateParceiro));
+          responderJson(res, 200, stateLocal);
         } catch (err) {
-          res.writeHead(400, { 'Content-Type': 'application/json; charset=utf-8' });
-          res.end(JSON.stringify({ ok: false, erro: 'JSON malformado: ' + (err.message || 'Erro de leitura') }));
+          responderJson(res, 400, { ok: false, erro: 'JSON malformado: ' + (err.message || 'Erro de leitura') });
         }
       });
 
@@ -364,8 +430,12 @@ function iniciarServidorP2P() {
       return;
     }
 
-    res.writeHead(405, { 'Content-Type': 'application/json; charset=utf-8' });
-    res.end(JSON.stringify({ ok: false, erro: 'Método não permitido.' }));
+    if (req.method === 'GET' || req.method === 'POST') {
+      responderJson(res, 404, { ok: false, erro: 'Rota não encontrada.' });
+      return;
+    }
+
+    responderJson(res, 405, { ok: false, erro: 'Método não permitido.' });
   });
 
   servidorP2P.on('error', (err) => {
@@ -391,7 +461,7 @@ ipcMain.handle('obter-ip-local', () => {
 
 ipcMain.on('atualizar-cache-p2p', (_evento, stateObj) => {
   if (stateObj && typeof stateObj === 'object' && !Array.isArray(stateObj)) {
-    cacheStateLocalP2P = stateObj;
+    cacheStateLocalP2P = sanitizarStateP2P(stateObj);
   }
 });
 
@@ -401,10 +471,10 @@ ipcMain.handle('enviar-sync', async (_evento, payload, stateExtra) => {
     : String(payload || '');
   const dadosEnvio = (payload && typeof payload === 'object' && payload.stateLocal)
     ? payload.stateLocal
-    : (stateExtra || await obterStateLocalAtual());
+    : (stateExtra || obterStateLocalAtual());
 
   if (dadosEnvio && typeof dadosEnvio === 'object') {
-    cacheStateLocalP2P = dadosEnvio;
+    cacheStateLocalP2P = sanitizarStateP2P(dadosEnvio);
   }
 
   const limpo = String(ipBruto || '')
@@ -429,7 +499,9 @@ ipcMain.handle('enviar-sync', async (_evento, payload, stateExtra) => {
     return { ok: false, erro: 'Endereço IP do parceiro inválido.' };
   }
 
-  const bodyStr = typeof dadosEnvio === 'string' ? dadosEnvio : JSON.stringify(dadosEnvio || {});
+  const bodyStr = typeof dadosEnvio === 'string'
+    ? dadosEnvio
+    : JSON.stringify(sanitizarStateP2P(dadosEnvio));
 
   return new Promise((resolve) => {
     const opcoes = {
@@ -440,7 +512,8 @@ ipcMain.handle('enviar-sync', async (_evento, payload, stateExtra) => {
       timeout: 10000,
       headers: {
         'Content-Type': 'application/json; charset=utf-8',
-        'Content-Length': Buffer.byteLength(bodyStr, 'utf8')
+        'Content-Length': Buffer.byteLength(bodyStr, 'utf8'),
+        'X-Cofin-Client': 'COFIN-P2P/1'
       }
     };
 
@@ -481,25 +554,35 @@ ipcMain.handle('enviar-sync', async (_evento, payload, stateExtra) => {
   });
 });
 
-/* ================= MOTOR DE AUTO-UPDATE SILENCIOSO (OTA) & DEBUG ================= */
+/* ================= MOTOR DE AUTO-UPDATE SILENCIOSO (OTA) ================= */
+let autoUpdaterConfigurado = false;
+
+function emitirErroAutoUpdater(err, mensagemPersonalizada) {
+  const mensagem = mensagemPersonalizada || ((err && err.message) ? err.message : String(err || 'Erro ao verificar atualizações.'));
+  if (autoUpdater && autoUpdater.logger && typeof autoUpdater.logger.error === 'function' && err) {
+    autoUpdater.logger.error(err);
+  } else if (log && typeof log.error === 'function' && err) {
+    log.error(err);
+  }
+  enviarEventoParaFrontend('update-erro', mensagem);
+  return mensagem;
+}
+
 function configurarAutoUpdater() {
-  if (!autoUpdater) return;
+  if (!autoUpdater || autoUpdaterConfigurado) return;
+  autoUpdaterConfigurado = true;
   try {
-    try {
-      autoUpdater.logger = require("electron-log");
-      autoUpdater.logger.transports.file.level = "info";
-    } catch (e) {
-      autoUpdater.logger = log;
-      if (autoUpdater.logger && autoUpdater.logger.transports && autoUpdater.logger.transports.file) {
-        autoUpdater.logger.transports.file.level = "info";
-      }
+    autoUpdater.logger = log;
+    if (autoUpdater.logger && autoUpdater.logger.transports && autoUpdater.logger.transports.file) {
+      autoUpdater.logger.transports.file.level = 'info';
     }
 
-    // Força verificação mesmo em modo de desenvolvimento (Dev Mode via dev-app-update.yml)
-    autoUpdater.forceDevUpdateConfig = true;
-    const devUpdateYml = path.join(__dirname, 'dev-app-update.yml');
-    if (!app.isPackaged && fs.existsSync(devUpdateYml)) {
-      autoUpdater.updateConfigPath = devUpdateYml;
+    if (!app.isPackaged) {
+      autoUpdater.forceDevUpdateConfig = true;
+      const devUpdateYml = path.join(__dirname, 'dev-app-update.yml');
+      if (fs.existsSync(devUpdateYml)) {
+        autoUpdater.updateConfigPath = devUpdateYml;
+      }
     }
 
     autoUpdater.autoDownload = true;
@@ -526,17 +609,16 @@ function configurarAutoUpdater() {
     });
 
     autoUpdater.on('error', (err) => {
-      const mensagemErro = (err && err.message) ? err.message : String(err || 'Erro desconhecido no autoUpdater');
-      if (autoUpdater.logger && typeof autoUpdater.logger.error === 'function') {
-        autoUpdater.logger.error(err);
-      }
-      if (mainWindow && !mainWindow.isDestroyed() && mainWindow.webContents) {
-        mainWindow.webContents.send('update-erro', mensagemErro);
-      } else {
-        enviarEventoParaFrontend('update-erro', mensagemErro);
-      }
+      emitirErroAutoUpdater(err);
     });
+  } catch (err) {
+    console.warn('[Auto-Update] Falha ao configurar autoUpdater:', err.message);
+  }
+}
 
+function dispararVerificacaoInicialUpdates() {
+  if (!autoUpdater) return;
+  try {
     const checkResult = autoUpdater.checkForUpdatesAndNotify();
     if (checkResult && typeof checkResult.catch === 'function') {
       checkResult.catch((err) => {
@@ -546,8 +628,16 @@ function configurarAutoUpdater() {
       });
     }
   } catch (err) {
-    console.warn('[Auto-Update] Falha ao iniciar autoUpdater:', err.message);
+    console.warn('[Auto-Update] Falha ao disparar verificação inicial:', err.message);
   }
+}
+
+function executarQuitAndInstall() {
+  if (autoUpdater && typeof autoUpdater.quitAndInstall === 'function') {
+    setImmediate(() => autoUpdater.quitAndInstall(false, true));
+    return { ok: true };
+  }
+  return { ok: false, erro: 'Módulo de atualização automática indisponível neste modo de execução.' };
 }
 
 ipcMain.handle('verificar-atualizacoes-agora', async () => {
@@ -560,49 +650,30 @@ ipcMain.handle('verificar-atualizacoes-agora', async () => {
     }
   }
   if (!autoUpdater) {
-    const msg = `Pacote "electron-updater" não está instalado na pasta node_modules (${autoUpdaterErroCarga || 'MODULE_NOT_FOUND'}). Execute "npm install" na pasta do projeto.`;
-    if (mainWindow && !mainWindow.isDestroyed() && mainWindow.webContents) {
-      mainWindow.webContents.send('update-erro', msg);
-    }
+    const msg = `Pacote "electron-updater" não está instalado (${autoUpdaterErroCarga || 'MODULE_NOT_FOUND'}). Execute "npm install" na pasta do projeto.`;
+    emitirErroAutoUpdater(null, msg);
     return { ok: false, erro: msg };
   }
   try {
-    autoUpdater.forceDevUpdateConfig = true;
     const resultado = await autoUpdater.checkForUpdates();
     return {
       ok: true,
       updateInfo: (resultado && resultado.updateInfo) ? resultado.updateInfo : null
     };
   } catch (err) {
-    const msg = (err && err.message) ? err.message : String(err || 'Erro ao verificar atualizações no GitHub.');
-    if (autoUpdater.logger && typeof autoUpdater.logger.error === 'function') {
-      autoUpdater.logger.error(err);
-    }
-    if (mainWindow && !mainWindow.isDestroyed() && mainWindow.webContents) {
-      mainWindow.webContents.send('update-erro', msg);
-    }
+    const msg = emitirErroAutoUpdater(err);
     return { ok: false, erro: msg };
   }
 });
 
-ipcMain.handle('aplicar-atualizacao', () => {
-  if (autoUpdater && typeof autoUpdater.quitAndInstall === 'function') {
-    setImmediate(() => autoUpdater.quitAndInstall(false, true));
-    return { ok: true };
-  }
-  return { ok: false, erro: 'Módulo de atualização automática indisponível neste modo de execução.' };
-});
+ipcMain.handle('aplicar-atualizacao', () => executarQuitAndInstall());
 
-ipcMain.on('aplicar-atualizacao', () => {
-  if (autoUpdater && typeof autoUpdater.quitAndInstall === 'function') {
-    setImmediate(() => autoUpdater.quitAndInstall(false, true));
-  }
-});
+ipcMain.on('aplicar-atualizacao', () => executarQuitAndInstall());
 
 app.whenReady().then(() => {
+  configurarAutoUpdater();
   createWindow();
   iniciarServidorP2P();
-  configurarAutoUpdater();
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {

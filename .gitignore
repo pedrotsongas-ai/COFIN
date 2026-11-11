@@ -4,7 +4,8 @@ package-lock.json
 
 # Builds e empacotamento Electron
 dist/
-build/
+build/*
+!build/icon.ico
 
 # Backups locais e dados temporários do usuário
 ~backups/

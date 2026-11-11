@@ -1,6 +1,6 @@
 {
   "name": "cofin",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "COFIN - Controle Financeiro",
   "main": "main.js",
   "scripts": {
@@ -13,13 +13,30 @@
     "directories": {
       "output": "dist"
     },
+    "files": [
+      "**/*",
+      "!dist/**",
+      "!~backups/**",
+      "!~icones/**",
+      "!Icones/**",
+      "!.github/**",
+      "!dev-app-update.yml",
+      "!LINK MAKE.txt",
+      "!Cenario_COFIN_Make.json",
+      "!Iniciar COFIN.bat",
+      "!netlify.toml",
+      "!onedrive-proxy.js",
+      "!LEIA-ME.txt",
+      "!*.log"
+    ],
     "win": {
       "target": "nsis",
       "icon": "build/icon.ico"
     },
     "nsis": {
       "oneClick": false,
-      "allowToChangeInstallationDirectory": true
+      "allowToChangeInstallationDirectory": true,
+      "artifactName": "${productName}-Setup-${version}.${ext}"
     },
     "publish": [
       {
