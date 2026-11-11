@@ -4,10 +4,37 @@ const fs = require('fs');
 const http = require('http');
 const os = require('os');
 
+function criarFallbackLogger() {
+  const gravarArquivo = (nivel, args) => {
+    try {
+      const pastaLogs = app && typeof app.getPath === 'function' ? app.getPath('logs') : __dirname;
+      const arquivoLog = path.join(pastaLogs, 'cofin-updater-fallback.log');
+      const linha = `[${new Date().toISOString()}] [${nivel}] ${args.map(a => (a instanceof Error ? (a.stack || a.message) : String(a))).join(' ')}\n`;
+      fs.appendFileSync(arquivoLog, linha, 'utf8');
+    } catch (e) {}
+  };
+  return {
+    transports: { file: { level: 'info' } },
+    info: (...args) => { console.log('[Auto-Update][INFO]', ...args); gravarArquivo('INFO', args); },
+    warn: (...args) => { console.warn('[Auto-Update][WARN]', ...args); gravarArquivo('WARN', args); },
+    error: (...args) => { console.error('[Auto-Update][ERROR]', ...args); gravarArquivo('ERROR', args); },
+    debug: (...args) => { console.debug('[Auto-Update][DEBUG]', ...args); gravarArquivo('DEBUG', args); }
+  };
+}
+
+let log = null;
+try {
+  log = require('electron-log');
+} catch (err) {
+  log = criarFallbackLogger();
+}
+
 let autoUpdater = null;
+let autoUpdaterErroCarga = null;
 try {
   ({ autoUpdater } = require('electron-updater'));
 } catch (err) {
+  autoUpdaterErroCarga = err.message || String(err);
   console.warn('[Auto-Update] Módulo electron-updater não encontrado no ambiente atual:', err.message);
 }
 
@@ -454,35 +481,109 @@ ipcMain.handle('enviar-sync', async (_evento, payload, stateExtra) => {
   });
 });
 
-/* ================= MOTOR DE AUTO-UPDATE SILENCIOSO (OTA) ================= */
+/* ================= MOTOR DE AUTO-UPDATE SILENCIOSO (OTA) & DEBUG ================= */
 function configurarAutoUpdater() {
   if (!autoUpdater) return;
   try {
+    try {
+      autoUpdater.logger = require("electron-log");
+      autoUpdater.logger.transports.file.level = "info";
+    } catch (e) {
+      autoUpdater.logger = log;
+      if (autoUpdater.logger && autoUpdater.logger.transports && autoUpdater.logger.transports.file) {
+        autoUpdater.logger.transports.file.level = "info";
+      }
+    }
+
+    // Força verificação mesmo em modo de desenvolvimento (Dev Mode via dev-app-update.yml)
+    autoUpdater.forceDevUpdateConfig = true;
+    const devUpdateYml = path.join(__dirname, 'dev-app-update.yml');
+    if (!app.isPackaged && fs.existsSync(devUpdateYml)) {
+      autoUpdater.updateConfigPath = devUpdateYml;
+    }
+
     autoUpdater.autoDownload = true;
     autoUpdater.autoInstallOnAppQuit = true;
 
+    autoUpdater.on('checking-for-update', () => {
+      if (autoUpdater.logger) autoUpdater.logger.info('A procurar atualizações no GitHub...');
+      enviarEventoParaFrontend('update-verificando', { timestamp: Date.now() });
+    });
+
     autoUpdater.on('update-available', (info) => {
+      if (autoUpdater.logger) autoUpdater.logger.info('Nova atualização disponível:', info && info.version);
       enviarEventoParaFrontend('download-iniciado', info || {});
     });
 
+    autoUpdater.on('update-not-available', (info) => {
+      if (autoUpdater.logger) autoUpdater.logger.info('Nenhuma atualização superior encontrada no GitHub:', info && info.version);
+      enviarEventoParaFrontend('update-nao-disponivel', info || {});
+    });
+
     autoUpdater.on('update-downloaded', (info) => {
+      if (autoUpdater.logger) autoUpdater.logger.info('Download da atualização concluído:', info && info.version);
       enviarEventoParaFrontend('download-concluido', info || {});
     });
 
     autoUpdater.on('error', (err) => {
-      console.warn('[Auto-Update] Aviso ao verificar/descarregar atualização:', err ? err.message : err);
+      const mensagemErro = (err && err.message) ? err.message : String(err || 'Erro desconhecido no autoUpdater');
+      if (autoUpdater.logger && typeof autoUpdater.logger.error === 'function') {
+        autoUpdater.logger.error(err);
+      }
+      if (mainWindow && !mainWindow.isDestroyed() && mainWindow.webContents) {
+        mainWindow.webContents.send('update-erro', mensagemErro);
+      } else {
+        enviarEventoParaFrontend('update-erro', mensagemErro);
+      }
     });
 
     const checkResult = autoUpdater.checkForUpdatesAndNotify();
     if (checkResult && typeof checkResult.catch === 'function') {
       checkResult.catch((err) => {
-        console.warn('[Auto-Update] Verificação de atualização ignorada:', err ? err.message : err);
+        if (autoUpdater.logger && typeof autoUpdater.logger.error === 'function') {
+          autoUpdater.logger.error(err);
+        }
       });
     }
   } catch (err) {
     console.warn('[Auto-Update] Falha ao iniciar autoUpdater:', err.message);
   }
 }
+
+ipcMain.handle('verificar-atualizacoes-agora', async () => {
+  if (!autoUpdater) {
+    try {
+      ({ autoUpdater } = require('electron-updater'));
+      configurarAutoUpdater();
+    } catch (errLoad) {
+      autoUpdaterErroCarga = errLoad.message || String(errLoad);
+    }
+  }
+  if (!autoUpdater) {
+    const msg = `Pacote "electron-updater" não está instalado na pasta node_modules (${autoUpdaterErroCarga || 'MODULE_NOT_FOUND'}). Execute "npm install" na pasta do projeto.`;
+    if (mainWindow && !mainWindow.isDestroyed() && mainWindow.webContents) {
+      mainWindow.webContents.send('update-erro', msg);
+    }
+    return { ok: false, erro: msg };
+  }
+  try {
+    autoUpdater.forceDevUpdateConfig = true;
+    const resultado = await autoUpdater.checkForUpdates();
+    return {
+      ok: true,
+      updateInfo: (resultado && resultado.updateInfo) ? resultado.updateInfo : null
+    };
+  } catch (err) {
+    const msg = (err && err.message) ? err.message : String(err || 'Erro ao verificar atualizações no GitHub.');
+    if (autoUpdater.logger && typeof autoUpdater.logger.error === 'function') {
+      autoUpdater.logger.error(err);
+    }
+    if (mainWindow && !mainWindow.isDestroyed() && mainWindow.webContents) {
+      mainWindow.webContents.send('update-erro', msg);
+    }
+    return { ok: false, erro: msg };
+  }
+});
 
 ipcMain.handle('aplicar-atualizacao', () => {
   if (autoUpdater && typeof autoUpdater.quitAndInstall === 'function') {

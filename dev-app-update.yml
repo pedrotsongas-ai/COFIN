@@ -1,0 +1,4 @@
+provider: github
+owner: pedrotsongas-ai
+repo: COFIN
+updaterCacheDirName: cofin-updater

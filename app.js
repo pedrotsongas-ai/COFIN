@@ -10777,16 +10777,58 @@ function inicializarSyncFamiliarP2P() {
   atualizarUISincronizacaoFamiliarP2P();
 }
 
-/* ================= FEEDBACK VISUAL DE AUTO-UPDATE SILENCIOSO (OTA) ================= */
+/* ================= FEEDBACK VISUAL DE AUTO-UPDATE SILENCIOSO (OTA) & DEBUG ================= */
 let autoUpdateListenersRegistrados = false;
+let ultimoErroUpdateTimestamp = 0;
 
-function exibirToastDownloadIniciado() {
+function atualizarPainelDebugUpdate(mensagem, tipo = 'info') {
+  const logEl = document.getElementById('update-debug-log');
+  const badgeEl = document.getElementById('update-debug-badge');
+  const horario = new Date().toLocaleTimeString('pt-BR');
+
+  if (logEl) {
+    logEl.textContent = `[${horario}] ${mensagem}`;
+    if (tipo === 'erro') {
+      logEl.style.color = 'var(--bad-text)';
+      logEl.style.borderColor = 'var(--bad-border)';
+      logEl.style.background = 'var(--bad-bg)';
+    } else if (tipo === 'ok') {
+      logEl.style.color = 'var(--good-text)';
+      logEl.style.borderColor = 'rgba(22, 163, 74, 0.35)';
+      logEl.style.background = 'var(--good-bg)';
+    } else {
+      logEl.style.color = 'var(--text2)';
+      logEl.style.borderColor = 'var(--border)';
+      logEl.style.background = 'var(--surface2)';
+    }
+  }
+
+  if (badgeEl) {
+    if (tipo === 'erro') {
+      badgeEl.textContent = 'Erro OTA';
+      badgeEl.style.background = 'var(--bad-bg)';
+      badgeEl.style.color = 'var(--bad-text)';
+    } else if (tipo === 'ok') {
+      badgeEl.textContent = 'Conectado ao GitHub';
+      badgeEl.style.background = 'var(--good-bg)';
+      badgeEl.style.color = 'var(--good-text)';
+    } else {
+      badgeEl.textContent = 'A verificar...';
+      badgeEl.style.background = 'var(--accent-bg)';
+      badgeEl.style.color = 'var(--accent-text)';
+    }
+  }
+}
+
+function exibirToastDownloadIniciado(info) {
+  const versao = (info && info.version) ? ` (v${info.version})` : '';
+  atualizarPainelDebugUpdate(`Nova versão detetada no GitHub${versao}! A descarregar em background...`, 'ok');
   const t = document.getElementById('toast');
   if (!t) return;
   clearTimeout(t._timer);
   t.onclick = null;
   t.title = '';
-  t.textContent = '⬇️ A descarregar nova versão em background...';
+  t.textContent = `⬇️ A descarregar nova versão${versao} em background...`;
   t.className = 'toast show update-downloading';
   t._timer = setTimeout(() => t.classList.remove('show', 'update-downloading'), 4500);
 }
@@ -10801,7 +10843,9 @@ function acionarInstalacaoAtualizacaoOTA() {
   }
 }
 
-function exibirToastAtualizacaoPronta() {
+function exibirToastAtualizacaoPronta(info) {
+  const versao = (info && info.version) ? ` (v${info.version})` : '';
+  atualizarPainelDebugUpdate(`Download concluído${versao}! Pronto para reiniciar e aplicar.`, 'ok');
   const t = document.getElementById('toast');
   if (!t) return;
   clearTimeout(t._timer);
@@ -10819,19 +10863,84 @@ function exibirToastAtualizacaoPronta() {
   }, 60000);
 }
 
+async function forcarVerificacaoUpdateDebug() {
+  const btn = document.getElementById('btn-forçar-update');
+  if (!window.electronAPI || typeof window.electronAPI.verificarAtualizacoesAgora !== 'function') {
+    const msg = 'API do Electron (verificarAtualizacoesAgora) indisponível. Execute a aplicação via Electron.';
+    console.error('[Auto-Update Debug]:', msg);
+    atualizarPainelDebugUpdate(msg, 'erro');
+    toast('⚠️ ' + msg, 'bad');
+    return { ok: false, erro: msg };
+  }
+
+  try {
+    if (btn) btn.disabled = true;
+    atualizarPainelDebugUpdate('A consultar GitHub Releases (pedrotsongas-ai/COFIN)...', 'info');
+    toast('🔍 A procurar atualizações no GitHub...', 'ok');
+
+    const res = await window.electronAPI.verificarAtualizacoesAgora();
+    if (res && res.ok === false && res.erro) {
+      console.error('[Auto-Update Erro]:', res.erro);
+      atualizarPainelDebugUpdate(`Erro retornado pelo autoUpdater: ${res.erro}`, 'erro');
+      if (Date.now() - ultimoErroUpdateTimestamp > 800) {
+        ultimoErroUpdateTimestamp = Date.now();
+        toast(`❌ Erro no Update: ${String(res.erro).slice(0, 120)}`, 'bad');
+      }
+    } else if (res && res.updateInfo) {
+      const vRemota = res.updateInfo.version || 'desconhecida';
+      atualizarPainelDebugUpdate(`Resposta do GitHub recebida · Versão remota: v${vRemota} (Versão local: v${CURRENT_VERSION})`, 'ok');
+    }
+    return res;
+  } catch (err) {
+    const msg = (err && err.message) ? err.message : String(err);
+    console.error('[Auto-Update Exceção]:', msg);
+    atualizarPainelDebugUpdate(`Exceção IPC ao procurar atualização: ${msg}`, 'erro');
+    toast(`❌ Falha ao procurar atualização: ${msg.slice(0, 120)}`, 'bad');
+    return { ok: false, erro: msg };
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
 function inicializarAutoUpdateOTA() {
+  const btnForcar = document.getElementById('btn-forçar-update');
+  if (btnForcar && !btnForcar._listenerRegistrado) {
+    btnForcar._listenerRegistrado = true;
+    btnForcar.addEventListener('click', forcarVerificacaoUpdateDebug);
+  }
+
   if (autoUpdateListenersRegistrados) return;
   autoUpdateListenersRegistrados = true;
 
   if (window.electronAPI && typeof window.electronAPI.onDownloadIniciado === 'function') {
-    window.electronAPI.onDownloadIniciado(() => {
-      exibirToastDownloadIniciado();
+    window.electronAPI.onDownloadIniciado((info) => {
+      exibirToastDownloadIniciado(info);
     });
   }
 
   if (window.electronAPI && typeof window.electronAPI.onDownloadConcluido === 'function') {
-    window.electronAPI.onDownloadConcluido(() => {
-      exibirToastAtualizacaoPronta();
+    window.electronAPI.onDownloadConcluido((info) => {
+      exibirToastAtualizacaoPronta(info);
+    });
+  }
+
+  if (window.electronAPI && typeof window.electronAPI.onUpdateNaoDisponivel === 'function') {
+    window.electronAPI.onUpdateNaoDisponivel((info) => {
+      const vRemota = (info && info.version) ? info.version : CURRENT_VERSION;
+      const msg = `Nenhuma atualização superior disponível no GitHub (Remota: v${vRemota} | Local: v${CURRENT_VERSION}).`;
+      console.info('[Auto-Update]:', msg);
+      atualizarPainelDebugUpdate(msg, 'ok');
+      toast(`✅ Já está na versão mais recente (v${vRemota}).`, 'ok');
+    });
+  }
+
+  if (window.electronAPI && typeof window.electronAPI.onUpdateErro === 'function') {
+    window.electronAPI.onUpdateErro((errMessage) => {
+      const textoErro = typeof errMessage === 'string' ? errMessage : JSON.stringify(errMessage);
+      console.error('[Auto-Update Erro do Backend]:', textoErro);
+      atualizarPainelDebugUpdate(`Erro do GitHub / electron-updater: ${textoErro}`, 'erro');
+      ultimoErroUpdateTimestamp = Date.now();
+      toast(`❌ Erro Auto-Update: ${textoErro.slice(0, 130)}`, 'bad');
     });
   }
 }

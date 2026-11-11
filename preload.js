@@ -22,7 +22,11 @@ const electronAPI = {
   },
   atualizarCacheP2P: (stateLocal) => ipcRenderer.send('atualizar-cache-p2p', stateLocal),
 
-  // Auto-Update Silencioso (OTA via electron-updater)
+  // Auto-Update Silencioso & Diagnóstico (OTA via electron-updater)
+  verificarAtualizacoesAgora: () => ipcRenderer.invoke('verificar-atualizacoes-agora'),
+  onUpdateErro: (callback) => ipcRenderer.on('update-erro', (_event, value) => callback(value)),
+  onUpdateNaoDisponivel: (callback) => ipcRenderer.on('update-nao-disponivel', (_event, info) => callback(info)),
+  onUpdateVerificando: (callback) => ipcRenderer.on('update-verificando', (_event, info) => callback(info)),
   onDownloadIniciado: (callback) => {
     ipcRenderer.on('download-iniciado', (_event, info) => callback(info));
   },
