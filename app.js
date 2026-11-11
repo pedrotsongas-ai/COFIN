@@ -85,22 +85,60 @@ function formatarCategoriaExibicao(catRaw) {
 
 function competenciaFatura(dataISO, diaFechamento) {
   if (!dataISO) return { ano: new Date().getFullYear(), mes: new Date().getMonth() + 1 };
-  const [ano, mes, dia] = dataISO.split('-').map(Number);
-  if (dia <= (diaFechamento || 1)) return { ano, mes };
-  let m = mes + 1, a = ano;
-  if (m > 12) { m = 1; a++; }
-  return { ano: a, mes: m };
+  const [ano, mes, dia] = String(dataISO).slice(0, 10).split('-').map(Number);
+  const fechamento = parseInt(diaFechamento, 10) || 1;
+  // Regra de Negócio: Se o dia da transação >= diaFechamento, transborda para o mês seguinte (mês + 1)
+  if (dia >= fechamento) {
+    let m = mes + 1;
+    let a = ano;
+    if (m > 12) {
+      m = 1;
+      a += 1;
+    }
+    return { ano: a, mes: m };
+  }
+  return { ano, mes };
+}
+
+function calcularCompetenciaLancamentoCartao(l, cartaoParam) {
+  if (!l) return { ano: new Date().getFullYear(), mes: new Date().getMonth() + 1 };
+  const cartao = cartaoParam
+    || (STATE.contas || []).find(c => c.nome === l.conta && c.tipo === 'cartao')
+    || (STATE.cartoes || []).find(c => c.nome === l.conta || c.id === l.cartaoId);
+  const diaFechamento = cartao ? (parseInt(cartao.diaFechamento, 10) || 1) : 1;
+
+  // Usa sempre a data real da transação (sem alterá-la no banco) para determinar a competência
+  const dataTransacao = l.dataCompra || l.data;
+  if (!dataTransacao) {
+    return {
+      ano: l.faturaAno || new Date().getFullYear(),
+      mes: l.faturaMes || (new Date().getMonth() + 1)
+    };
+  }
+
+  const compBase = competenciaFatura(dataTransacao, diaFechamento);
+  const numParcela = parseInt(l.parcelaAtual, 10) || 1;
+  const totParcelas = parseInt(l.parcelaTotal || l.totalParcelas, 10) || 1;
+
+  // Se for compra parcelada e estivermos a partir da dataCompra original, desloca (parcelaAtual - 1) meses
+  if (l.dataCompra && totParcelas > 1 && numParcela > 1) {
+    let m = compBase.mes + (numParcela - 1);
+    let a = compBase.ano + Math.floor((m - 1) / 12);
+    m = ((m - 1) % 12) + 1;
+    return { ano: a, mes: m };
+  }
+
+  return compBase;
 }
 
 function mesCompetenciaLancamento(l) {
   if (!l) return '';
+  if (ehLancamentoCartao(l) && l.tipo === 'despesa' && !l.ehPagamentoFatura) {
+    const comp = calcularCompetenciaLancamentoCartao(l);
+    return `${comp.ano}-${String(comp.mes).padStart(2, '0')}`;
+  }
   if (l.faturaAno && l.faturaMes) {
     return `${l.faturaAno}-${String(l.faturaMes).padStart(2, '0')}`;
-  }
-  const cartao = (STATE.contas || []).find(c => c.nome === l.conta && c.tipo === 'cartao') || (STATE.cartoes || []).find(c => c.nome === l.conta);
-  if (cartao && cartao.diaFechamento && (l.dataCompra || l.data)) {
-    const comp = competenciaFatura(l.dataCompra || l.data, cartao.diaFechamento);
-    return `${comp.ano}-${String(comp.mes).padStart(2, '0')}`;
   }
   return (l.data || '').slice(0, 7);
 }
@@ -202,21 +240,30 @@ function normalizarLancamentosCartaoExistentes() {
   if (!Array.isArray(STATE.lancamentos)) return;
   let alterado = false;
   STATE.lancamentos.forEach(l => {
-    if (l.tipo !== 'despesa' || !l.conta || !l.dataCompra) return;
+    if (l.tipo !== 'despesa' || !l.conta || l.ehPagamentoFatura) return;
     const cartaoConta = (STATE.contas || []).find(c => c.nome === l.conta && c.tipo === 'cartao') || (STATE.cartoes || []).find(c => c.nome === l.conta);
     if (!cartaoConta) return;
-    const diaCompra = parseInt((l.dataCompra || '').split('-')[2], 10) || 1;
-    const fech = cartaoConta.diaFechamento || 1;
-    if (diaCompra <= fech) {
-      // Compra feita antes ou no dia do fechamento da fatura: preserva a data original do lançamento
-      let dataCorreta = l.dataCompra;
+
+    // Preserva sempre a data real da transação no banco de dados (nunca sobrescreve com a data de vencimento)
+    if (l.dataCompra) {
+      let dataRealTransacao = l.dataCompra;
       if (l.parcelaTotal && l.parcelaTotal > 1 && l.parcelaAtual) {
-        dataCorreta = somarMeses(l.dataCompra, l.parcelaAtual - 1);
+        dataRealTransacao = somarMeses(l.dataCompra, l.parcelaAtual - 1);
       }
-      if (l.data !== dataCorreta) {
-        l.data = dataCorreta;
+      if (l.data !== dataRealTransacao) {
+        l.data = dataRealTransacao;
         alterado = true;
       }
+    }
+
+    // Recalcula a competência da fatura conforme a regra (dia >= diaFechamento -> mês + 1)
+    const comp = calcularCompetenciaLancamentoCartao(l, cartaoConta);
+    const novoVenc = calcularVencimentoFatura(comp.ano, comp.mes, cartaoConta.diaFechamento || 1, cartaoConta.diaVencimento || 10);
+    if (l.faturaAno !== comp.ano || l.faturaMes !== comp.mes || l.dataVencimentoFatura !== novoVenc) {
+      l.faturaAno = comp.ano;
+      l.faturaMes = comp.mes;
+      l.dataVencimentoFatura = novoVenc;
+      alterado = true;
     }
   });
   if (alterado) {
@@ -653,11 +700,15 @@ async function salvarCartaoInteligente() {
   }
 
   sincronizarEstruturaCartoes();
+  normalizarLancamentosCartaoExistentes();
   await salvarDados();
   cancelarEdicaoCartaoInteligente();
   renderListaCartoesInteligentes();
   renderWidgetMelhorCartao();
   popularContasSelect();
+  renderPaginaAtiva();
+  renderDashboard();
+  if (document.getElementById('page-cartoes')) renderCartoes();
   toast('Cartão salvo com sucesso!', 'ok');
 }
 
@@ -2530,9 +2581,7 @@ function renderDashboard() {
     const pendentes = (STATE.lancamentos || []).filter(l => l.conta === cartao.nome && l.tipo === 'despesa' && !estaPago(l));
     const porFatura = {};
     pendentes.forEach(l => {
-      const comp = (l.faturaAno && l.faturaMes)
-        ? { ano: l.faturaAno, mes: l.faturaMes }
-        : competenciaFatura(l.dataCompra || l.data, cartao.diaFechamento || 1);
+      const comp = calcularCompetenciaLancamentoCartao(l, cartao);
       const chave = `${comp.ano}-${String(comp.mes).padStart(2, '0')}`;
       if (!porFatura[chave]) porFatura[chave] = { ano: comp.ano, mes: comp.mes, total: 0 };
       porFatura[chave].total += l.valor;
@@ -2670,6 +2719,11 @@ function renderDashboard() {
     document.getElementById('dash-pendentes-list').innerHTML = pendentes.slice(0,8).map(l => {
       const [a,m,d] = (l.data||'').split('-');
       const dataFmt = a ? `${d}/${m}/${a}` : '-';
+      const ehCartao = ehLancamentoCartao(l);
+      const compPend = ehCartao ? calcularCompetenciaLancamentoCartao(l) : null;
+      const btnAcaoHTML = ehCartao
+        ? `<button type="button" class="btn btn-sm btn-primary btn-pagar-fatura" data-cartao-id="${escHtml(l.conta)}" ${compPend ? `data-mes="${compPend.mes}" data-ano="${compPend.ano}"` : ''}><i class="ti ti-cash-banknote"></i> Pagar Fatura</button>`
+        : `<button type="button" class="btn btn-sm" onclick="togglePagamento('${l.id}')"><i class="ti ti-check"></i> Marcar como paga</button>`;
       return `<div class="pendente-row">
         <div class="pendente-info">
           <div class="pendente-desc">${l.descricao || '-'}${badgeParcelaHTML(l)}</div>
@@ -2677,7 +2731,7 @@ function renderDashboard() {
         </div>
         <div style="display:flex;align-items:center;gap:10px;flex-shrink:0">
           <div class="pendente-valor ${l.tipo==='receita'?'mv-ok':'mv-bad'}">${l.tipo==='receita'?'+':'-'} ${toBRL(l.valor)}</div>
-          <button class="btn btn-sm" onclick="togglePagamento('${l.id}')"><i class="ti ti-check"></i> Marcar como paga</button>
+          ${btnAcaoHTML}
         </div>
       </div>`;
     }).join('') + (pendentes.length > 8 ? `<div class="help-text" style="margin-top:.5rem">+ ${pendentes.length - 8} outras pendências. Veja todas em Lançamentos, filtrando por status "Pendentes".</div>` : '');
@@ -2744,7 +2798,7 @@ function renderDashboard() {
           </div>`;
 
         html += cartoesDash.map(cartao => {
-          const compAtual = competenciaFatura(hojeDashISO, cartao.diaFechamento || 1);
+          const compAtual = obterCompetenciaFaturaDashboard(cartao.nome, cartao.diaFechamento || 1, hojeDashISO);
           const itensFatura = lancamentosDaFatura(cartao.nome, compAtual.ano, compAtual.mes);
           const totalBrutoFatura = itensFatura.reduce((s, l) => s + l.valor, 0);
           const totalFatura = itensFatura.filter(l => !estaPago(l) && !l.faturaPaga).reduce((s, l) => s + l.valor, 0);
@@ -2762,20 +2816,26 @@ function renderDashboard() {
 
           const corBarra = pctUsado >= 90 ? 'critico' : (pctUsado >= 70 ? 'aviso' : 'normal');
           const temMaisPendencias = totalPendente > totalFatura;
+          const idCartaoAttr = escHtml(cartao.id || cartao.nome);
 
-          const tooltipInfo = `Cartão ${cartao.nome} · Fatura atual: ${toBRL(totalFatura)}${faturaJaPaga ? ` (Fatura Paga: ${toBRL(totalBrutoFatura)})` : ''}${temLimite ? ` | Limite disponível: ${toBRL(disponivel)} (Total: ${toBRL(limite)} - ${pctUsado.toFixed(0)}% utilizado)` : ''}${temMaisPendencias ? ` | Total comprometido a pagar: ${toBRL(totalPendente)}` : ''}`;
+          const tooltipInfo = `Cartão ${cartao.nome} · Fatura (${String(compAtual.mes).padStart(2, '0')}/${compAtual.ano}): ${toBRL(totalFatura)}${faturaJaPaga ? ` (Fatura Paga: ${toBRL(totalBrutoFatura)})` : ''}${temLimite ? ` | Limite disponível: ${toBRL(disponivel)} (Total: ${toBRL(limite)} - ${pctUsado.toFixed(0)}% utilizado)` : ''}${temMaisPendencias ? ` | Total comprometido a pagar: ${toBRL(totalPendente)}` : ''}`;
 
           return `
-            <div class="pendente-row dash-cartao-row" onclick="expandirCardMagicMove(this, 'cartoes')" title="${escHtml(tooltipInfo)}">
+            <div class="pendente-row dash-cartao-row" onclick="if(!event.target.closest('.btn-pagar-fatura')) expandirCardMagicMove(this, 'cartoes')" title="${escHtml(tooltipInfo)}">
               <div class="pendente-info">
                 <div class="pendente-desc" style="display:flex;align-items:center;gap:5px;flex-wrap:wrap">
                   <span><i class="ti ti-credit-card" style="font-size:13px;color:${cartao.cor || 'var(--accent)'};margin-right:5px"></i>${escHtml(cartao.nome)}</span>
                   ${faturaJaPaga ? `<span class="badge badge-fatura-paga" style="font-size:9.5px;padding:1px 6px"><i class="ti ti-circle-check"></i> Fatura Paga</span>` : ''}
                 </div>
                 <div class="pendente-meta">
-                  <span>Fatura atual</span>
+                  <span>Fatura ${String(compAtual.mes).padStart(2, '0')}/${String(compAtual.ano).slice(2)}</span>
                   ${vencFmt ? `<span>·</span><span>Vence ${vencFmt}</span>` : ''}
                   ${cartao.diaFechamento ? `<span>·</span><span>Fecha dia ${cartao.diaFechamento}</span>` : ''}
+                </div>
+                <div style="margin-top:6px">
+                  <button type="button" class="btn btn-sm btn-primary btn-pagar-fatura" data-cartao-id="${idCartaoAttr}" data-mes="${compAtual.mes}" data-ano="${compAtual.ano}" style="padding:3px 10px;font-size:11px" ${totalFatura <= 0 ? 'disabled' : ''}>
+                    <i class="ti ${faturaJaPaga ? 'ti-circle-check' : 'ti-cash-banknote'}"></i> ${faturaJaPaga ? 'Fatura Paga' : 'Pagar Fatura'}
+                  </button>
                 </div>
               </div>
               <div class="dash-cartao-col-valor">
@@ -2853,6 +2913,10 @@ function categoriaCorrespondeFiltro(catLanc, catFiltro) {
   return parsed.macro.toLowerCase() === catFiltro.toLowerCase();
 }
 function estaPago(l) {
+  if (!l) return false;
+  if (ehLancamentoCartao(l) && l.tipo === 'despesa' && !l.ehPagamentoFatura) {
+    return l.faturaPaga === true || l.status === 'Liquidado';
+  }
   return l.pago !== false || l.faturaPaga === true || l.status === 'Liquidado' || l.status === 'Pago/Efetivado';
 }
 function badgeStatusHTML(l, comClique) {
@@ -3344,6 +3408,10 @@ async function marcarSelecionadosComoPagos() {
   STATE.lancamentos.forEach(l => {
     if (conciliacaoSelecionados.has(l.id) && !estaPago(l)) {
       l.pago = true;
+      if (ehLancamentoCartao(l) && l.tipo === 'despesa' && !l.ehPagamentoFatura) {
+        l.faturaPaga = true;
+        l.status = 'Liquidado';
+      }
       l.sincronizado = false;
       alterados++;
     }
@@ -3366,7 +3434,14 @@ async function togglePagamento(id) {
   if (!l) return;
   const novoEstado = !estaPago(l);
   l.pago = novoEstado;
-  if (!novoEstado) {
+  if (ehLancamentoCartao(l) && l.tipo === 'despesa' && !l.ehPagamentoFatura) {
+    l.faturaPaga = novoEstado;
+    if (novoEstado) {
+      l.status = 'Liquidado';
+    } else if (l.status === 'Liquidado' || l.status === 'Pago/Efetivado') {
+      delete l.status;
+    }
+  } else if (!novoEstado) {
     l.faturaPaga = false;
     if (l.status === 'Liquidado' || l.status === 'Pago/Efetivado') delete l.status;
   }
@@ -4113,21 +4188,16 @@ async function salvarLancamento() {
       if (idx >= 0) STATE.lancamentos[idx] = editado; else STATE.lancamentos.push(editado);
     } else {
       const cartaoConta = (tipo === 'despesa') ? (STATE.contas.find(c => c.nome === conta && c.tipo === 'cartao') || (STATE.cartoes || []).find(c => c.nome === conta)) : null;
-      let dataSplit = data;
+      const dataSplit = data;
       let faturaAno = undefined;
       let faturaMes = undefined;
       let dataVencimentoFatura = undefined;
       if (cartaoConta) {
         const comp = competenciaFatura(data, cartaoConta.diaFechamento || 1);
-        const diaCompra = parseInt((data || '').split('-')[2], 10) || 1;
         const fech = cartaoConta.diaFechamento || 1;
-        const compraAntesDoFechamento = diaCompra <= fech;
         faturaAno = comp.ano;
         faturaMes = comp.mes;
         dataVencimentoFatura = calcularVencimentoFatura(comp.ano, comp.mes, fech, cartaoConta.diaVencimento || 10);
-        if (!compraAntesDoFechamento) {
-          dataSplit = dataVencimentoFatura;
-        }
       }
 
       subTransacoes.forEach((sub, idxSub) => {
@@ -4136,7 +4206,10 @@ async function salvarLancamento() {
           dataCompra: data,
           descricao: `${descricao} [${formatarCategoriaExibicao(sub.categoria)}]`,
           categoria: sub.categoria, conta, valor: sub.valor,
-          origem: 'manual', sincronizado: false, pago, tags,
+          origem: 'manual', sincronizado: false,
+          pago: cartaoConta ? false : pago,
+          faturaPaga: cartaoConta ? false : undefined,
+          tags,
           faturaAno, faturaMes, dataVencimentoFatura,
           subTransacoes: idxSub === 0 ? subTransacoes : undefined,
           ehReembolsavel: idxSub === 0 ? !!ehReembolsavel : undefined,
@@ -4216,16 +4289,13 @@ async function salvarLancamento() {
           item.faturaAno = aFat;
           item.faturaMes = mFat;
           item.dataVencimentoFatura = calcularVencimentoFatura(aFat, mFat, cartaoConta.diaFechamento || 1, cartaoConta.diaVencimento || 10);
-          const diaCompra = parseInt((dataBase || '').split('-')[2], 10) || 1;
-          const fech = cartaoConta.diaFechamento || 1;
-          const compraAntesDoFechamento = diaCompra <= fech;
-          if (!compraAntesDoFechamento) {
-            item.data = item.dataVencimentoFatura;
+          if (item.dataCompra) {
+            item.data = somarMeses(item.dataCompra, numParcela - 1);
           }
         }
 
         if (item.id === id) {
-          item.pago = pago;
+          item.pago = cartaoConta ? (item.faturaPaga === true) : pago;
           item.tipo = tipo;
           if (comprovanteAtual) item.comprovante = comprovanteAtual;
           if (anexoNome) item.anexoNome = anexoNome;
@@ -4241,7 +4311,7 @@ async function salvarLancamento() {
     } else {
       // Edição de item único
       const cartaoConta = (tipo === 'despesa') ? (STATE.contas.find(c => c.nome === conta && c.tipo === 'cartao') || (STATE.cartoes || []).find(c => c.nome === conta)) : null;
-      let dataLancamento = data;
+      const dataLancamento = data;
       let faturaAno = anterior.faturaAno;
       let faturaMes = anterior.faturaMes;
       let dataVencimentoFatura = anterior.dataVencimentoFatura;
@@ -4249,19 +4319,17 @@ async function salvarLancamento() {
 
       if (cartaoConta) {
         const comp = competenciaFatura(data, cartaoConta.diaFechamento || 1);
-        const diaCompra = parseInt((data || '').split('-')[2], 10) || 1;
         const fech = cartaoConta.diaFechamento || 1;
-        const compraAntesDoFechamento = diaCompra <= fech;
         faturaAno = comp.ano;
         faturaMes = comp.mes;
         dataVencimentoFatura = calcularVencimentoFatura(comp.ano, comp.mes, fech, cartaoConta.diaVencimento || 10);
         dataCompra = data;
-        dataLancamento = compraAntesDoFechamento ? data : dataVencimentoFatura;
       }
 
       const editado = {
         ...anterior,
-        tipo, data: dataLancamento, dataCompra, descricao, categoria, conta, valor: valorTotal, pago,
+        tipo, data: dataLancamento, dataCompra, descricao, categoria, conta, valor: valorTotal,
+        pago: cartaoConta ? (anterior.faturaPaga === true) : pago,
         faturaAno, faturaMes, dataVencimentoFatura,
         comprovante: comprovanteAtual || undefined,
         anexoNome, anexoPath,
@@ -4283,13 +4351,10 @@ async function salvarLancamento() {
 
     const cartaoConta = (tipo === 'despesa') ? (STATE.contas.find(c => c.nome === conta && c.tipo === 'cartao') || (STATE.cartoes || []).find(c => c.nome === conta)) : null;
     const compInicial = cartaoConta ? competenciaFatura(data, cartaoConta.diaFechamento || 1) : null;
-    const diaCompra = parseInt((data || '').split('-')[2], 10) || 1;
-    const fech = cartaoConta ? (cartaoConta.diaFechamento || 1) : 1;
-    const compraAntesDoFechamento = diaCompra <= fech;
 
     for (let i = 1; i <= parcelas; i++) {
       const centavos = baseCentavos + (i === parcelas ? restoCentavos : 0);
-      let dataParcela = somarMeses(data, i - 1);
+      const dataParcela = somarMeses(data, i - 1);
       let faturaAno = undefined;
       let faturaMes = undefined;
       let dataVencimentoFatura = undefined;
@@ -4301,9 +4366,6 @@ async function salvarLancamento() {
         faturaAno = aFat;
         faturaMes = mFat;
         dataVencimentoFatura = calcularVencimentoFatura(aFat, mFat, cartaoConta.diaFechamento || 1, cartaoConta.diaVencimento || 10);
-        if (!compraAntesDoFechamento) {
-          dataParcela = dataVencimentoFatura;
-        }
       }
 
       STATE.lancamentos.push({
@@ -4319,6 +4381,7 @@ async function salvarLancamento() {
         totalParcelas: parcelas,
         faturaAno, faturaMes, dataVencimentoFatura,
         pago: false,
+        faturaPaga: cartaoConta ? false : undefined,
         tags,
         ehReembolsavel: i === 1 ? !!ehReembolsavel : undefined,
         reembolsoDevedor: i === 1 ? devedorReembolso : undefined,
@@ -4333,21 +4396,16 @@ async function salvarLancamento() {
     toast(`${parcelas} parcelas criadas, distribuídas mês a mês no cartão/conta.`, 'ok');
   } else {
     const cartaoConta = (tipo === 'despesa') ? (STATE.contas.find(c => c.nome === conta && c.tipo === 'cartao') || (STATE.cartoes || []).find(c => c.nome === conta)) : null;
-    let dataLancamento = data;
+    const dataLancamento = data;
     let faturaAno = undefined;
     let faturaMes = undefined;
     let dataVencimentoFatura = undefined;
     if (cartaoConta) {
       const comp = competenciaFatura(data, cartaoConta.diaFechamento || 1);
-      const diaCompra = parseInt((data || '').split('-')[2], 10) || 1;
       const fech = cartaoConta.diaFechamento || 1;
-      const compraAntesDoFechamento = diaCompra <= fech;
       faturaAno = comp.ano;
       faturaMes = comp.mes;
       dataVencimentoFatura = calcularVencimentoFatura(comp.ano, comp.mes, fech, cartaoConta.diaVencimento || 10);
-      if (!compraAntesDoFechamento) {
-        dataLancamento = dataVencimentoFatura;
-      }
     }
 
     STATE.lancamentos.push({
@@ -4356,7 +4414,9 @@ async function salvarLancamento() {
       descricao, categoria, conta, valor: valorTotal,
       origem: 'manual', sincronizado: false,
       faturaAno, faturaMes, dataVencimentoFatura,
-      pago, tags,
+      pago: cartaoConta ? false : pago,
+      faturaPaga: cartaoConta ? false : undefined,
+      tags,
       ehReembolsavel: !!ehReembolsavel,
       reembolsoDevedor: devedorReembolso,
       reembolsado: false,
@@ -5053,18 +5113,48 @@ async function salvarConta() {
   }
 
   if (idxEdicao !== '') {
-    const nomeAntigo = STATE.contas[idxEdicao].nome;
+    const contaAntiga = STATE.contas[idxEdicao];
+    const nomeAntigo = contaAntiga.nome;
+    dados.id = contaAntiga.id || uid();
+    dados.cor = contaAntiga.cor || '#1A6FE0';
     STATE.contas[idxEdicao] = dados;
     if (nomeAntigo !== nome) {
       // Renomear precisa acompanhar tudo que referencia essa conta pelo nome
       STATE.lancamentos.forEach(l => { if (l.conta === nomeAntigo) l.conta = nome; });
       (STATE.recorrentes || []).forEach(r => { if (r.conta === nomeAntigo) r.conta = nome; });
     }
+    if (tipo === 'cartao' && Array.isArray(STATE.cartoes)) {
+      const idxCart = STATE.cartoes.findIndex(c => c.id === dados.id || c.nome.toLowerCase() === nomeAntigo.toLowerCase());
+      if (idxCart >= 0) {
+        STATE.cartoes[idxCart] = {
+          ...STATE.cartoes[idxCart],
+          id: dados.id,
+          nome: dados.nome,
+          limiteTotal: Number(dados.limite) || STATE.cartoes[idxCart].limiteTotal || 0,
+          diaFechamento: dados.diaFechamento,
+          diaVencimento: dados.diaVencimento
+        };
+      }
+    }
   } else {
+    dados.id = uid();
     STATE.contas.push(dados);
+    if (tipo === 'cartao') {
+      if (!Array.isArray(STATE.cartoes)) STATE.cartoes = [];
+      STATE.cartoes.push({
+        id: dados.id,
+        nome: dados.nome,
+        limiteTotal: Number(dados.limite) || 3000,
+        diaFechamento: dados.diaFechamento,
+        diaVencimento: dados.diaVencimento,
+        cor: '#1A6FE0'
+      });
+    }
   }
+  normalizarLancamentosCartaoExistentes();
   cancelarEdicaoConta();
-  await salvarDados(); renderConfig();
+  await salvarDados(); renderConfig(); renderDashboard();
+  if (document.getElementById('page-cartoes')) renderCartoes();
   toast(idxEdicao !== '' ? 'Conta atualizada.' : 'Conta adicionada.', 'ok');
 }
 function editarConta(idx) {
@@ -6042,16 +6132,54 @@ function saldoPorConta() {
   return saldos;
 }
 function lancamentosDaFatura(nomeCartao, ano, mes) {
-  const cartao = STATE.contas.find(c => c.nome === nomeCartao && c.tipo === 'cartao') || (STATE.cartoes || []).find(c => c.nome === nomeCartao);
+  const cartao = (STATE.contas || []).find(c => c.nome === nomeCartao && c.tipo === 'cartao') || (STATE.cartoes || []).find(c => c.nome === nomeCartao);
   if (!cartao) return [];
-  return STATE.lancamentos.filter(l => {
-    if (l.conta !== nomeCartao || l.tipo !== 'despesa') return false;
-    if (l.faturaAno && l.faturaMes) {
-      return l.faturaAno === ano && l.faturaMes === mes;
-    }
-    const comp = competenciaFatura(l.dataCompra || l.data, cartao.diaFechamento);
-    return comp.ano === ano && comp.mes === mes;
+  const anoAlvo = parseInt(ano, 10);
+  const mesAlvo = parseInt(mes, 10);
+  return (STATE.lancamentos || []).filter(l => {
+    if (l.conta !== nomeCartao || l.tipo !== 'despesa' || l.ehPagamentoFatura) return false;
+    const comp = calcularCompetenciaLancamentoCartao(l, cartao);
+    return comp.ano === anoAlvo && comp.mes === mesAlvo;
   });
+}
+
+function obterCompetenciaFaturaDashboard(nomeCartao, diaFechamento, dataRefISO) {
+  const ref = dataRefISO || hojeLocalISO();
+  const [anoRef, mesRef] = ref.split('-').map(Number);
+  const compCiclo = competenciaFatura(ref, diaFechamento || 1);
+
+  // 1) Se o mês civil atual tiver lançamentos em aberto, prioriza exibir a fatura do mês civil atual
+  const itensMesCivil = lancamentosDaFatura(nomeCartao, anoRef, mesRef);
+  const pendentesMesCivil = itensMesCivil.filter(l => !estaPago(l) && !l.faturaPaga);
+  if (pendentesMesCivil.length > 0) {
+    return { ano: anoRef, mes: mesRef };
+  }
+
+  // 2) Se a competência do ciclo atual (ex: mês seguinte quando dia >= diaFechamento) tiver lançamentos em aberto, exibe-a
+  const itensCiclo = lancamentosDaFatura(nomeCartao, compCiclo.ano, compCiclo.mes);
+  const pendentesCiclo = itensCiclo.filter(l => !estaPago(l) && !l.faturaPaga);
+  if (pendentesCiclo.length > 0) {
+    return compCiclo;
+  }
+
+  // 3) Se houver qualquer outra fatura em aberto no cartão, prioriza a mais antiga pendente
+  const cartao = (STATE.contas || []).find(c => c.nome === nomeCartao && c.tipo === 'cartao') || (STATE.cartoes || []).find(c => c.nome === nomeCartao);
+  const todosPendentes = (STATE.lancamentos || []).filter(
+    l => l.conta === nomeCartao && l.tipo === 'despesa' && !l.ehPagamentoFatura && !estaPago(l) && !l.faturaPaga
+  );
+  if (todosPendentes.length > 0) {
+    const comps = todosPendentes
+      .map(l => calcularCompetenciaLancamentoCartao(l, cartao))
+      .sort((a, b) => (a.ano !== b.ano ? a.ano - b.ano : a.mes - b.mes));
+    return comps[0];
+  }
+
+  // 4) Se não há pendências mas o mês civil atual tem fatura já paga (e o ciclo seguinte está vazio), exibe o mês civil atual
+  if (itensMesCivil.length > 0 && itensCiclo.length === 0) {
+    return { ano: anoRef, mes: mesRef };
+  }
+
+  return compCiclo;
 }
 function gastosPorMacroESubcategoria(lista) {
   const somaMacro = {};
@@ -6141,16 +6269,37 @@ function abrirModalPagamentoFatura(idCartao, mesParam, anoParam) {
   let ano = parseInt(anoParam, 10);
 
   if (!mes || !ano || isNaN(mes) || isNaN(ano)) {
-    const offset = estadoFaturaCartao[nomeCartao] || 0;
-    const compAtual = competenciaFatura(hojeLocalISO(), diaFechamento);
-    ano = compAtual.ano;
-    mes = compAtual.mes + offset;
-    while (mes > 12) { mes -= 12; ano++; }
-    while (mes < 1) { mes += 12; ano--; }
+    const pageCartoesAtiva = document.getElementById('page-cartoes') && document.getElementById('page-cartoes').classList.contains('active');
+    if (pageCartoesAtiva && estadoFaturaCartao[nomeCartao] !== undefined) {
+      const offset = estadoFaturaCartao[nomeCartao] || 0;
+      const compAtual = competenciaFatura(hojeLocalISO(), diaFechamento);
+      ano = compAtual.ano;
+      mes = compAtual.mes + offset;
+      while (mes > 12) { mes -= 12; ano++; }
+      while (mes < 1) { mes += 12; ano--; }
+    } else {
+      const compAtiva = obterCompetenciaFaturaDashboard(nomeCartao, diaFechamento, hojeLocalISO());
+      ano = compAtiva.ano;
+      mes = compAtiva.mes;
+    }
   }
 
-  const itensFatura = lancamentosDaFatura(nomeCartao, ano, mes);
-  const itensPendentes = itensFatura.filter(l => !estaPago(l) && !l.faturaPaga);
+  let itensFatura = lancamentosDaFatura(nomeCartao, ano, mes);
+  let itensPendentes = itensFatura.filter(l => !estaPago(l) && !l.faturaPaga);
+
+  // Fallback: se a competência informada não tiver saldo pendente, verifica se há fatura ativa pendente no cartão
+  if (itensPendentes.length === 0) {
+    const compFallback = obterCompetenciaFaturaDashboard(nomeCartao, diaFechamento, hojeLocalISO());
+    const itensFallback = lancamentosDaFatura(nomeCartao, compFallback.ano, compFallback.mes);
+    const pendentesFallback = itensFallback.filter(l => !estaPago(l) && !l.faturaPaga);
+    if (pendentesFallback.length > 0) {
+      ano = compFallback.ano;
+      mes = compFallback.mes;
+      itensFatura = itensFallback;
+      itensPendentes = pendentesFallback;
+    }
+  }
+
   const valorFatura = Math.round(itensPendentes.reduce((s, l) => s + (Number(l.valor) || 0), 0) * 100) / 100;
 
   if (valorFatura <= 0) {
@@ -6419,10 +6568,14 @@ function renderCartoes() {
       }
       if (btnHeroPagar) {
         btnHeroPagar.disabled = totalAbertoHero <= 0;
+        btnHeroPagar.setAttribute('data-cartao-id', cartaoHero.id || cartaoHero.nome);
+        btnHeroPagar.setAttribute('data-mes', String(mesH));
+        btnHeroPagar.setAttribute('data-ano', String(anoH));
+        btnHeroPagar.removeAttribute('onclick');
+        btnHeroPagar.onclick = null;
         btnHeroPagar.innerHTML = faturaPagaHero
           ? `<i class="ti ti-circle-check"></i> Fatura Paga`
           : `<i class="ti ti-cash-banknote"></i> Pagar Fatura`;
-        btnHeroPagar.onclick = () => abrirModalPagamentoFatura(cartaoHero.id || cartaoHero.nome, mesH, anoH);
       }
     }
   }
@@ -6458,8 +6611,8 @@ function renderCartoes() {
         <div style="display:flex;flex-direction:column;align-items:center;gap:12px;width:100%">
           ${gerarCartaoFisico3DHTML(cartao, mes, ano)}
           <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;justify-content:center;margin-top:2px">
-            <button class="btn btn-sm" onclick="abrirModalGerirCartoes()"><i class="ti ti-settings"></i> Configurar Cartão</button>
-            <button class="btn btn-sm btn-primary btn-pagar-fatura" onclick="abrirModalPagamentoFatura('${idOuNomeCartao}', ${mes}, ${ano})" ${totalAberto <= 0 ? 'disabled' : ''}>
+            <button type="button" class="btn btn-sm" onclick="abrirModalGerirCartoes()"><i class="ti ti-settings"></i> Configurar Cartão</button>
+            <button type="button" class="btn btn-sm btn-primary btn-pagar-fatura" data-cartao-id="${idOuNomeCartao}" data-mes="${mes}" data-ano="${ano}" ${totalAberto <= 0 ? 'disabled' : ''}>
               <i class="ti ${faturaJaPaga ? 'ti-circle-check' : 'ti-cash-banknote'}"></i> ${faturaJaPaga ? 'Fatura Paga' : 'Pagar Fatura'}
             </button>
           </div>
@@ -6475,7 +6628,7 @@ function renderCartoes() {
               <button class="icon-btn" onclick="navegarFatura('${escHtml(cartao.nome)}', -1)" title="Fatura anterior"><i class="ti ti-chevron-left"></i></button>
               <span style="font-size:12.5px;font-weight:600;min-width:90px;text-align:center">${nomesMes[mes]}/${ano}</span>
               <button class="icon-btn" onclick="navegarFatura('${escHtml(cartao.nome)}', 1)" title="Próxima fatura"><i class="ti ti-chevron-right"></i></button>
-              <button class="btn btn-sm btn-primary btn-pagar-fatura" style="margin-left:6px" onclick="abrirModalPagamentoFatura('${idOuNomeCartao}', ${mes}, ${ano})" ${totalAberto <= 0 ? 'disabled' : ''}>
+              <button type="button" class="btn btn-sm btn-primary btn-pagar-fatura" style="margin-left:6px" data-cartao-id="${idOuNomeCartao}" data-mes="${mes}" data-ano="${ano}" ${totalAberto <= 0 ? 'disabled' : ''}>
                 <i class="ti ${faturaJaPaga ? 'ti-circle-check' : 'ti-cash-banknote'}"></i> ${faturaJaPaga ? 'Fatura Paga' : 'Pagar Fatura'}
               </button>
             </div>
@@ -6507,6 +6660,31 @@ function renderCartoes() {
   }).join('');
   inicializarEfeito3DCartoes();
 }
+
+/**
+ * Delegação Global de Eventos (Event Delegation) para todos os botões .btn-pagar-fatura
+ * (Dashboard, Aba de Cartões & Faturas e barra Hero).
+ */
+function inicializarDelegacaoPagarFatura() {
+  if (window._delegacaoPagarFaturaAtiva) return;
+  window._delegacaoPagarFaturaAtiva = true;
+
+  document.addEventListener('click', (event) => {
+    const btn = event.target.closest('.btn-pagar-fatura');
+    if (!btn || btn.disabled) return;
+
+    event.preventDefault();
+    event.stopPropagation();
+
+    const idCartao = btn.getAttribute('data-cartao-id') || btn.dataset.cartaoId || '';
+    const mesAttr = btn.getAttribute('data-mes') || btn.dataset.mes;
+    const anoAttr = btn.getAttribute('data-ano') || btn.dataset.ano;
+
+    abrirModalPagamentoFatura(idCartao, mesAttr, anoAttr);
+  });
+}
+
+inicializarDelegacaoPagarFatura();
 
 /* ================= COFRES / CAIXINHAS (VAULTS) & CÁLCULO DE SALDOS ================= */
 function migrarCofresParaMetas() {
