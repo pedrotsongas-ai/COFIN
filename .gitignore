@@ -1,0 +1,29 @@
+# Dependências
+node_modules/
+package-lock.json
+
+# Builds e empacotamento Electron
+dist/
+build/
+
+# Backups locais e dados temporários do usuário
+~backups/
+*.backup.json
+*.tmp
+*.log
+
+# Atalhos e links pessoais locais
+*.lnk
+LINK MAKE.txt
+
+# Arquivos do sistema operacional
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+.DS_Store
+
+# IDEs
+.vscode/
+.idea/
+

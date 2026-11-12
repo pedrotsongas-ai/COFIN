@@ -1,0 +1,32 @@
+{
+  "name": "cofin",
+  "version": "1.0.0",
+  "description": "COFIN - Controle Financeiro",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder"
+  },
+  "build": {
+    "appId": "com.seuapp.cofin",
+    "productName": "COFIN",
+    "directories": {
+      "output": "dist"
+    },
+    "win": {
+      "target": "nsis",
+      "icon": "build/icon.ico"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
+    }
+  },
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "electron": "^32.0.0",
+    "electron-builder": "^24.13.3",
+    "electron-reloader": "^1.2.3"
+  }
+}

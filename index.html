@@ -1,0 +1,1704 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#0B3D91">
+<script>
+(function () {
+  try {
+    var t = localStorage.getItem('cofin-tema');
+    if (t === 'dark' || (!t && window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches)) {
+      document.documentElement.setAttribute('data-theme', 'dark');
+    }
+  } catch (e) {}
+  try {
+    if (localStorage.getItem('cofin-pin')) document.documentElement.classList.add('bloqueado');
+    if (localStorage.getItem('cofin-privacidade') === '1') {
+      document.documentElement.classList.add('privacidade', 'privacidade-ativa');
+    }
+  } catch (e) {}
+})();
+</script>
+<title>COFIN — Controle Financeiro</title>
+<link rel="icon" id="app-favicon" type="image/svg+xml" href="data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iNTEzIiBoZWlnaHQ9IjUxMyIgdmlld0JveD0iMCAwIDUxMyA1MTMiIGZpbGw9Im5vbmUiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+CjxwYXRoIGQ9Ik0xNjAuNDc0IDkzLjI4NjlMMTQzLjI1NyAxNDUuNzg1QzE0My4xNTIgMTQ2LjEwNCAxNDIuODkzIDE0Ni4zNSAxNDIuNTY5IDE0Ni40MzhMOTAuOTQ0NSAxNjAuNDNDOTAuMDIwNSAxNjAuNjgxIDg5Ljk0MjcgMTYxLjk2MSA5MC44Mjk1IDE2Mi4zMjJMMTQyLjY3MiAxODMuMzk5QzE0Mi45MzcgMTgzLjUwNyAxNDMuMTQzIDE4My43MjQgMTQzLjIzOCAxODMuOTk0TDE2MC40ODEgMjMzLjA2NEMxNjAuNzk0IDIzMy45NTYgMTYyLjA1NCAyMzMuOTU2IDE2Mi4zNjggMjMzLjA2NEwxNzkuNjIgMTgzLjk2NUMxNzkuNzA5IDE4My43MTEgMTc5Ljg5NiAxODMuNTA1IDE4MC4xMzkgMTgzLjM5MUwyMjUuMTAyIDE2Mi4yOThDMjI1LjkyOCAxNjEuOTExIDIyNS44NDYgMTYwLjcxIDIyNC45NzYgMTYwLjQzOEwxODAuMjUgMTQ2LjQ1MUMxNzkuOTQyIDE0Ni4zNTQgMTc5LjY5OSAxNDYuMTE1IDE3OS41OTkgMTQ1LjgwOEwxNjIuMzc0IDkzLjI4NjlDMTYyLjA3MyA5Mi4zNjkgMTYwLjc3NSA5Mi4zNjkgMTYwLjQ3NCA5My4yODY5WiIgZmlsbD0id2hpdGUiIHN0cm9rZT0id2hpdGUiLz4KPHBhdGggZD0iTTI5Mi45MTkgMTc4Ljg0MlYxNDcuMjk3QzI5Mi45MTkgMTQ2Ljc0NSAyOTMuMzY2IDE0Ni4yOTcgMjkzLjkxOSAxNDYuMjk3SDQwNS41OTZDNDA2LjE0OCAxNDYuMjk3IDQwNi41OTYgMTQ2Ljc0NSA0MDYuNTk2IDE0Ny4yOTdWMTc4Ljg0MkM0MDYuNTk2IDE3OS4zOTQgNDA2LjE0OCAxNzkuODQyIDQwNS41OTYgMTc5Ljg0MkgyOTMuOTE5QzI5My4zNjYgMTc5Ljg0MiAyOTIuOTE5IDE3OS4zOTQgMjkyLjkxOSAxNzguODQyWiIgZmlsbD0id2hpdGUiIHN0cm9rZT0id2hpdGUiLz4KPHBhdGggZD0iTTI5NC45MjQgNDAwLjIzM0MyOTMuODE5IDQwMC4yMzMgMjkyLjkyNCAzOTkuMzM3IDI5Mi45MjQgMzk4LjIzM1YyOTAuNDE3QzI5Mi45MjQgMjg5LjMxMyAyOTMuODE5IDI4OC40MTcgMjk0LjkyNCAyODguNDE3SDQwMC45MzRDNDAyLjAzOCAyODguNDE3IDQwMi45MzQgMjg5LjMxMyA0MDIuOTM0IDI5MC40MTdWMzk4LjIzM0M0MDIuOTM0IDM5OS4zMzcgNDAyLjAzOCA0MDAuMjMzIDQwMC45MzQgNDAwLjIzM0gyOTQuOTI0Wk0zMjAuNTA3IDMxOS42MjJDMzE5LjQwMyAzMTkuNjIyIDMxOC41MDcgMzIwLjUxNyAzMTguNTA3IDMyMS42MjJWMzMzLjIyNEMzMTguNTA3IDMzNC4zMjggMzE5LjQwMyAzMzUuMjI0IDMyMC41MDcgMzM1LjIyNEgzNzUuMzVDMzc2LjQ1NSAzMzUuMjI0IDM3Ny4zNSAzMzQuMzI4IDM3Ny4zNSAzMzMuMjI0VjMyMS42MjJDMzc3LjM1IDMyMC41MTcgMzc2LjQ1NSAzMTkuNjIyIDM3NS4zNSAzMTkuNjIySDMyMC41MDdaTTMyMC41MDcgMzUwLjgyNkMzMTkuNDAzIDM1MC44MjYgMzE4LjUwNyAzNTEuNzIxIDMxOC41MDcgMzUyLjgyNlYzNjQuNDI4QzMxOC41MDcgMzY1LjUzMyAzMTkuNDAzIDM2Ni40MjggMzIwLjUwNyAzNjYuNDI4SDM3NS4zNUMzNzYuNDU1IDM2Ni40MjggMzc3LjM1IDM2NS41MzMgMzc3LjM1IDM2NC40MjhWMzUyLjgyNkMzNzcuMzUgMzUxLjcyMSAzNzYuNDU1IDM1MC44MjYgMzc1LjM1IDM1MC44MjZIMzIwLjUwN1oiIGZpbGwtcnVsZT0iZXZlbm9kZCIgY2xpcC1ydWxlPSJldmVub2RkIiBmaWxsPSIjMUE2RkUwIi8+CjxwYXRoIGQ9Ik0xOTQuMDY2IDM5Ni4xMzhMMTYxLjQxOSAzNjIuOTU2TDEwNi43NTkgMzA3LjM5OUMxMDYuNTY4IDMwNy4yMDQgMTA2LjU2OCAzMDYuODkyIDEwNi43NTkgMzA2LjY5OEwxMjQuMzkzIDI4OC43NzVDMTI0LjU4OSAyODguNTc2IDEyNC45MSAyODguNTc2IDEyNS4xMDYgMjg4Ljc3NUwyMTIuNDEyIDM3Ny41MTRDMjEyLjYwNCAzNzcuNzA4IDIxMi42MDQgMzc4LjAyMSAyMTIuNDEyIDM3OC4yMTVMMTk0Ljc3OSAzOTYuMTM4QzE5NC41ODMgMzk2LjMzNyAxOTQuMjYyIDM5Ni4zMzcgMTk0LjA2NiAzOTYuMTM4WiIgZmlsbD0idXJsKCNwYWludDBfbGluZWFyXzM0MF8yNTIpIiBzdHJva2U9InVybCgjcGFpbnQxX2xpbmVhcl8zNDBfMjUyKSIvPgo8cGF0aCBkPSJNMTI0LjM4OCAzOTYuMTMzTDEwNi43NDcgMzc4LjIwM0MxMDYuNTU5IDM3OC4wMTEgMTA2LjU1NSAzNzcuNzA0IDEwNi43NCAzNzcuNTA5TDE5NC4wOTIgMjg1LjAyNEMxOTQuMjc1IDI4NC44MzEgMTk0LjU3NiAyODQuODE0IDE5NC43NzkgMjg0Ljk4NkwyMTYuMDA4IDMwMi45NjhDMjE2LjIzIDMwMy4xNTYgMjE2LjI0NiAzMDMuNDkzIDIxNi4wNDIgMzAzLjdMMTI1LjEwMSAzOTYuMTMzQzEyNC45MDUgMzk2LjMzMiAxMjQuNTg0IDM5Ni4zMzIgMTI0LjM4OCAzOTYuMTMzWiIgZmlsbD0id2hpdGUiIHN0cm9rZT0id2hpdGUiLz4KPHBhdGggZD0iTTAuNSA0NjMuOTE2VjUyLjgyMTJDMC41IDIyLjkyMzQgMTUuMTI4NyAwLjUgNDguMDQyOSAwLjVINDYxLjNDNDk0LjIxNSAwLjUgNTEyLjUgMTkuMTg2MSA1MTIuNSA1Mi44MjEyVjQ2My45MTZDNTEyLjUgNDk3LjU1MSA0OTQuMjE1IDUxMi41IDQ1Ny42NDMgNTEyLjVINTEuN0MyMi40NDMgNTEyLjUgMC41MDAxMTIgNDkzLjgxNCAwLjUgNDYzLjkxNlpNNDguMDQzIDQ0NS4yM1Y3MS41MDczQzQ4LjA0MjkgNTYuNTU4NCA1MS43MDAxIDUyLjgyMTIgNjYuMzI4NyA1Mi44MjEySDQ0Ni42NzJDNDYxLjMgNTIuODIxMiA0NjQuOTU3IDY0LjAzMjggNDY0Ljk1NyA3My44NjI0VjQ0NS4yM0M0NjQuOTU3IDQ1Ni40NDIgNDU3LjY0MyA0NjMuOTE2IDQ0Ni42NzIgNDYzLjkxNkg2Ni4zMjg3QzU1LjM1NzMgNDYzLjkxNiA0OC4wNDMgNDU2LjQ0MiA0OC4wNDMgNDQ1LjIzWiIgZmlsbC1ydWxlPSJldmVub2RkIiBjbGlwLXJ1bGU9ImV2ZW5vZGQiIGZpbGw9IndoaXRlIiBzdHJva2U9IndoaXRlIi8+CjxkZWZzPgo8bGluZWFyR3JhZGllbnQgaWQ9InBhaW50MF9saW5lYXJfMzQwXzI1MiIgeDE9IjExMy43NDgiIHkxPSIyOTUuODY3IiB4Mj0iMjA2LjkxNSIgeTI9IjM4Ny41MyIgZ3JhZGllbnRVbml0cz0idXNlclNwYWNlT25Vc2UiPgo8c3RvcCBzdG9wLWNvbG9yPSIjNjFCM0ZGIi8+CjxzdG9wIG9mZnNldD0iMSIgc3RvcC1jb2xvcj0iIzFBNkZFMCIvPgo8L2xpbmVhckdyYWRpZW50Pgo8bGluZWFyR3JhZGllbnQgaWQ9InBhaW50MV9saW5lYXJfMzQwXzI1MiIgeDE9IjExMy43NDgiIHkxPSIyOTUuODY3IiB4Mj0iMjA2LjkxNSIgeTI9IjM4Ny41MyIgZ3JhZGllbnRVbml0cz0idXNlclNwYWNlT25Vc2UiPgo8c3RvcCBzdG9wLWNvbG9yPSIjNjFCM0ZGIi8+CjxzdG9wIG9mZnNldD0iMSIgc3RvcC1jb2xvcj0iIzFBNkZFMCIvPgo8L2xpbmVhckdyYWRpZW50Pgo8L2RlZnM+Cjwvc3ZnPgo=">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:ital,wght@0,300;0,400;0,500;0,600;0,700;0,800;1,400&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3.19.0/dist/tabler-icons.min.css">
+<!-- Truque para o Electron carregar a biblioteca corretamente -->
+<script>if (typeof module === 'object') {window.module = module; module = undefined;}</script>
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
+<script>if (window.module) module = window.module;</script>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<div class="sidebar" id="sidebar">
+  <div class="sidebar-brand">
+    <div class="brand-mark">
+      <div class="brand-icon"><img id="brand-logo-img" src="data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iNTEzIiBoZWlnaHQ9IjUxMyIgdmlld0JveD0iMCAwIDUxMyA1MTMiIGZpbGw9Im5vbmUiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+CjxwYXRoIGQ9Ik0xNjAuNDc0IDkzLjI4NjlMMTQzLjI1NyAxNDUuNzg1QzE0My4xNTIgMTQ2LjEwNCAxNDIuODkzIDE0Ni4zNSAxNDIuNTY5IDE0Ni40MzhMOTAuOTQ0NSAxNjAuNDNDOTAuMDIwNSAxNjAuNjgxIDg5Ljk0MjcgMTYxLjk2MSA5MC44Mjk1IDE2Mi4zMjJMMTQyLjY3MiAxODMuMzk5QzE0Mi45MzcgMTgzLjUwNyAxNDMuMTQzIDE4My43MjQgMTQzLjIzOCAxODMuOTk0TDE2MC40ODEgMjMzLjA2NEMxNjAuNzk0IDIzMy45NTYgMTYyLjA1NCAyMzMuOTU2IDE2Mi4zNjggMjMzLjA2NEwxNzkuNjIgMTgzLjk2NUMxNzkuNzA5IDE4My43MTEgMTc5Ljg5NiAxODMuNTA1IDE4MC4xMzkgMTgzLjM5MUwyMjUuMTAyIDE2Mi4yOThDMjI1LjkyOCAxNjEuOTExIDIyNS44NDYgMTYwLjcxIDIyNC45NzYgMTYwLjQzOEwxODAuMjUgMTQ2LjQ1MUMxNzkuOTQyIDE0Ni4zNTQgMTc5LjY5OSAxNDYuMTE1IDE3OS41OTkgMTQ1LjgwOEwxNjIuMzc0IDkzLjI4NjlDMTYyLjA3MyA5Mi4zNjkgMTYwLjc3NSA5Mi4zNjkgMTYwLjQ3NCA5My4yODY5WiIgZmlsbD0id2hpdGUiIHN0cm9rZT0id2hpdGUiLz4KPHBhdGggZD0iTTI5Mi45MTkgMTc4Ljg0MlYxNDcuMjk3QzI5Mi45MTkgMTQ2Ljc0NSAyOTMuMzY2IDE0Ni4yOTcgMjkzLjkxOSAxNDYuMjk3SDQwNS41OTZDNDA2LjE0OCAxNDYuMjk3IDQwNi41OTYgMTQ2Ljc0NSA0MDYuNTk2IDE0Ny4yOTdWMTc4Ljg0MkM0MDYuNTk2IDE3OS4zOTQgNDA2LjE0OCAxNzkuODQyIDQwNS41OTYgMTc5Ljg0MkgyOTMuOTE5QzI5My4zNjYgMTc5Ljg0MiAyOTIuOTE5IDE3OS4zOTQgMjkyLjkxOSAxNzguODQyWiIgZmlsbD0id2hpdGUiIHN0cm9rZT0id2hpdGUiLz4KPHBhdGggZD0iTTI5NC45MjQgNDAwLjIzM0MyOTMuODE5IDQwMC4yMzMgMjkyLjkyNCAzOTkuMzM3IDI5Mi45MjQgMzk4LjIzM1YyOTAuNDE3QzI5Mi45MjQgMjg5LjMxMyAyOTMuODE5IDI4OC40MTcgMjk0LjkyNCAyODguNDE3SDQwMC45MzRDNDAyLjAzOCAyODguNDE3IDQwMi45MzQgMjg5LjMxMyA0MDIuOTM0IDI5MC40MTdWMzk4LjIzM0M0MDIuOTM0IDM5OS4zMzcgNDAyLjAzOCA0MDAuMjMzIDQwMC45MzQgNDAwLjIzM0gyOTQuOTI0Wk0zMjAuNTA3IDMxOS42MjJDMzE5LjQwMyAzMTkuNjIyIDMxOC41MDcgMzIwLjUxNyAzMTguNTA3IDMyMS42MjJWMzMzLjIyNEMzMTguNTA3IDMzNC4zMjggMzE5LjQwMyAzMzUuMjI0IDMyMC41MDcgMzM1LjIyNEgzNzUuMzVDMzc2LjQ1NSAzMzUuMjI0IDM3Ny4zNSAzMzQuMzI4IDM3Ny4zNSAzMzMuMjI0VjMyMS42MjJDMzc3LjM1IDMyMC41MTcgMzc2LjQ1NSAzMTkuNjIyIDM3NS4zNSAzMTkuNjIySDMyMC41MDdaTTMyMC41MDcgMzUwLjgyNkMzMTkuNDAzIDM1MC44MjYgMzE4LjUwNyAzNTEuNzIxIDMxOC41MDcgMzUyLjgyNlYzNjQuNDI4QzMxOC41MDcgMzY1LjUzMyAzMTkuNDAzIDM2Ni40MjggMzIwLjUwNyAzNjYuNDI4SDM3NS4zNUMzNzYuNDU1IDM2Ni40MjggMzc3LjM1IDM2NS41MzMgMzc3LjM1IDM2NC40MjhWMzUyLjgyNkMzNzcuMzUgMzUxLjcyMSAzNzYuNDU1IDM1MC44MjYgMzc1LjM1IDM1MC44MjZIMzIwLjUwN1oiIGZpbGwtcnVsZT0iZXZlbm9kZCIgY2xpcC1ydWxlPSJldmVub2RkIiBmaWxsPSIjMUE2RkUwIi8+CjxwYXRoIGQ9Ik0xOTQuMDY2IDM5Ni4xMzhMMTYxLjQxOSAzNjIuOTU2TDEwNi43NTkgMzA3LjM5OUMxMDYuNTY4IDMwNy4yMDQgMTA2LjU2OCAzMDYuODkyIDEwNi43NTkgMzA2LjY5OEwxMjQuMzkzIDI4OC43NzVDMTI0LjU4OSAyODguNTc2IDEyNC45MSAyODguNTc2IDEyNS4xMDYgMjg4Ljc3NUwyMTIuNDEyIDM3Ny41MTRDMjEyLjYwNCAzNzcuNzA4IDIxMi42MDQgMzc4LjAyMSAyMTIuNDEyIDM3OC4yMTVMMTk0Ljc3OSAzOTYuMTM4QzE5NC41ODMgMzk2LjMzNyAxOTQuMjYyIDM5Ni4zMzcgMTk0LjA2NiAzOTYuMTM4WiIgZmlsbD0idXJsKCNwYWludDBfbGluZWFyXzM0MF8yNTIpIiBzdHJva2U9InVybCgjcGFpbnQxX2xpbmVhcl8zNDBfMjUyKSIvPgo8cGF0aCBkPSJNMTI0LjM4OCAzOTYuMTMzTDEwNi43NDcgMzc4LjIwM0MxMDYuNTU5IDM3OC4wMTEgMTA2LjU1NSAzNzcuNzA0IDEwNi43NCAzNzcuNTA5TDE5NC4wOTIgMjg1LjAyNEMxOTQuMjc1IDI4NC44MzEgMTk0LjU3NiAyODQuODE0IDE5NC43NzkgMjg0Ljk4NkwyMTYuMDA4IDMwMi45NjhDMjE2LjIzIDMwMy4xNTYgMjE2LjI0NiAzMDMuNDkzIDIxNi4wNDIgMzAzLjdMMTI1LjEwMSAzOTYuMTMzQzEyNC45MDUgMzk2LjMzMiAxMjQuNTg0IDM5Ni4zMzIgMTI0LjM4OCAzOTYuMTMzWiIgZmlsbD0id2hpdGUiIHN0cm9rZT0id2hpdGUiLz4KPHBhdGggZD0iTTAuNSA0NjMuOTE2VjUyLjgyMTJDMC41IDIyLjkyMzQgMTUuMTI4NyAwLjUgNDguMDQyOSAwLjVINDYxLjNDNDk0LjIxNSAwLjUgNTEyLjUgMTkuMTg2MSA1MTIuNSA1Mi44MjEyVjQ2My45MTZDNTEyLjUgNDk3LjU1MSA0OTQuMjE1IDUxMi41IDQ1Ny42NDMgNTEyLjVINTEuN0MyMi40NDMgNTEyLjUgMC41MDAxMTIgNDkzLjgxNCAwLjUgNDYzLjkxNlpNNDguMDQzIDQ0NS4yM1Y3MS41MDczQzQ4LjA0MjkgNTYuNTU4NCA1MS43MDAxIDUyLjgyMTIgNjYuMzI4NyA1Mi44MjEySDQ0Ni42NzJDNDYxLjMgNTIuODIxMiA0NjQuOTU3IDY0LjAzMjggNDY0Ljk1NyA3My44NjI0VjQ0NS4yM0M0NjQuOTU3IDQ1Ni40NDIgNDU3LjY0MyA0NjMuOTE2IDQ0Ni42NzIgNDYzLjkxNkg2Ni4zMjg3QzU1LjM1NzMgNDYzLjkxNiA0OC4wNDMgNDU2LjQ0MiA0OC4wNDMgNDQ1LjIzWiIgZmlsbC1ydWxlPSJldmVub2RkIiBjbGlwLXJ1bGU9ImV2ZW5vZGQiIGZpbGw9IndoaXRlIiBzdHJva2U9IndoaXRlIi8+CjxkZWZzPgo8bGluZWFyR3JhZGllbnQgaWQ9InBhaW50MF9saW5lYXJfMzQwXzI1MiIgeDE9IjExMy43NDgiIHkxPSIyOTUuODY3IiB4Mj0iMjA2LjkxNSIgeTI9IjM4Ny41MyIgZ3JhZGllbnRVbml0cz0idXNlclNwYWNlT25Vc2UiPgo8c3RvcCBzdG9wLWNvbG9yPSIjNjFCM0ZGIi8+CjxzdG9wIG9mZnNldD0iMSIgc3RvcC1jb2xvcj0iIzFBNkZFMCIvPgo8L2xpbmVhckdyYWRpZW50Pgo8bGluZWFyR3JhZGllbnQgaWQ9InBhaW50MV9saW5lYXJfMzQwXzI1MiIgeDE9IjExMy43NDgiIHkxPSIyOTUuODY3IiB4Mj0iMjA2LjkxNSIgeTI9IjM4Ny41MyIgZ3JhZGllbnRVbml0cz0idXNlclNwYWNlT25Vc2UiPgo8c3RvcCBzdG9wLWNvbG9yPSIjNjFCM0ZGIi8+CjxzdG9wIG9mZnNldD0iMSIgc3RvcC1jb2xvcj0iIzFBNkZFMCIvPgo8L2xpbmVhckdyYWRpZW50Pgo8L2RlZnM+Cjwvc3ZnPgo=" alt="COFIN"></div>
+      <div class="brand-text">
+        <div class="brand-name">COFIN</div>
+        <div class="brand-sub">Controle Financeiro</div>
+      </div>
+    </div>
+    <button class="sidebar-collapse-btn" id="btn-sidebar-collapse" onclick="toggleSidebarCollapse()" title="Recolher/expandir menu"><i class="ti ti-chevron-left" id="icone-sidebar-collapse"></i></button>
+  </div>
+  <div class="sidebar-cta">
+    <button class="btn-sidebar-fab" onclick="abrirModalLancamento()" title="Novo Lançamento">
+      <i class="ti ti-plus"></i>
+      <span>Novo Lançamento</span>
+    </button>
+  </div>
+  <div class="nav">
+    <button type="button" class="nav-section" onclick="toggleNavSection('principal', this)">
+      <span>Principal</span>
+      <i class="ti ti-chevron-down"></i>
+    </button>
+    <div class="nav-group" id="nav-group-principal">
+      <div class="nav-item active" data-page="dashboard" onclick="nav('dashboard')" title="Dashboard"><i class="ti ti-layout-dashboard"></i> <span>Dashboard</span></div>
+      <div class="nav-item" data-page="lancamentos" onclick="nav('lancamentos')" title="Lançamentos"><i class="ti ti-list-details"></i> <span>Lançamentos</span></div>
+    </div>
+
+    <button type="button" class="nav-section" onclick="toggleNavSection('compromissos', this)">
+      <span>Compromissos</span>
+      <i class="ti ti-chevron-down"></i>
+    </button>
+    <div class="nav-group" id="nav-group-compromissos">
+      <div class="nav-item" data-page="cartoes" onclick="nav('cartoes')" title="Cartões &amp; Faturas"><i class="ti ti-credit-card"></i> <span>Cartões &amp; Faturas</span></div>
+      <div class="nav-item" data-page="recorrentes" onclick="nav('recorrentes')" title="Assinaturas &amp; Recorrentes"><i class="ti ti-repeat"></i> <span>Assinaturas &amp; Recorrentes</span></div>
+    </div>
+
+    <button type="button" class="nav-section" onclick="toggleNavSection('planejamento', this)">
+      <span>Planejamento &amp; Análise</span>
+      <i class="ti ti-chevron-down"></i>
+    </button>
+    <div class="nav-group" id="nav-group-planejamento">
+      <div class="nav-item" data-page="metas" onclick="nav('metas')" title="Metas &amp; Cofres"><i class="ti ti-pig-money"></i> <span>Metas &amp; Cofres</span></div>
+      <div class="nav-item" data-page="dividas" onclick="nav('dividas')" title="Dívidas &amp; Terceiros"><i class="ti ti-users"></i> <span>Dívidas &amp; Terceiros</span></div>
+      <div class="nav-item" data-page="relatorios" onclick="nav('relatorios')" title="Relatórios"><i class="ti ti-chart-bar"></i> <span>Relatórios</span></div>
+      <div class="nav-item" onclick="abrirModalGarantias()" title="Garantias Ativas"><i class="ti ti-shield-check"></i> <span>Garantias Ativas</span></div>
+    </div>
+
+    <button type="button" class="nav-section" onclick="toggleNavSection('configuracoes', this)">
+      <span>Configurações</span>
+      <i class="ti ti-chevron-down"></i>
+    </button>
+    <div class="nav-group" id="nav-group-configuracoes">
+      <div class="nav-item" data-page="config" onclick="nav('config')" title="Categorias &amp; Contas"><i class="ti ti-settings"></i> <span>Categorias &amp; Contas</span></div>
+      <div class="nav-item" data-page="sync" onclick="nav('sync')" title="Sincronizar OneDrive"><i class="ti ti-cloud-download"></i> <span>Sincronizar OneDrive</span></div>
+    </div>
+  </div>
+  <div class="sidebar-footer">
+    <div class="sidebar-status" id="sidebar-status" title="Status de sincronização"><i class="ti ti-loader"></i> <span>Carregando...</span></div>
+    <div class="sidebar-versao" id="app-versao"></div>
+  </div>
+</div>
+
+<!-- BARRA DE NAVEGAÇÃO INFERIOR (MOBILE) -->
+<nav class="bottom-nav" id="bottom-nav">
+  <button type="button" class="bottom-nav-item active" data-page="dashboard" onclick="nav('dashboard')">
+    <i class="ti ti-layout-dashboard"></i>
+    <span>Dashboard</span>
+  </button>
+  <button type="button" class="bottom-nav-item" data-page="lancamentos" onclick="nav('lancamentos')">
+    <i class="ti ti-list-details"></i>
+    <span>Lançamentos</span>
+  </button>
+  <button type="button" class="bottom-nav-item" data-page="cartoes" onclick="nav('cartoes')">
+    <i class="ti ti-credit-card"></i>
+    <span>Cartões</span>
+  </button>
+  <button type="button" class="bottom-nav-item" id="btn-bottom-mais" onclick="toggleSidebar()">
+    <i class="ti ti-dots-circle-horizontal"></i>
+    <span>Mais</span>
+  </button>
+</nav>
+
+<!-- PAINEL DESLIZANTE "MAIS" (MOBILE) -->
+<div class="mobile-more-sheet" id="mobile-more-sheet">
+  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:.35rem">
+    <div style="font-size:12px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.06em">Mais opções</div>
+    <button class="icon-btn" onclick="fecharSidebarMobile()"><i class="ti ti-x"></i></button>
+  </div>
+  <div class="mobile-more-grid">
+    <button type="button" class="mobile-more-item" data-page="metas" onclick="nav('metas')"><i class="ti ti-pig-money"></i> <span>Metas &amp; Cofres</span></button>
+    <button type="button" class="mobile-more-item" onclick="fecharSidebarMobile(); abrirModalGarantias()"><i class="ti ti-shield-check"></i> <span>Garantias Ativas</span></button>
+    <button type="button" class="mobile-more-item" data-page="recorrentes" onclick="nav('recorrentes')"><i class="ti ti-repeat"></i> <span>Recorrentes</span></button>
+    <button type="button" class="mobile-more-item" data-page="dividas" onclick="nav('dividas')"><i class="ti ti-users"></i> <span>Dívidas</span></button>
+    <button type="button" class="mobile-more-item" data-page="relatorios" onclick="nav('relatorios')"><i class="ti ti-chart-bar"></i> <span>Relatórios</span></button>
+    <button type="button" class="mobile-more-item" data-page="sync" onclick="nav('sync')"><i class="ti ti-cloud-download"></i> <span>OneDrive</span></button>
+    <button type="button" class="mobile-more-item" data-page="config" onclick="nav('config')"><i class="ti ti-settings"></i> <span>Categorias &amp; Contas</span></button>
+  </div>
+</div>
+
+<div class="main">
+  <div class="ambient-glow" id="ambient-glow" aria-hidden="true"></div>
+  <div class="travel-banner" id="travel-banner">
+    <div class="travel-banner-left">
+      <span id="travel-banner-text">✈️ Modo Viagem Ativo: —</span>
+      <span class="travel-banner-tag" id="travel-banner-hashtag">#viagem</span>
+      <span style="font-size:11.5px;opacity:.9;font-weight:400">· Novos lançamentos recebem a tag automaticamente e alertas de orçamento ficam suspensos</span>
+    </div>
+    <button class="btn btn-sm" style="background:rgba(255,255,255,.16);color:#fff;border-color:rgba(255,255,255,.35);flex-shrink:0" onclick="encerrarModoViagem()"><i class="ti ti-plane-off"></i> Encerrar Viagem</button>
+  </div>
+  <div class="topbar">
+    <div style="display:flex;align-items:center;gap:10px;min-width:0">
+      <div class="topbar-title" id="topbar-title">Dashboard</div>
+    </div>
+    <div class="topbar-actions">
+      <button class="btn btn-sm" id="btn-busca" onclick="abrirBusca()" title="Buscar (Ctrl+K)"><i class="ti ti-search"></i></button>
+      <button class="btn btn-sm hide-mobile-label" id="btn-privacidade" onclick="alternarModoStealth()" title="Modo Stealth / Ocultar Valores (Alt+P)"><i class="ti ti-eye" id="icone-privacidade"></i><span class="btn-label" id="label-privacidade"> Stealth Mode</span></button>
+      <button class="btn btn-sm" id="btn-bloquear" onclick="bloquearApp()" title="Bloquear agora" style="display:none"><i class="ti ti-lock"></i></button>
+      <button class="btn btn-sm" id="btn-tema" onclick="alternarTema()" title="Alternar tema claro/escuro"><i class="ti ti-moon" id="icone-tema"></i></button>
+      <button class="btn btn-sm hide-mobile-label" onclick="abrirModalTransferencia()" title="Nova transferência"><i class="ti ti-transfer"></i><span class="btn-label"> Transferir</span></button>
+      <button class="btn btn-primary btn-sm" onclick="abrirModalLancamento()"><i class="ti ti-plus"></i><span class="btn-label"> Novo lançamento</span></button>
+      <div class="topbar-window-controls" id="window-controls">
+        <button class="win-btn win-btn-minimize" onclick="windowControl('minimize')" title="Minimizar" aria-label="Minimizar">
+          <svg width="10" height="10" viewBox="0 0 10 10"><path d="M0 5.5H10" stroke="currentColor" stroke-width="1.2"/></svg>
+        </button>
+        <button class="win-btn win-btn-maximize" id="win-btn-max" onclick="windowControl('maximize')" title="Maximizar" aria-label="Maximizar">
+          <svg class="icon-maximize" width="10" height="10" viewBox="0 0 10 10"><rect x="1" y="1" width="8" height="8" rx="1.5" stroke="currentColor" stroke-width="1.2" fill="none"/></svg>
+          <svg class="icon-restore" style="display:none" width="10" height="10" viewBox="0 0 10 10"><rect x="2.5" y="0.5" width="7" height="7" rx="1" stroke="currentColor" stroke-width="1" fill="none"/><path d="M0.5 2.5V9.5H7.5" stroke="currentColor" stroke-width="1" fill="none"/></svg>
+        </button>
+        <button class="win-btn win-btn-close" onclick="windowControl('close')" title="Fechar" aria-label="Fechar">
+          <svg width="10" height="10" viewBox="0 0 10 10"><path d="M1.5 1.5L8.5 8.5M8.5 1.5L1.5 8.5" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg>
+        </button>
+      </div>
+    </div>
+  </div>
+  <div class="sidebar-backdrop" id="sidebar-backdrop" onclick="toggleSidebar()"></div>
+
+  <div class="content">
+
+    <!-- DASHBOARD -->
+    <div id="page-dashboard" class="page active">
+      <div class="dash-toolbar">
+        <div class="help-text" style="margin:0"><i class="ti ti-grip-vertical"></i> Arraste os blocos ou KPIs para personalizar a ordem do seu painel</div>
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+          <button class="btn btn-sm" onclick="abrirWizardFechamentoMensal(true)" title="Assistente de Fechamento Mensal Guiado"><i class="ti ti-calendar-check" style="color:var(--good)"></i> Fechamento do Mês</button>
+          <button class="btn btn-sm" onclick="abrirModalSimulador()" title="Simulador de Compra (Impacto no Orçamento)"><i class="ti ti-calculator" style="color:var(--accent)"></i> Simulador de Compra</button>
+          <button class="btn btn-sm" id="btn-sim-parcelado" onclick="abrirModalSimuladorParcelado()" title="Simulador: Comprar À Vista vs. Parcelado"><i class="ti ti-percentage" style="color:var(--good)"></i> À Vista vs Parcelado</button>
+        </div>
+      </div>
+      <div id="dash-modular-container">
+        <div class="grid-kpis dash-draggable bento-item" id="dash-kpis" draggable="true" data-widget-id="kpis-resumo"></div>
+        <div id="dash-insights" class="insights-grid dash-draggable bento-item" draggable="true" data-widget-id="smart-insights" style="display:none"></div>
+        <div class="card dash-draggable bento-item" id="dash-chart-card" draggable="true" data-widget-id="grafico-patrimonio">
+          <div class="card-header"><div class="card-title"><i class="ti ti-grip-vertical dash-drag-handle"></i>Receitas x despesas — últimos 6 meses</div></div>
+          <div style="position:relative; height:240px; width:100%">
+            <canvas id="dash-chart"></canvas>
+          </div>
+        </div>
+        <div class="card dash-draggable bento-item" id="dash-saldo-contas-card" draggable="true" data-widget-id="cartoes-banco">
+          <div class="card-header">
+            <div class="card-title"><i class="ti ti-grip-vertical dash-drag-handle"></i>Saldo por conta &amp; Cartões</div>
+            <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
+              <button class="btn btn-sm" onclick="abrirModalConciliacaoBancaria()" title="Conciliar saldo real do banco com os lançamentos do app"><i class="ti ti-scale"></i> Conciliar Saldo</button>
+              <button class="btn btn-sm" onclick="abrirModalGerirCartoes()" title="Gerenciar limites e faturas dos cartões"><i class="ti ti-credit-card"></i> Cartões</button>
+              <div class="metric-sub" id="dash-contas-resumo-topo"></div>
+            </div>
+          </div>
+          <div id="dash-saldo-contas"></div>
+        </div>
+        <div class="card dash-draggable bento-item" id="dash-reembolsos-card" draggable="true" data-widget-id="reembolsos-pendentes">
+          <div class="card-header">
+            <div class="card-title"><i class="ti ti-grip-vertical dash-drag-handle"></i><i class="ti ti-receipt-refund" style="color:#F59E0B;margin-right:6px"></i>A Recuperar (Dinheiro na Rua / Reembolsos)</div>
+            <div class="metric-sub" id="dash-reembolsos-total"></div>
+          </div>
+          <div id="dash-reembolsos-lista"></div>
+        </div>
+        <div class="card dash-draggable bento-item" id="dash-top3-categorias-card" draggable="true" data-widget-id="top-categorias">
+          <div class="card-header">
+            <div class="card-title"><i class="ti ti-grip-vertical dash-drag-handle"></i><i class="ti ti-flame" style="color:#EF4444;margin-right:6px"></i>Top 3 Gastos do Mês</div>
+            <div class="metric-sub" id="dash-top3-total"></div>
+          </div>
+          <div id="dash-top3-content"></div>
+        </div>
+        <div class="card dash-draggable bento-item animated-border" id="dash-antimetas-card" draggable="true" data-widget-id="anti-metas">
+          <div class="card-header">
+            <div class="card-title"><i class="ti ti-grip-vertical dash-drag-handle"></i><i class="ti ti-flame-off" style="color:#F97316;margin-right:6px"></i>Anti-Metas (Redução de Hábitos)</div>
+            <button class="btn btn-sm" onclick="abrirModalAntiMetas()" title="Configurar Anti-Meta"><i class="ti ti-settings"></i></button>
+          </div>
+          <div id="dash-antimetas-content"></div>
+        </div>
+        <div class="card dash-draggable bento-item" id="dash-pendentes-card" draggable="true" data-widget-id="lancamentos-pendentes" style="display:none">
+          <div class="card-header">
+            <div class="card-title"><i class="ti ti-grip-vertical dash-drag-handle"></i>Parcelas e lançamentos pendentes</div>
+            <div class="metric-sub" id="dash-pendentes-total"></div>
+          </div>
+          <div id="dash-pendentes-list"></div>
+        </div>
+        <div class="card dash-draggable bento-item" id="dash-ultimos-card" draggable="true" data-widget-id="ultimos-lancamentos">
+          <div class="card-header">
+            <div class="card-title"><i class="ti ti-grip-vertical dash-drag-handle"></i>Últimos lançamentos</div>
+            <button class="btn btn-sm" onclick="nav('lancamentos')">Ver todos</button>
+          </div>
+          <div class="table-wrap"><table><thead><tr><th>Data</th><th>Descrição</th><th>Categoria</th><th>Conta</th><th>Status</th><th style="text-align:right">Valor</th></tr></thead><tbody id="dash-ultimos"></tbody></table></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- LANÇAMENTOS -->
+    <div id="page-lancamentos" class="page">
+      <div class="card" style="padding:.875rem 1.25rem">
+        <div style="display:flex;gap:8px;align-items:center">
+          <i class="ti ti-bolt" style="color:var(--accent);font-size:18px;flex-shrink:0"></i>
+          <input type="text" id="rapido-texto" placeholder='Lançamento rápido — ex: "Uber 25,90 ontem no Nubank", "Ifood 50 hoje Itaú", "recebi 300 freela na Carteira"' oninput="atualizarPreviewSmartAdd()" onkeydown="seEnviar(event, criarLancamentoRapido)">
+          <button class="btn btn-primary btn-sm" onclick="criarLancamentoRapido()"><i class="ti ti-corner-down-left"></i> Lançar</button>
+        </div>
+        <div id="rapido-preview" class="smart-add-preview" aria-live="polite"></div>
+        <div class="help-text" id="rapido-dica">Entende "hoje", "ontem", "amanhã", "anteontem" ou uma data (dd/mm), identifica a conta ou cartão onde entrou/saiu o valor (ex: "no Nubank", "pelo Itaú", "no cartão") e mapeia a categoria automaticamente. Pressione Enter para salvar.</div>
+      </div>
+      <div class="filters">
+        <select id="f-mes" onchange="renderLancamentos()"></select>
+        <input type="hidden" id="f-tipo" value="">
+        <div class="chip-group" role="group" aria-label="Filtrar por tipo">
+          <button type="button" class="chip-btn active" data-chip-target="f-tipo" data-chip-val="" onclick="selecionarChipFiltro('f-tipo','',this,renderLancamentos)">Todos</button>
+          <button type="button" class="chip-btn" data-chip-target="f-tipo" data-chip-val="receita" onclick="selecionarChipFiltro('f-tipo','receita',this,renderLancamentos)">Receitas</button>
+          <button type="button" class="chip-btn" data-chip-target="f-tipo" data-chip-val="despesa" onclick="selecionarChipFiltro('f-tipo','despesa',this,renderLancamentos)">Despesas</button>
+        </div>
+        <input type="hidden" id="f-status" value="">
+        <div class="chip-group" role="group" aria-label="Filtrar por status">
+          <button type="button" class="chip-btn active" data-chip-target="f-status" data-chip-val="" onclick="selecionarChipFiltro('f-status','',this,renderLancamentos)">Todos status</button>
+          <button type="button" class="chip-btn" data-chip-target="f-status" data-chip-val="pago" onclick="selecionarChipFiltro('f-status','pago',this,renderLancamentos)">Pagos</button>
+          <button type="button" class="chip-btn" data-chip-target="f-status" data-chip-val="pendente" onclick="selecionarChipFiltro('f-status','pendente',this,renderLancamentos)">Pendentes</button>
+        </div>
+        <select id="f-conta" onchange="renderLancamentos()"></select>
+        <select id="f-categoria" onchange="renderLancamentos()"></select>
+        <select id="f-tag" onchange="renderLancamentos()"></select>
+        <input type="search" id="f-busca" placeholder="Buscar descrição..." oninput="renderLancamentos()">
+        <button class="btn btn-sm" onclick="abrirLixeira()" title="Lançamentos excluídos (recuperáveis)"><i class="ti ti-trash"></i> Lixeira <span id="lixeira-contagem"></span></button>
+        <button class="btn btn-sm" id="btn-toggle-view" onclick="alternarEstiloTabela()" title="Alternar visualização Lista/Cards"><i class="ti ti-layout-cards"></i> Estilo Cards</button>
+        <button class="btn btn-sm" id="btn-toggle-calendario" onclick="alternarModoCalendario()" title="Alternar entre Lista/Cards e Calendário"><i class="ti ti-calendar-event"></i> Calendário</button>
+        <button class="btn btn-sm" id="btn-modo-conciliacao" onclick="alternarModoConciliacao()" title="Selecionar vários lançamentos para apagar ou conciliar em lote"><i class="ti ti-checks"></i> Modo Seleção</button>
+        <button class="btn btn-sm" onclick="document.getElementById('extrato-file-input').click()" title="Importar extrato bancário (.csv ou .ofx)"><i class="ti ti-file-import"></i> Importar Extrato</button>
+        <input type="file" id="extrato-file-input" accept=".csv,.ofx" style="display:none" onchange="lerArquivoExtrato(this.files[0]); this.value='';">
+      </div>
+      <div id="tag-resumo" class="banner" style="display:none;background:var(--accent-bg);border-color:var(--accent);color:var(--accent-text)"></div>
+      <div class="card" id="lanc-card-container" style="padding:0">
+        <div class="table-wrap" id="lanc-table-wrap">
+          <table>
+            <thead id="lanc-thead"><tr><th>Data</th><th>Descrição</th><th>Categoria</th><th>Conta</th><th>Status</th><th style="text-align:right">Valor</th><th style="width:70px"></th></tr></thead>
+            <tbody id="lanc-tbody"></tbody>
+          </table>
+        </div>
+        <div id="lanc-empty" class="empty" style="display:none">
+          <div class="empty-illustration-wrap">
+            <div class="empty-glow-orb"></div>
+            <div class="empty-icon-badge">
+              <i class="ti ti-receipt-off"></i>
+            </div>
+          </div>
+          <p>Nenhum lançamento encontrado</p>
+          <span class="empty-subtext">Registre suas despesas e receitas para acompanhar seu fluxo financeiro.</span>
+          <button class="btn btn-primary btn-sm empty-cta" onclick="abrirModalLancamento()"><i class="ti ti-plus"></i> Criar lançamento</button>
+        </div>
+      </div>
+      <div class="card" id="view-calendario" style="display:none"></div>
+      <div class="conciliacao-bar" id="conciliacao-bar">
+        <span id="conciliacao-contador" style="font-size:12.5px;font-weight:700">0 selecionados</span>
+        <button class="btn btn-danger btn-sm" id="btn-concil-apagar" onclick="excluirSelecionadosEmLote()" title="Apagar todos os lançamentos selecionados"><i class="ti ti-trash"></i> Apagar Selecionados</button>
+        <button class="btn btn-primary btn-sm" id="btn-concil-pago" onclick="marcarSelecionadosComoPagos()" title="Marcar lançamentos selecionados como pagos"><i class="ti ti-checks"></i> Marcar como Pagos</button>
+        <button class="btn btn-sm" style="background:rgba(255,255,255,.12);color:var(--text);border-color:var(--border2)" onclick="alternarModoConciliacao()">Cancelar</button>
+      </div>
+    </div>
+
+    <!-- CARTÕES & FATURAS -->
+    <div id="page-cartoes" class="page">
+      <div id="cartoes-content"></div>
+      <div id="cartoes-empty" class="empty" style="display:none">
+        <div class="empty-illustration-wrap">
+          <div class="empty-glow-orb"></div>
+          <div class="empty-icon-badge">
+            <i class="ti ti-credit-card-off"></i>
+          </div>
+        </div>
+        <p>Nenhum cartão cadastrado</p>
+        <span class="empty-subtext">Acompanhe faturas, limites e datas de fechamento em um só lugar.</span>
+        <button class="btn btn-primary btn-sm empty-cta" onclick="atalhoCriarCartao()"><i class="ti ti-plus"></i> Cadastrar cartão de crédito</button>
+      </div>
+    </div>
+
+    <!-- ASSINATURAS & RECORRENTES -->
+    <div id="page-recorrentes" class="page">
+      <div id="rec-radar-alerta" class="radar-assinaturas" style="display:none"></div>
+      <div class="grid4" id="rec-kpis"></div>
+      <div class="card">
+        <div class="card-title" id="rec-form-title" style="margin-bottom:.75rem">Nova assinatura / recorrência</div>
+        <input type="hidden" id="rec-id">
+        <div class="form-row">
+          <div class="fg"><label>Nome</label><input type="text" id="rec-nome" placeholder="Ex: Netflix, Academia, Salário fixo..." onkeydown="seEnviar(event, salvarRecorrente)"></div>
+          <div class="fg"><label>Tipo</label>
+            <select id="rec-tipo" onchange="popularCategoriaRecorrenteSelect()">
+              <option value="despesa">Despesa</option>
+              <option value="receita">Receita</option>
+            </select>
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="fg"><label>Categoria</label><select id="rec-categoria"></select></div>
+          <div class="fg"><label>Conta</label><select id="rec-conta"></select></div>
+        </div>
+        <div class="form-row tri">
+          <div class="fg"><label>Valor mensal</label><input type="text" id="rec-valor" placeholder="R$ 0,00" oninput="maskMoeda(this)" onkeydown="seEnviar(event, salvarRecorrente)"></div>
+          <div class="fg"><label>Dia da cobrança</label>
+            <select id="rec-dia"></select>
+          </div>
+          <div class="fg"><label>Começa em</label><input type="date" id="rec-inicio" onkeydown="seEnviar(event, salvarRecorrente)"></div>
+        </div>
+        <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:.5rem">
+          <button class="btn" id="rec-cancelar-btn" onclick="cancelarEdicaoRecorrente()" style="display:none">Cancelar edição</button>
+          <button class="btn btn-primary" id="rec-submit-btn" onclick="salvarRecorrente()"><i class="ti ti-plus"></i> Adicionar</button>
+        </div>
+      </div>
+      <div class="card" style="padding:0">
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Nome</th><th>Categoria</th><th>Conta</th><th>Dia</th><th>Próxima cobrança</th><th>Status</th><th style="text-align:right">Valor</th><th style="width:70px"></th></tr></thead>
+            <tbody id="rec-tbody"></tbody>
+          </table>
+        </div>
+        <div id="rec-empty" class="empty" style="display:none">
+          <div class="empty-illustration-wrap">
+            <div class="empty-glow-orb"></div>
+            <div class="empty-icon-badge">
+              <i class="ti ti-repeat-off"></i>
+            </div>
+          </div>
+          <p>Nenhuma assinatura cadastrada</p>
+          <span class="empty-subtext">Monitore serviços recorrentes como streamings, academias e contas fixas.</span>
+          <button class="btn btn-primary btn-sm empty-cta" onclick="focarCampoCriacao('rec-nome')"><i class="ti ti-plus"></i> Criar primeira assinatura</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- METAS & COFRES (UNIFICADOS) -->
+    <div id="page-metas" class="page">
+      <div class="card" style="padding:.9rem 1.25rem;display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;background:linear-gradient(90deg,var(--accent-bg),var(--surface));border-color:var(--accent)">
+        <div style="display:flex;align-items:center;gap:10px">
+          <div class="meta-vault-emblem" style="width:36px;height:36px;font-size:18px"><i class="ti ti-shield-lock"></i></div>
+          <div>
+            <div style="font-size:13.5px;font-weight:700;color:var(--text)">Metas &amp; Cofres de Retenção</div>
+            <div class="help-text" style="margin:0">Cada meta funciona como um Cofre Seguro: o valor guardado é protegido do seu <strong>Saldo Disponível</strong> diário, mas continua somando no seu <strong>Patrimônio Total</strong>.</div>
+          </div>
+        </div>
+      </div>
+      <div class="grid4" id="metas-kpis"></div>
+      <div class="card">
+        <div class="card-title" id="meta-form-title" style="margin-bottom:.75rem">Nova Meta / Cofre</div>
+        <input type="hidden" id="meta-id">
+        <div class="form-row tri">
+          <div class="fg"><label>Nome da Meta / Cofre</label><input type="text" id="meta-nome" placeholder="Ex: Reserva de Emergência, Viagem..." onkeydown="seEnviar(event, salvarMeta)"></div>
+          <div class="fg"><label>Valor Alvo (Objetivo)</label><input type="text" id="meta-valor-alvo" placeholder="R$ 0,00" oninput="maskMoeda(this)" onkeydown="seEnviar(event, salvarMeta)"></div>
+          <div class="fg"><label>Prazo (opcional)</label><input type="date" id="meta-prazo" onkeydown="seEnviar(event, salvarMeta)"></div>
+        </div>
+        <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:.5rem">
+          <button class="btn" id="meta-cancelar-btn" onclick="cancelarEdicaoMeta()" style="display:none">Cancelar edição</button>
+          <button class="btn btn-primary" id="meta-submit-btn" onclick="salvarMeta()"><i class="ti ti-plus"></i> Criar Meta / Cofre</button>
+        </div>
+      </div>
+      <div id="metas-lista"></div>
+      <div id="metas-empty" class="empty" style="display:none">
+        <div class="empty-illustration-wrap">
+          <div class="empty-glow-orb"></div>
+          <div class="empty-icon-badge">
+            <i class="ti ti-pig-off"></i>
+          </div>
+        </div>
+        <p>Nenhuma meta ou cofre ativo</p>
+        <span class="empty-subtext">Proteja seu patrimônio com reservas e metas com prazos definidos.</span>
+        <button class="btn btn-primary btn-sm empty-cta" onclick="focarCampoCriacao('meta-nome')"><i class="ti ti-plus"></i> Criar primeiro cofre</button>
+      </div>
+    </div>
+
+    <!-- DÍVIDAS & TERCEIROS -->
+    <div id="page-dividas" class="page">
+      <div class="help-text" style="margin-bottom:1rem">Dinheiro dividido com outras pessoas — separado do seu fluxo de caixa. Quitar aqui não cria nem apaga nenhum lançamento; é só um controle de quem deve o quê.</div>
+      <div class="grid4" id="divida-kpis"></div>
+      <div class="card">
+        <div class="card-title" id="divida-form-title" style="margin-bottom:.75rem">Nova dívida</div>
+        <input type="hidden" id="divida-id">
+        <div class="form-row tri">
+          <div class="fg"><label>Pessoa</label><input type="text" id="divida-pessoa" placeholder="Nome" onkeydown="seEnviar(event, salvarDivida)"></div>
+          <div class="fg"><label>Direção</label>
+            <select id="divida-direcao">
+              <option value="receber">Ela me deve</option>
+              <option value="pagar">Eu devo a ela</option>
+            </select>
+          </div>
+          <div class="fg"><label>Valor</label><input type="text" id="divida-valor" placeholder="R$ 0,00" oninput="maskMoeda(this)" onkeydown="seEnviar(event, salvarDivida)"></div>
+        </div>
+        <div class="form-row">
+          <div class="fg"><label>Descrição</label><input type="text" id="divida-descricao" placeholder="Ex: Jantar de sexta" onkeydown="seEnviar(event, salvarDivida)"></div>
+          <div class="fg"><label>Data</label><input type="date" id="divida-data" onkeydown="seEnviar(event, salvarDivida)"></div>
+        </div>
+        <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:.5rem">
+          <button class="btn" id="divida-cancelar-btn" onclick="cancelarEdicaoDivida()" style="display:none">Cancelar edição</button>
+          <button class="btn btn-primary" id="divida-submit-btn" onclick="salvarDivida()"><i class="ti ti-plus"></i> Adicionar</button>
+        </div>
+      </div>
+      <div class="card" style="padding:0">
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Pessoa</th><th>Descrição</th><th>Data</th><th>Direção</th><th>Status</th><th style="text-align:right">Valor</th><th style="width:70px"></th></tr></thead>
+            <tbody id="divida-tbody"></tbody>
+          </table>
+        </div>
+        <div id="divida-empty" class="empty" style="display:none">
+          <div class="empty-illustration-wrap">
+            <div class="empty-glow-orb"></div>
+            <div class="empty-icon-badge">
+              <i class="ti ti-users"></i>
+            </div>
+          </div>
+          <p>Nenhuma dívida registrada</p>
+          <span class="empty-subtext">Registre valores com terceiros para controle sem misturar com seu fluxo mensal.</span>
+          <button class="btn btn-primary btn-sm empty-cta" onclick="focarCampoCriacao('divida-pessoa')"><i class="ti ti-plus"></i> Registrar primeira dívida</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- RELATÓRIOS / ANÁLISES -->
+    <div id="page-relatorios" class="page">
+      <div class="filters">
+        <input type="hidden" id="rel-periodo" value="6">
+        <div class="chip-group" role="group" aria-label="Período do relatório">
+          <button type="button" class="chip-btn" data-chip-target="rel-periodo" data-chip-val="3" onclick="selecionarChipFiltro('rel-periodo','3',this,renderRelatorios)">Últimos 3 meses</button>
+          <button type="button" class="chip-btn active" data-chip-target="rel-periodo" data-chip-val="6" onclick="selecionarChipFiltro('rel-periodo','6',this,renderRelatorios)">Últimos 6 meses</button>
+          <button type="button" class="chip-btn" data-chip-target="rel-periodo" data-chip-val="12" onclick="selecionarChipFiltro('rel-periodo','12',this,renderRelatorios)">Últimos 12 meses</button>
+        </div>
+        <select id="rel-hashtag" onchange="renderRelatorios()" title="Filtrar análises por #Hashtag">
+          <option value="">Todas as #Hashtags</option>
+        </select>
+      </div>
+      <div id="relatorio-imprimivel">
+        <div class="grid4" id="rel-kpis"></div>
+        <div class="card">
+          <div class="card-header">
+            <div class="card-title">Gastos por categoria</div>
+            <div class="metric-sub">Comparativo Inteligente (MoM): mês atual vs mês anterior</div>
+          </div>
+          <div style="position:relative; height:260px; width:100%">
+            <canvas id="rel-categorias-chart"></canvas>
+          </div>
+          <div id="rel-categorias-mom" class="mom-list"></div>
+        </div>
+        <div class="card" id="rel-maquina-tempo-card">
+          <div class="card-header" style="flex-wrap:wrap;gap:8px">
+            <div>
+              <div class="card-title"><i class="ti ti-history" style="color:var(--accent);margin-right:6px"></i>Evolução de Patrimônio Líquido (Máquina do Tempo)</div>
+              <div class="metric-sub">Fotografias patrimoniais mensais imutáveis: Saldo Livre + Cofres − Dívidas de Cartão</div>
+            </div>
+            <div style="display:flex;gap:6px;align-items:center">
+              <button class="btn btn-sm" onclick="abrirModalHistoricoSnapshots()" title="Ver tabela com todos os snapshots"><i class="ti ti-list"></i> Histórico</button>
+              <button class="btn btn-primary btn-sm" onclick="registrarSnapshotAtual()" title="Gravar fotografia financeira do patrimônio neste exato momento"><i class="ti ti-camera"></i> Registrar Snapshot Atual</button>
+            </div>
+          </div>
+          <div style="position:relative; height:260px; width:100%" id="rel-maquina-tempo-chart-wrap">
+            <canvas id="rel-maquina-tempo-chart"></canvas>
+          </div>
+          <div id="rel-maquina-tempo-vazio" class="empty" style="display:none;padding:1.5rem">
+            <i class="ti ti-camera-off"></i>
+            <p>Nenhum snapshot de patrimônio registrado ainda.</p>
+            <button class="btn btn-primary btn-sm empty-cta" onclick="registrarSnapshotAtual()"><i class="ti ti-camera"></i> Registrar primeiro snapshot</button>
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-header"><div class="card-title">Evolução do patrimônio (saldo acumulado)</div></div>
+          <div style="position:relative; height:240px; width:100%">
+            <canvas id="rel-patrimonio-chart"></canvas>
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-header">
+            <div class="card-title">Taxa de poupança por mês</div>
+            <div class="metric-sub" id="rel-poupanca-media"></div>
+          </div>
+          <div style="position:relative; height:220px; width:100%">
+            <canvas id="rel-poupanca-chart"></canvas>
+          </div>
+          <div class="help-text" style="margin-top:.5rem">Quanto da receita sobrou no mês: (receitas − despesas) ÷ receitas, contando todos os lançamentos do mês (pagos e pendentes) e ignorando transferências entre suas contas. Verde: 20% ou mais.</div>
+        </div>
+        <div class="card">
+          <div class="card-header"><div class="card-title">Orçamento x Realizado (mês atual)</div></div>
+          <div id="rel-orcamento"></div>
+        </div>
+        <div class="card">
+          <div class="card-header"><div class="card-title">Maiores despesas do período</div></div>
+          <div class="table-wrap"><table><thead><tr><th>Data</th><th>Descrição</th><th>Categoria</th><th style="text-align:right">Valor</th></tr></thead><tbody id="rel-ranking"></tbody></table></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- SYNC ONEDRIVE -->
+    <div id="page-sync" class="page">
+      <div class="card" id="card-ms">
+        <div class="card-header">
+          <div class="card-title">Login Microsoft (recomendado)</div>
+          <span class="badge badge-cat" id="ms-selo">Não configurado</span>
+        </div>
+        <div class="help-text" style="margin:0 0 .75rem">Você entra com a sua conta Microsoft e o COFIN lê e grava a planilha direto no seu OneDrive — sem link público, sem Make.com e sem proxy, e sem sobrescrever alterações feitas em outro aparelho. Se você não conectar, o método antigo (mais abaixo) continua funcionando.</div>
+        <div class="help-text" id="ms-status" style="margin:0 0 .75rem"></div>
+        <div class="form-row">
+          <div class="fg"><label>ID do aplicativo (Azure)</label><input type="text" id="ms-client-id" placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" autocomplete="off" onchange="msSalvarConfig()"></div>
+          <div class="fg"><label>Tipo de conta</label>
+            <select id="ms-autoridade" onchange="msSalvarConfig()">
+              <option value="consumers">Pessoal (Outlook, Hotmail, Live)</option>
+              <option value="common">Pessoal ou corporativa/escolar</option>
+            </select>
+          </div>
+        </div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <button class="btn btn-primary" id="btn-ms-conectar" onclick="msConectar()"><i class="ti ti-brand-windows"></i> Conectar</button>
+          <button class="btn" id="btn-ms-arquivo" onclick="msAbrirEscolha()" style="display:none"><i class="ti ti-file-spreadsheet"></i> Escolher arquivo</button>
+          <button class="btn" id="btn-ms-sync" onclick="sincronizarGraph(false)" style="display:none"><i class="ti ti-refresh"></i> Sincronizar agora</button>
+          <button class="btn btn-danger" id="btn-ms-desconectar" onclick="msDesconectar()" style="display:none"><i class="ti ti-plug-x"></i> Desconectar</button>
+        </div>
+        <div class="help-text" id="ms-arquivo-atual"></div>
+        <div class="help-text" id="ms-aovivo" style="margin-top:.25rem"></div>
+        <div id="ms-escolha" style="display:none;margin-top:1rem;padding:1rem;background:var(--surface2);border-radius:var(--radius)">
+          <div class="section-title">Escolher a planilha do COFIN no seu OneDrive</div>
+          <div class="help-text" style="margin:0 0 .75rem">Os lançamentos que estão aqui são preservados e juntados com os do arquivo. O COFIN só aceita arquivos dele (uma aba, colunas Data/Descrição/Valor) ou vazios — nunca sobrescreve outra planilha sua.</div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:.75rem">
+            <button class="btn btn-sm" onclick="msTentarLink()"><i class="ti ti-link"></i> Usar o arquivo do meu link</button>
+            <button class="btn btn-sm" onclick="msCriarArquivo()"><i class="ti ti-file-plus"></i> Criar novo (COFIN/controle-financeiro.xlsx)</button>
+          </div>
+          <div style="display:flex;gap:8px">
+            <input type="text" id="ms-busca" placeholder="Buscar pelo nome do arquivo (ex: controle)..." onkeydown="seEnviar(event, msBuscarArquivos)">
+            <button class="btn btn-sm" onclick="msBuscarArquivos()"><i class="ti ti-search"></i> Buscar</button>
+          </div>
+          <div id="ms-resultados" style="margin-top:.75rem"></div>
+          <div class="help-text" id="ms-escolha-msg"></div>
+        </div>
+        <details style="margin-top:1rem">
+          <summary style="cursor:pointer;font-weight:600;font-size:12.5px">Como configurar (uma vez só, uns 5 minutos)</summary>
+          <ol class="help-text" style="padding-left:1.2rem;line-height:1.7">
+            <li>Você precisa de um <strong>diretório (tenant) próprio</strong> no Azure. Uma conta Outlook/Hotmail sozinha <u>não</u> consegue registrar aplicativos: o portal dá erro <code>AADSTS16000</code>, <code>AADSTS160021</code> ou <code>AADSTS50020</code> ("a conta não existe no locatário Microsoft Services"). A saída é criar uma conta gratuita em <strong>azure.microsoft.com/free</strong> com o seu e-mail pessoal: no cadastro ela cria o seu diretório e você vira administrador dele (costuma pedir um cartão só para confirmar a identidade; registrar aplicativos em si é gratuito). Depois entre em <strong>entra.microsoft.com</strong> com essa conta. <u>Não use a conta da empresa.</u></li>
+            <li>Vá em <strong>Identidade → Aplicativos → Registros de aplicativos → Novo registro</strong>. Nome: COFIN. Tipos de conta: <strong>"Contas em qualquer diretório organizacional e contas pessoais da Microsoft"</strong>. Deixe a URI de redirecionamento em branco e registre.</li>
+            <li>Copie o <strong>ID do aplicativo (cliente)</strong> e cole no campo acima.</li>
+            <li>Em <strong>Autenticação → Adicionar uma plataforma → Aplicativo de página única</strong>, informe a URI <code id="ms-uri-web" style="user-select:all"></code> (com a barra no final). Vale para o site/celular.</li>
+            <li>Ainda em Autenticação, <strong>Adicionar uma plataforma → Aplicativos móveis e de desktop</strong>, URI personalizada <code id="ms-uri-desktop" style="user-select:all"></code>. Vale para o app de desktop. Depois, em <strong>Configurações avançadas</strong>, ligue <strong>"Permitir fluxos de cliente público"</strong> e salve.</li>
+            <li>Em <strong>Permissões de API → Adicionar uma permissão → Microsoft Graph → Permissões delegadas</strong>: <strong>Files.ReadWrite</strong> e <strong>offline_access</strong> (User.Read já vem). Não precisa de aprovação de administrador: a Microsoft pergunta a você no primeiro login.</li>
+            <li>Aqui no COFIN: <strong>Conectar</strong> e depois escolha o arquivo.</li>
+          </ol>
+          <div class="help-text">No <strong>site/celular</strong> o login dura até 24 h e depois pede "Reconectar" (limite da Microsoft para apps de navegador); no <strong>desktop</strong> dura meses. O login fica guardado só neste aparelho (nunca vai pro backup nem pra planilha). Para revogar o acesso quando quiser: account.microsoft.com → Privacidade → Aplicativos e serviços.</div>
+        </details>
+        <details style="margin-top:.75rem">
+          <summary style="cursor:pointer;font-weight:600;font-size:12.5px">Deu erro? Os códigos mais comuns</summary>
+          <ul class="help-text" style="padding-left:1.2rem;line-height:1.7">
+            <li><code>AADSTS16000</code> / <code>160021</code> / <code>50020</code> ao abrir o portal: falta o diretório próprio (passo 1 acima).</li>
+            <li><code>AADSTS50011</code> (URI de redirecionamento): a URI cadastrada tem que ser <strong>idêntica</strong> à mostrada acima, inclusive a barra no final.</li>
+            <li><code>unauthorized_client</code> ou <code>AADSTS700016</code>: o registro foi criado como "somente neste diretório". Crie de novo escolhendo "contas em qualquer diretório organizacional e contas pessoais".</li>
+            <li><code>AADSTS9002326</code> (site/celular): a URI do site está na plataforma "Web". Ela precisa estar em "Aplicativo de página única".</li>
+            <li><code>AADSTS9002327</code> (desktop): a URI <code>http://localhost</code> está como página única. Ela precisa estar em "Aplicativos móveis e de desktop".</li>
+            <li><code>AADSTS7000218</code> (desktop): ligue "Permitir fluxos de cliente público" em Autenticação → Configurações avançadas.</li>
+          </ul>
+        </details>
+      </div>
+      <div class="card">
+        <div class="card-title" style="margin-bottom:.75rem">Sincronização com a Nuvem (OneDrive via Make.com)</div>
+        <div class="fg" style="margin-bottom:.75rem">
+          <label>URL do Webhook do Make.com (para gravação automática)</label>
+          <input type="url" id="sync-webhook-make" placeholder="https://hook.us2.make.com/..." onchange="salvarWebhookMake()">
+          <div class="help-text">Cole aqui a URL do Webhook do seu cenário do Make.com para salvar e atualizar a planilha automaticamente.</div>
+        </div>
+        <div class="fg" style="margin-bottom:.75rem">
+          <label>Link de compartilhamento da planilha (para leitura no OneDrive)</label>
+          <input type="url" id="sync-link" placeholder="Cole o link de compartilhamento da planilha (1drv.ms/x/...)" onchange="salvarLinkOneDrive()">
+          <div class="help-text">Link de compartilhamento público gerado no seu OneDrive para baixar a planilha diretamente no app.</div>
+        </div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+  	<button class="btn btn-primary" id="btn-sync" onclick="sincronizarOneDrive()"><i class="ti ti-refresh"></i> Buscar planilha agora</button>
+  	<button class="btn" onclick="document.getElementById('sync-file-input').click()"><i class="ti ti-upload"></i> Selecionar arquivo .xlsx manualmente</button>
+  	<input type="file" id="sync-file-input" accept=".xlsx,.xls,.csv" style="display:none" onchange="importarArquivoLocal(this.files[0])">
+  	<!-- Botão de Salvar na Nuvem (Webhook) -->
+  	<button class="btn" id="btn-export-nuvem" onclick="salvarNaNuvemWebhook()" style="background-color: #16A34A; color: white; border-color: #16A34A;">
+    	<i class="ti ti-cloud-upload"></i> Salvar na Nuvem
+  	</button>
+	</div>
+        <div class="help-text" id="sync-last"></div>
+        <div class="banner" style="margin-top:1rem">
+          <i class="ti ti-info-circle" style="flex-shrink:0"></i>
+          <div>
+            A busca automática depende do navegador conseguir ler o arquivo direto do OneDrive (isso às vezes é bloqueado por CORS,
+            fora do meu controle). Se o botão acima falhar, use <strong>"Selecionar arquivo .xlsx manualmente"</strong> — baixe a planilha do
+            OneDrive e escolha o arquivo aqui, que funciona sempre. Hoje a sincronização é só de <strong>leitura</strong> (traz os dados da
+            planilha para cá); ela não escreve de volta no OneDrive. Para isso existir seria preciso configurar login OAuth com a Microsoft
+            (Azure), o que posso montar depois se você quiser.
+          </div>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-title" style="margin-bottom:.75rem">Diagnóstico</div>
+        <div class="help-text" style="margin-bottom:.75rem">Se a sincronização ou a instalação do app falhar, use os botões abaixo e me mande um print do resultado.</div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <button class="btn btn-sm" onclick="diagnosticarPWA()"><i class="ti ti-stethoscope"></i> Verificar instalação (PWA)</button>
+          <button class="btn btn-sm" id="btn-instalar-app" style="display:none" onclick="instalarApp()"><i class="ti ti-download"></i> Instalar app</button>
+          <button class="btn btn-sm" onclick="forcarAtualizacaoApp()"><i class="ti ti-refresh"></i> Atualizar app (limpar cache)</button>
+        </div>
+        <pre id="sync-diagnostico" class="diag-pre" style="display:none"></pre>
+        <pre id="pwa-diagnostico" class="diag-pre" style="display:none"></pre>
+      </div>
+    </div>
+
+    <!-- CONFIG -->
+    <div id="page-config" class="page">
+      <div class="card">
+        <div class="card-header" style="margin-bottom:.5rem">
+          <div class="card-title">Modo Viagem (Travel Mode)</div>
+          <label class="switch-toggle">
+            <input type="checkbox" id="cfg-modo-viagem-toggle" onchange="alternarModoViagem()">
+            <span class="switch-slider"></span>
+            <span id="cfg-modo-viagem-label">Desativado</span>
+          </label>
+        </div>
+        <div class="help-text">Quando ativo, exibe um banner no topo do sistema, adiciona automaticamente a hashtag da viagem (ex: <code>#viagem_paris</code>) na descrição de novos lançamentos e ignora alertas de limite de orçamento no Simulador What-If e no Dashboard.</div>
+      </div>
+      <div class="card">
+        <div class="card-title" style="margin-bottom:.5rem">Aparência / Tema</div>
+        <div class="help-text" style="margin-bottom:.75rem">Personalize a cor de destaque principal da interface e dos gráficos.</div>
+        <div class="accent-picker" id="accent-picker">
+          <button type="button" class="accent-swatch active" data-accent="#1A6FE0" style="background:#1A6FE0" onclick="definirCorDestaque('#1A6FE0', true)" title="Azul Padrão"><i class="ti ti-check"></i></button>
+          <button type="button" class="accent-swatch" data-accent="#8B5CF6" style="background:#8B5CF6" onclick="definirCorDestaque('#8B5CF6', true)" title="Roxo"></button>
+          <button type="button" class="accent-swatch" data-accent="#10B981" style="background:#10B981" onclick="definirCorDestaque('#10B981', true)" title="Verde Esmeralda"></button>
+          <button type="button" class="accent-swatch" data-accent="#F97316" style="background:#F97316" onclick="definirCorDestaque('#F97316', true)" title="Laranja"></button>
+          <button type="button" class="accent-swatch" data-accent="#F43F5E" style="background:#F43F5E" onclick="definirCorDestaque('#F43F5E', true)" title="Rosa"></button>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-title" style="margin-bottom:.75rem">Categorias &amp; Subcategorias (Hierarquia)</div>
+        <div class="help-text" style="margin-bottom:.75rem">Crie categorias principais (Macro) ou associe subcategorias (ex: <strong>Alimentação → Supermercado</strong>). Nos relatórios, os gráficos consolidam pela categoria principal e detalham os gastos por subcategoria.</div>
+        <div class="form-row" style="grid-template-columns:1.2fr 1fr 1fr 1fr;margin-bottom:.75rem">
+          <div class="fg"><label>Nome da Categoria / Subcategoria</label><input type="text" id="cat-nome" placeholder="Ex: Supermercado, Restaurante..." onkeydown="seEnviar(event, adicionarCategoria)"></div>
+          <div class="fg"><label>Tipo</label><select id="cat-tipo" onchange="popularMacroPaiConfigSelect()"><option value="despesa">Despesa</option><option value="receita">Receita</option></select></div>
+          <div class="fg"><label>Hierarquia (Categoria Pai)</label><select id="cat-pai"><option value="">— Categoria Principal (Macro) —</option></select></div>
+          <div class="fg"><label>Orçamento mensal (Macro)</label><input type="text" id="cat-orcamento" placeholder="Opcional (R$ 0,00)" oninput="maskMoeda(this)" onkeydown="seEnviar(event, adicionarCategoria)"></div>
+        </div>
+        <div style="display:flex;justify-content:flex-end;margin-bottom:.75rem">
+          <button class="btn btn-primary" onclick="adicionarCategoria()"><i class="ti ti-plus"></i> Adicionar Categoria / Subcategoria</button>
+        </div>
+        <div class="section-title">Despesas</div>
+        <div id="cat-list-despesa" style="margin-bottom:1rem"></div>
+        <div class="section-title">Receitas</div>
+        <div id="cat-list-receita"></div>
+        <div class="help-text" style="margin-top:.5rem">Clique no valor de orçamento de uma categoria de despesa pra editar ou remover, ou clique em <strong>"+ sub"</strong> para adicionar uma subcategoria rapidamente.</div>
+      </div>
+      <div class="card">
+        <div class="card-header" style="margin-bottom:.75rem">
+          <div class="card-title" id="conta-form-title">Contas / Cartões</div>
+          <button class="btn btn-sm btn-primary" type="button" onclick="abrirModalConciliacaoBancaria()" title="Conciliar saldo real do banco com os lançamentos"><i class="ti ti-scale"></i> Conciliar Saldo</button>
+        </div>
+        <input type="hidden" id="conta-id">
+        <div class="form-row" style="margin-bottom:.75rem">
+          <div class="fg"><label>Nome</label><input type="text" id="conta-nome" placeholder="Nome da conta ou cartão" onkeydown="seEnviar(event, salvarConta)"></div>
+          <div class="fg"><label>Tipo</label>
+            <select id="conta-tipo" onchange="atualizarCamposCartao()">
+              <option value="conta">Conta bancária</option>
+              <option value="cartao">Cartão de crédito</option>
+            </select>
+          </div>
+        </div>
+        <div class="form-row tri" id="conta-campos-cartao" style="display:none">
+          <div class="fg"><label>Dia de fechamento</label><select id="conta-fechamento" onchange="atualizarDicaFechamento()"></select></div>
+          <div class="fg"><label>Dia de vencimento</label><select id="conta-vencimento"></select></div>
+          <div class="fg"><label>Limite (opcional)</label><input type="text" id="conta-limite" placeholder="R$ 0,00" oninput="maskMoeda(this)"></div>
+        </div>
+        <div class="help-text" id="conta-dica-fechamento" style="margin-bottom:.5rem"></div>
+        <div style="display:flex;justify-content:flex-end;gap:8px;margin-bottom:.75rem">
+          <button class="btn" id="conta-cancelar-btn" onclick="cancelarEdicaoConta()" style="display:none">Cancelar edição</button>
+          <button class="btn btn-primary" id="conta-submit-btn" onclick="salvarConta()"><i class="ti ti-plus"></i> Adicionar</button>
+        </div>
+        <div class="tag-list" id="conta-list"></div>
+      </div>
+      <div class="card">
+        <div class="card-title" style="margin-bottom:.75rem">Regras de categorização automática</div>
+        <div class="help-text" style="margin-bottom:.75rem">Quando a descrição de um lançamento novo contiver a palavra-chave, a categoria é sugerida sozinha.</div>
+        <div class="form-row" style="grid-template-columns:1fr 1fr 1fr auto;gap:8px;margin-bottom:.75rem">
+          <input type="text" id="regra-palavra" placeholder="Palavra-chave (ex: UBER)" onkeydown="seEnviar(event, adicionarRegra)">
+          <select id="regra-categoria"></select>
+          <select id="regra-conta" title="Conta ou Cartão padrão (opcional)"><option value="">Qualquer Conta/Cartão</option></select>
+          <button class="btn btn-primary" onclick="adicionarRegra()"><i class="ti ti-plus"></i> Adicionar</button>
+        </div>
+        <div class="tag-list" id="regra-list"></div>
+      </div>
+      <!-- MOTOR DE RECEITAS INTELIGENTES (AUTO-PAYCHECK) -->
+      <div class="card" id="card-receitas-fixas">
+        <div class="card-header" style="margin-bottom:.5rem">
+          <div class="card-title" style="display:flex;align-items:center;gap:8px">
+            <i class="ti ti-cash-banknote" style="color:var(--good);font-size:18px"></i>
+            <span id="recfixa-card-title">Receitas Fixas Inteligentes (Auto-Paycheck)</span>
+          </div>
+          <div style="display:flex;gap:6px">
+            <button class="btn btn-sm" type="button" onclick="processarReceitasAutomatizadas(true)" title="Verificar créditos para hoje">
+              <i class="ti ti-refresh"></i> Verificar créditos hoje
+            </button>
+            <button class="btn btn-sm btn-primary" type="button" onclick="abrirModalRendas()" title="Cadastrar nova renda/salário">
+              <i class="ti ti-plus"></i> Nova Renda
+            </button>
+          </div>
+        </div>
+        <div class="help-text" style="margin-bottom:.75rem">
+          Configure seu salário, pró-labore ou renda fixa para cair automaticamente na conta no dia programado (por <strong>Dia Útil</strong> ou <strong>Dia Fixo</strong> do mês), sem necessidade de lançamento manual.
+        </div>
+        <input type="hidden" id="recfixa-id">
+        <div class="form-row" style="grid-template-columns:1.5fr 1fr 1fr;gap:10px;margin-bottom:.75rem">
+          <div class="fg">
+            <label>Descrição</label>
+            <input type="text" id="recfixa-desc" placeholder="Ex: Salário Nubank, Pró-Labore..." onkeydown="seEnviar(event, salvarReceitaFixa)">
+          </div>
+          <div class="fg">
+            <label>Valor (R$)</label>
+            <input type="text" id="recfixa-valor" placeholder="R$ 0,00" oninput="maskMoeda(this)" onkeydown="seEnviar(event, salvarReceitaFixa)">
+          </div>
+          <div class="fg">
+            <label>Conta de Destino</label>
+            <select id="recfixa-conta"></select>
+          </div>
+        </div>
+        <div class="form-row" style="grid-template-columns:1.2fr 1fr 1.2fr;gap:10px;margin-bottom:.75rem">
+          <div class="fg">
+            <label>Regra de Recebimento</label>
+            <select id="recfixa-tipo-regra" onchange="atualizarDicaRegraReceitaFixa()">
+              <option value="dia_util">Dia Útil do Mês (ex: 5º dia útil)</option>
+              <option value="dia_fixo">Dia Fixo do Mês (ex: todo dia 5)</option>
+            </select>
+          </div>
+          <div class="fg">
+            <label id="recfixa-lbl-dia">Número do Dia</label>
+            <input type="number" id="recfixa-dia" min="1" max="31" value="5" onchange="atualizarDicaRegraReceitaFixa()" oninput="atualizarDicaRegraReceitaFixa()" onkeydown="seEnviar(event, salvarReceitaFixa)">
+          </div>
+          <div class="fg">
+            <label>Categoria</label>
+            <select id="recfixa-cat"></select>
+          </div>
+        </div>
+        <div class="help-text" id="recfixa-dica-regra" style="margin-bottom:.75rem;color:var(--good-text);font-weight:500"></div>
+        <div style="display:flex;justify-content:flex-end;gap:8px;margin-bottom:1rem">
+          <button class="btn" type="button" id="recfixa-btn-cancelar" onclick="cancelarEdicaoReceitaFixa()" style="display:none">Cancelar edição</button>
+          <button class="btn btn-primary" type="button" id="recfixa-btn-salvar" onclick="salvarReceitaFixa()"><i class="ti ti-plus"></i> Salvar Receita Fixa</button>
+        </div>
+        <div class="section-title" style="margin-bottom:.5rem">Receitas Fixas Cadastradas</div>
+        <div id="recfixa-lista"></div>
+      </div>
+      <div class="card">
+        <div class="card-title" style="margin-bottom:.75rem">Segurança e privacidade</div>
+        <div class="help-text" id="seg-status" style="margin:0 0 .75rem"></div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:.75rem">
+          <button class="btn btn-sm" id="btn-pin-definir" onclick="abrirModalPin('definir')"><i class="ti ti-lock"></i> Definir PIN</button>
+          <button class="btn btn-sm" id="btn-pin-alterar" onclick="abrirModalPin('alterar')" style="display:none"><i class="ti ti-key"></i> Alterar PIN</button>
+          <button class="btn btn-sm btn-danger" id="btn-pin-remover" onclick="abrirModalPin('remover')" style="display:none"><i class="ti ti-lock-off"></i> Remover PIN</button>
+          <button class="btn btn-sm" id="btn-bloquear-agora" onclick="bloquearApp()" style="display:none"><i class="ti ti-lock-square"></i> Bloquear agora</button>
+        </div>
+        <div class="form-row" style="display:grid;grid-template-columns:repeat(auto-fit, minmax(220px, 1fr));gap:12px">
+          <div class="fg"><label>Bloquear por inatividade (PIN)</label>
+            <select id="seg-ocioso" onchange="salvarOcioso()" disabled>
+              <option value="0">Nunca</option><option value="1">Após 1 minuto</option><option value="5">Após 5 minutos</option><option value="15">Após 15 minutos</option>
+            </select>
+          </div>
+          <div class="fg"><label>Modo Stealth por inatividade (Ocultar valores)</label>
+            <select id="seg-stealth-ocioso" onchange="salvarTempoStealthInatividade(this.value)">
+              <option value="0">Nunca</option>
+              <option value="1">Após 1 minuto</option>
+              <option value="3" selected>Após 3 minutos (Padrão)</option>
+              <option value="5">Após 5 minutos</option>
+              <option value="10">Após 10 minutos</option>
+              <option value="15">Após 15 minutos</option>
+            </select>
+          </div>
+        </div>
+        <div class="help-text" style="margin-top:.75rem">O Modo Stealth oculta temporariamente todos os saldos e valores sensíveis da tela, revelando-os suavemente ao passar o mouse. Você também pode ativá-lo a qualquer momento pelo botão na barra superior ou pelo atalho <kbd>Alt + P</kbd>.</div>
+        <div class="help-text" style="margin-top:.4rem">O PIN protege contra quem usar este aparelho enquanto você estiver longe, mas <strong>não criptografa</strong> os dados guardados: quem tiver acesso aos arquivos do aparelho ainda consegue lê-los. O PIN é por aparelho — não vai pra planilha nem pro backup.</div>
+      </div>
+      <!-- SEGURANÇA E BACKUPS (SHADOW VAULT) -->
+      <div class="card" id="card-seguranca-backups">
+        <div class="card-header" style="margin-bottom:.5rem">
+          <div class="card-title" style="display:flex;align-items:center;gap:8px">
+            <i class="ti ti-shield-lock" style="color:var(--accent)"></i>
+            <span>Segurança e Backups (Shadow Vault)</span>
+          </div>
+          <span class="badge" id="backup-status-badge" style="background:var(--accent-bg);color:var(--accent-text);font-weight:600">Auto-Backup</span>
+        </div>
+        <div class="help-text" style="margin-bottom:.85rem">
+          O <strong>Shadow Vault</strong> salva automaticamente cópias silenciosas do seu estado financeiro em um diretório personalizado (como seu Google Drive, Dropbox ou pasta local). O auto-backup é realizado a cada 7 dias de forma transparente.
+        </div>
+
+        <div style="background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius);padding:10px 14px;margin-bottom:1rem;display:flex;flex-direction:column;gap:6px">
+          <div id="backup-pasta-atual" style="font-size:13px;color:var(--text)">
+            <strong>Pasta atual:</strong> <span class="help-text">Nenhuma pasta selecionada</span>
+          </div>
+          <div id="backup-ultimo-status" style="font-size:11.5px;color:var(--text3)">
+            Último auto-backup: Nenhum registro ainda
+          </div>
+        </div>
+
+        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+          <button class="btn btn-primary" onclick="selecionarPastaBackup()"><i class="ti ti-folder"></i> Selecionar Pasta de Backup</button>
+          <button class="btn" onclick="executarBackupSilencioso(true)"><i class="ti ti-device-floppy"></i> Forçar Backup Agora</button>
+          <button class="btn" onclick="restaurarBackup()"><i class="ti ti-restore"></i> Restaurar Backup</button>
+          <button class="btn btn-sm" onclick="exportarBackup()"><i class="ti ti-download"></i> Baixar cópia (.json)</button>
+          <input type="file" id="backup-file-input" accept=".json" style="display:none" onchange="importarBackup(this.files[0])">
+          <button class="btn btn-sm btn-danger" onclick="apagarTudo()"><i class="ti ti-trash"></i> Apagar todos os dados</button>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<!-- MODAL LANÇAMENTO -->
+<div class="modal-bg" id="modal-lancamento">
+  <div class="modal">
+    <div class="modal-head">
+      <div class="modal-title" id="lanc-modal-title">Novo lançamento</div>
+      <button class="modal-close" onclick="fecharModal('modal-lancamento')"><i class="ti ti-x"></i></button>
+    </div>
+    <input type="hidden" id="lanc-id">
+    <div class="form-row">
+      <div class="fg"><label>Tipo</label>
+        <select id="lanc-tipo" onchange="popularCategoriasSelect()">
+          <option value="despesa">Despesa</option>
+          <option value="receita">Receita</option>
+        </select>
+      </div>
+      <div class="fg"><label>Data</label><input type="date" id="lanc-data" onkeydown="seEnviar(event, salvarLancamento)"></div>
+    </div>
+    <div class="fg" style="margin-bottom:.75rem"><label>Descrição</label><input type="text" id="lanc-descricao" placeholder="Ex: Supermercado, Salário..." onkeydown="seEnviar(event, salvarLancamento)" onblur="sugerirCategoriaPorRegra()"></div>
+    <div class="form-row">
+      <div class="fg" id="lanc-cat-single-wrap">
+        <div style="display:flex;justify-content:space-between;align-items:center">
+          <label style="margin:0">Categoria</label>
+          <button type="button" class="btn btn-sm" id="btn-toggle-split" onclick="alternarSplitLancamento()" style="padding:2px 8px;font-size:11px"><i class="ti ti-arrows-split-2"></i> + Dividir em múltiplas categorias</button>
+        </div>
+        <select id="lanc-categoria"></select>
+      </div>
+      <div class="fg"><label>Conta</label><select id="lanc-conta"></select></div>
+    </div>
+    <div id="lanc-split-wrap" class="split-container" style="display:none">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+        <span style="font-size:12px;font-weight:700;color:var(--text)"><i class="ti ti-arrows-split-2" style="color:var(--accent)"></i> Divisão por categorias (Split)</span>
+        <button type="button" class="btn btn-sm" onclick="alternarSplitLancamento()" style="padding:2px 8px;font-size:11px"><i class="ti ti-x"></i> Usar categoria única</button>
+      </div>
+      <div id="lanc-split-rows"></div>
+      <div class="split-footer">
+        <button type="button" class="btn btn-sm" onclick="adicionarLinhaSplit()"><i class="ti ti-plus"></i> Adicionar categoria</button>
+        <div id="lanc-split-status" style="font-weight:600">Soma: R$ 0,00</div>
+      </div>
+    </div>
+    <div class="form-row">
+      <div class="fg"><label>Valor Total <span id="lanc-valor-hint" style="font-weight:400;color:var(--text3)"></span></label><input type="text" id="lanc-valor" placeholder="R$ 0,00 ou ex: 150+45,50" oninput="maskMoedaSmart(this); atualizarDicaParcelas(); atualizarResumoSplit();" onkeydown="seEnviar(event, salvarLancamento)" title="Aceita expressões matemáticas como 150+45,50 ou (100+20)*2"></div>
+      <div class="fg" id="lanc-parcelas-wrap">
+        <label>Número de parcelas</label>
+        <select id="lanc-parcelas" onchange="atualizarDicaParcelas()"></select>
+        <span id="lanc-parcelas-obs" class="help-text" style="display:none;margin-top:2px">Parcelamento só pode ser definido na criação — para editar uma parcela existente, altere seus campos normalmente.</span>
+      </div>
+    </div>
+    <div class="fg" style="margin-top:.5rem;margin-bottom:.5rem">
+      <label>Tags (opcional)</label>
+      <input type="text" id="lanc-tags" list="lista-tags-existentes" placeholder="Ex: Viagem Portugal, Aniversário — separe por vírgula" onkeydown="seEnviar(event, salvarLancamento)">
+      <datalist id="lista-tags-existentes"></datalist>
+      <span class="help-text" style="margin-top:2px">Etiquetas livres que cruzam categorias — dá pra ver o custo total de um evento filtrando pela tag.</span>
+    </div>
+    <div class="fg" style="flex-direction:row;align-items:center;gap:8px;margin-top:.25rem">
+      <input type="checkbox" id="lanc-pago" style="width:16px;height:16px;accent-color:var(--accent)" checked>
+      <label for="lanc-pago" style="margin:0">Já pago / recebido</label>
+    </div>
+    <div id="lanc-split-bill-toggle-row" class="fg" style="flex-direction:row;align-items:center;justify-content:space-between;gap:8px;margin-top:.55rem;padding-top:.55rem;border-top:1px dashed var(--border)">
+      <label class="switch-toggle" style="margin:0">
+        <input type="checkbox" id="lanc-rachar-chk" onchange="toggleCamposRacharConta()">
+        <span class="switch-slider"></span>
+        <span><i class="ti ti-users" style="color:var(--accent)"></i> Dividir Despesa (Rachar conta)</span>
+      </label>
+      <span class="badge badge-cat" style="font-size:10px">Split Bill</span>
+    </div>
+    <div id="lanc-rachar-wrap" class="split-bill-box" style="display:none">
+      <div class="split-bill-header">
+        <span><i class="ti ti-coins"></i> Reembolso a Receber de Terceiros</span>
+        <button type="button" class="btn btn-sm" style="padding:2px 8px;font-size:10.5px" onclick="preencherMetadeRacharConta()" title="Preencher 50% do valor total">50% do total</button>
+      </div>
+      <div class="form-row" style="margin-bottom:.5rem">
+        <div class="fg">
+          <label>Valor a Receber de Terceiros</label>
+          <input type="text" id="lanc-rachar-valor" placeholder="R$ 0,00" oninput="maskMoedaSmart(this)" onblur="avaliarExpressaoMoeda(this)">
+        </div>
+        <div class="fg">
+          <label>Data prevista do reembolso</label>
+          <input type="date" id="lanc-rachar-data">
+        </div>
+      </div>
+      <div class="fg">
+        <label>Breve descrição (ex: Parte do João)</label>
+        <input type="text" id="lanc-rachar-desc" placeholder="Ex: Parte do João — Jantar">
+      </div>
+      <div class="help-text" style="margin-top:6px">Ao guardar, será criada a despesa principal pelo valor total e, simultaneamente, uma <strong>Receita Pendente</strong> com o valor a receber de terceiros.</div>
+    </div>
+    <div id="lanc-reembolsavel-row" class="fg" style="flex-direction:row;align-items:center;justify-content:space-between;gap:8px;margin-top:.55rem;padding-top:.55rem;border-top:1px dashed var(--border)">
+      <label class="switch-toggle" style="margin:0">
+        <input type="checkbox" id="lanc-reembolsavel-chk" onchange="toggleCamposReembolsoModal()">
+        <span class="switch-slider"></span>
+        <span><i class="ti ti-receipt-refund" style="color:#F59E0B"></i> Despesa Reembolsável (Adiantamento / Na Rua)</span>
+      </label>
+      <span class="badge" style="background:rgba(245,158,11,.15);color:#F59E0B;font-size:10px">IOU Tracker</span>
+    </div>
+    <div id="lanc-reembolsavel-wrap" style="display:none;margin-top:.5rem;padding:10px 12px;background:var(--surface2);border:1px solid var(--border2);border-radius:var(--radius)">
+      <div class="fg">
+        <label>Quem deve / Origem do Reembolso</label>
+        <input type="text" id="lanc-reembolsavel-devedor" placeholder="Ex: Empresa XPTO, Cliente Fulano, Amigo Carlos">
+      </div>
+      <div class="help-text" style="margin-top:4px">Ao confirmar o reembolso no futuro, o valor retorna ao seu Saldo Disponível e o gasto original é neutralizado nas estatísticas de consumo pessoal da categoria.</div>
+    </div>
+    <div class="fg" style="flex-direction:row;align-items:center;gap:8px;margin-top:.5rem">
+      <input type="checkbox" id="lanc-garantia-chk" style="width:16px;height:16px;accent-color:var(--accent)" onchange="toggleCamposGarantiaModal()">
+      <label for="lanc-garantia-chk" style="margin:0"><i class="ti ti-shield-check" style="color:var(--accent)"></i> Possui Garantia?</label>
+    </div>
+    <div id="lanc-garantia-wrap" style="display:none;margin-top:.5rem;padding:10px 12px;background:var(--surface2);border:1px solid var(--border2);border-radius:var(--radius)">
+      <div class="form-row" style="margin-bottom:0">
+        <div class="fg">
+          <label>Prazo em meses</label>
+          <input type="number" id="lanc-garantia-meses" min="1" max="120" placeholder="Ex: 12" oninput="calcularDataGarantiaPorMeses()">
+        </div>
+        <div class="fg">
+          <label>Ou data de término</label>
+          <input type="date" id="lanc-garantia-fim">
+        </div>
+      </div>
+      <div class="help-text" style="margin-top:4px">Itens com garantia aparecem no painel <strong>Garantias Ativas</strong> com alerta visual nos últimos 30 dias antes do vencimento.</div>
+    </div>
+    <div class="fg" style="margin-top:.75rem">
+      <label>Comprovante / Anexo (opcional)</label>
+      <input type="file" id="lanc-comprovante-input" accept="image/*,.pdf" style="display:none" onchange="anexarComprovante(this.files[0])">
+      <div id="drop-zone-anexo" onclick="if(event.target===this||event.target.closest('.drop-zone-hint')) document.getElementById('lanc-comprovante-input').click()">
+        <div class="drop-zone-hint">
+          <i class="ti ti-cloud-upload"></i>
+          <span>Arraste e solte o comprovante aqui ou <strong>clique para selecionar</strong></span>
+        </div>
+        <div id="lanc-comprovante-area" style="display:flex;align-items:center;justify-content:center;gap:10px;margin-top:8px;flex-wrap:wrap"></div>
+      </div>
+    </div>
+    <div class="modal-actions">
+      <button class="btn" onclick="fecharModal('modal-lancamento')">Cancelar</button>
+      <button class="btn btn-primary" id="btn-salvar-lancamento" onclick="salvarLancamento()"><i class="ti ti-device-floppy"></i> Salvar</button>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL NOVA TRANSFERÊNCIA -->
+<div class="modal-bg" id="modal-transferencia">
+  <div class="modal">
+    <div class="modal-head">
+      <div class="modal-title">Nova transferência entre contas</div>
+      <button class="modal-close" onclick="fecharModal('modal-transferencia')"><i class="ti ti-x"></i></button>
+    </div>
+    <div class="help-text" style="margin-bottom:.75rem">Move dinheiro de uma conta pra outra sem contar como receita ou despesa nos seus relatórios.</div>
+    <div class="form-row">
+      <div class="fg"><label>De (conta origem)</label><select id="transf-origem"></select></div>
+      <div class="fg"><label>Para (conta destino)</label><select id="transf-destino"></select></div>
+    </div>
+    <div class="form-row">
+      <div class="fg"><label>Valor</label><input type="text" id="transf-valor" placeholder="R$ 0,00" oninput="maskMoeda(this)" onkeydown="seEnviar(event, salvarTransferencia)"></div>
+      <div class="fg"><label>Data</label><input type="date" id="transf-data" onkeydown="seEnviar(event, salvarTransferencia)"></div>
+    </div>
+    <div class="fg"><label>Descrição (opcional)</label><input type="text" id="transf-descricao" placeholder="Ex: Reserva mensal" onkeydown="seEnviar(event, salvarTransferencia)"></div>
+    <div class="modal-actions">
+      <button class="btn" onclick="fecharModal('modal-transferencia')">Cancelar</button>
+      <button class="btn btn-primary" onclick="salvarTransferencia()"><i class="ti ti-transfer"></i> Transferir</button>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL VISUALIZAR COMPROVANTE -->
+<div class="modal-bg" id="modal-comprovante">
+  <div class="modal" style="text-align:center">
+    <div class="modal-head">
+      <div class="modal-title">Comprovante</div>
+      <button class="modal-close" onclick="fecharModal('modal-comprovante')"><i class="ti ti-x"></i></button>
+    </div>
+    <img id="comprovante-img-grande" style="max-width:100%;border-radius:var(--radius)">
+  </div>
+</div>
+
+<!-- MODAL LIXEIRA -->
+<div class="modal-bg" id="modal-lixeira">
+  <div class="modal wide">
+    <div class="modal-head">
+      <div class="modal-title">Lixeira</div>
+      <button class="modal-close" onclick="fecharModal('modal-lixeira')"><i class="ti ti-x"></i></button>
+    </div>
+    <div class="help-text" style="margin-bottom:.75rem">Lançamentos excluídos ficam aqui por 30 dias. Restaurar traz de volta e reenvia pra planilha na próxima sincronização.</div>
+    <div class="table-wrap" style="max-height:340px;overflow-y:auto">
+      <table><thead><tr><th>Excluído em</th><th>O que foi</th><th style="text-align:right">Valor</th><th style="width:170px"></th></tr></thead><tbody id="lixeira-tbody"></tbody></table>
+    </div>
+    <div id="lixeira-vazia" class="empty" style="display:none"><i class="ti ti-trash-off"></i><p>A lixeira está vazia.</p></div>
+    <div class="modal-actions">
+      <button class="btn btn-danger" id="btn-esvaziar-lixeira" onclick="esvaziarLixeira()"><i class="ti ti-trash"></i> Esvaziar lixeira</button>
+      <button class="btn" onclick="fecharModal('modal-lixeira')">Fechar</button>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL GENÉRICO DE VALOR (substitui prompt(), que o Electron não suporta) -->
+<div class="modal-bg" id="modal-prompt">
+  <div class="modal" style="max-width:380px">
+    <div class="modal-head">
+      <div class="modal-title" id="prompt-titulo">Valor</div>
+      <button class="modal-close" onclick="cancelarPrompt()"><i class="ti ti-x"></i></button>
+    </div>
+    <div class="fg"><input type="text" id="prompt-valor" placeholder="R$ 0,00" oninput="if(!window.__promptModoTexto) maskMoeda(this)" onkeydown="seEnviar(event, confirmarPrompt)"></div>
+    <div class="modal-actions">
+      <button class="btn" onclick="cancelarPrompt()">Cancelar</button>
+      <button class="btn btn-primary" onclick="confirmarPrompt()"><i class="ti ti-check"></i> Confirmar</button>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL GARANTIAS ATIVAS (WARRANTY TRACKER) -->
+<div class="modal-bg" id="modal-garantias">
+  <div class="modal wide">
+    <div class="modal-head">
+      <div class="modal-title"><i class="ti ti-shield-check" style="color:var(--accent)"></i> Cofre de Garantias Ativas</div>
+      <button class="modal-close" onclick="fecharModal('modal-garantias')"><i class="ti ti-x"></i></button>
+    </div>
+    <div class="help-text" style="margin-bottom:.75rem">Acompanhe o prazo restante de garantia das suas compras. Itens que expiram nos próximos 30 dias recebem destaque de alerta.</div>
+    <div id="garantias-resumo-kpis" class="grid4" style="margin-bottom:1rem"></div>
+    <div id="garantias-lista" style="max-height:380px;overflow-y:auto"></div>
+    <div class="modal-actions">
+      <button class="btn" onclick="fecharModal('modal-garantias')">Fechar</button>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL BUSCA GLOBAL / SPOTLIGHT -->
+<div class="modal-bg spotlight-modal-bg" id="modal-busca">
+  <div class="modal spotlight-modal">
+    <div class="spotlight-header">
+      <i class="ti ti-search spotlight-search-icon"></i>
+      <input type="text" id="busca-input" class="spotlight-input" placeholder="Buscar lançamentos, valores ou digite > para comandos..." oninput="filtrarBusca()" onkeydown="navegarBusca(event)" autocomplete="off" spellcheck="false">
+      <div class="spotlight-kbd-hints">
+        <span class="spotlight-chip" onclick="definirTermoBusca('>')" title="Ver comandos">&gt; comandos</span>
+        <span class="spotlight-chip" onclick="definirTermoBusca('este mês')">este mês</span>
+        <span class="spotlight-chip" onclick="definirTermoBusca('mês passado')">mês passado</span>
+        <span class="spotlight-chip" onclick="definirTermoBusca('despesa')">despesas</span>
+        <span class="spotlight-chip" onclick="definirTermoBusca('receita')">receitas</span>
+      </div>
+      <button type="button" class="spotlight-close-btn" onclick="fecharModal('modal-busca')" title="Fechar (Esc)"><i class="ti ti-x"></i></button>
+    </div>
+    <div id="busca-resultados" class="spotlight-results"></div>
+    <div class="spotlight-footer">
+      <div class="spotlight-footer-hint">
+        <span><kbd>↑</kbd><kbd>↓</kbd> Navegar</span>
+        <span><kbd>↵</kbd> Executar / Editar</span>
+        <span><kbd>Esc</kbd> Fechar</span>
+      </div>
+      <div class="spotlight-footer-status" id="spotlight-footer-status">
+        <i class="ti ti-sparkles"></i> Spotlight Semântico
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL SIMULADOR DE IMPACTO (WHAT-IF) -->
+<div class="modal-bg" id="modal-simulador">
+  <div class="modal" style="max-width:440px">
+    <div class="modal-head">
+      <div class="modal-title"><i class="ti ti-calculator" style="color:var(--accent)"></i> Simulador de Compra (What-If)</div>
+      <button class="modal-close" onclick="fecharModal('modal-simulador')"><i class="ti ti-x"></i></button>
+    </div>
+    <div class="help-text" style="margin-bottom:.75rem">Simule o impacto imediato de uma nova despesa ou compra no seu orçamento e no resultado do mês atual antes de gastar.</div>
+    <div class="fg" style="margin-bottom:.85rem">
+      <label>Qual o valor da compra?</label>
+      <input type="text" id="simulador-valor" placeholder="R$ 0,00" oninput="maskMoedaSmart(this); calcularSimulacaoImpacto();" onblur="avaliarExpressaoMoeda(this); calcularSimulacaoImpacto();">
+    </div>
+    <div id="simulador-resultado" class="banner" style="display:none;margin-bottom:.5rem"></div>
+    <div class="modal-actions">
+      <button class="btn" onclick="fecharModal('modal-simulador')">Fechar</button>
+      <button class="btn btn-primary" onclick="converterSimulacaoEmLancamento()"><i class="ti ti-plus"></i> Lançar esta compra</button>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL REVISÃO DE IMPORTAÇÃO DE EXTRATO (CSV/OFX) -->
+<div class="modal-bg" id="modal-revisao-extrato">
+  <div class="modal wide">
+    <div class="modal-head">
+      <div class="modal-title"><i class="ti ti-file-import" style="color:var(--accent)"></i> Revisão de Importação de Extrato</div>
+      <button class="modal-close" onclick="fecharModal('modal-revisao-extrato')"><i class="ti ti-x"></i></button>
+    </div>
+    <div class="help-text" style="margin-bottom:.75rem">Revise os itens lidos do extrato, ajuste a categoria de cada lançamento se necessário e escolha a conta de destino antes de aprovar.</div>
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:.75rem;flex-wrap:wrap">
+      <div style="display:flex;align-items:center;gap:8px">
+        <label style="margin:0;white-space:nowrap">Conta de destino:</label>
+        <select id="extrato-rev-conta" style="width:auto;min-width:160px"></select>
+      </div>
+      <div class="help-text" id="extrato-rev-resumo" style="margin:0;font-weight:600;color:var(--text2)"></div>
+    </div>
+    <div class="extrato-rev-list" id="extrato-rev-lista"></div>
+    <div class="modal-actions">
+      <button class="btn" onclick="fecharModal('modal-revisao-extrato')">Cancelar</button>
+      <button class="btn btn-primary" onclick="aprovarTodosExtrato()"><i class="ti ti-checks"></i> Aprovar Todos</button>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL MAPEAMENTO DE IMPORTAÇÃO -->
+<div class="modal-bg" id="modal-import">
+  <div class="modal wide">
+    <div class="modal-head">
+      <div class="modal-title">Importar dados da planilha</div>
+      <button class="modal-close" onclick="cancelarImportacao()"><i class="ti ti-x"></i></button>
+    </div>
+    <div class="help-text" style="margin-bottom:.75rem">Confira qual coluna da planilha corresponde a cada campo (tentei adivinhar automaticamente). Linhas já existentes (mesma data, descrição e valor) são ignoradas.</div>
+    <div class="form-row tri" id="import-mapping" style="margin-bottom:1rem"></div>
+    <div class="section-title">Prévia (5 primeiras linhas)</div>
+    <div class="table-wrap" style="max-height:260px;overflow-y:auto">
+      <table class="map-table" id="import-preview"><thead></thead><tbody></tbody></table>
+    </div>
+    <div class="modal-actions">
+      <button class="btn" onclick="cancelarImportacao()">Cancelar</button>
+      <button class="btn btn-primary" onclick="confirmarImportacao()"><i class="ti ti-check"></i> Importar</button>
+    </div>
+  </div>
+</div>
+
+<!-- TELA DE BLOQUEIO (PIN) -->
+<div id="tela-bloqueio" role="dialog" aria-modal="true" aria-label="App bloqueado">
+  <div class="bloqueio-card">
+    <img id="bloqueio-logo" src="data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iNTEzIiBoZWlnaHQ9IjUxMyIgdmlld0JveD0iMCAwIDUxMyA1MTMiIGZpbGw9Im5vbmUiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+CjxwYXRoIGQ9Ik0xNjAuNDc0IDkzLjI4NjlMMTQzLjI1NyAxNDUuNzg1QzE0My4xNTIgMTQ2LjEwNCAxNDIuODkzIDE0Ni4zNSAxNDIuNTY5IDE0Ni40MzhMOTAuOTQ0NSAxNjAuNDNDOTAuMDIwNSAxNjAuNjgxIDg5Ljk0MjcgMTYxLjk2MSA5MC44Mjk1IDE2Mi4zMjJMMTQyLjY3MiAxODMuMzk5QzE0Mi45MzcgMTgzLjUwNyAxNDMuMTQzIDE4My43MjQgMTQzLjIzOCAxODMuOTk0TDE2MC40ODEgMjMzLjA2NEMxNjAuNzk0IDIzMy45NTYgMTYyLjA1NCAyMzMuOTU2IDE2Mi4zNjggMjMzLjA2NEwxNzkuNjIgMTgzLjk2NUMxNzkuNzA5IDE4My43MTEgMTc5Ljg5NiAxODMuNTA1IDE4MC4xMzkgMTgzLjM5MUwyMjUuMTAyIDE2Mi4yOThDMjI1LjkyOCAxNjEuOTExIDIyNS44NDYgMTYwLjcxIDIyNC45NzYgMTYwLjQzOEwxODAuMjUgMTQ2LjQ1MUMxNzkuOTQyIDE0Ni4zNTQgMTc5LjY5OSAxNDYuMTE1IDE3OS41OTkgMTQ1LjgwOEwxNjIuMzc0IDkzLjI4NjlDMTYyLjA3MyA5Mi4zNjkgMTYwLjc3NSA5Mi4zNjkgMTYwLjQ3NCA5My4yODY5WiIgZmlsbD0id2hpdGUiIHN0cm9rZT0id2hpdGUiLz4KPHBhdGggZD0iTTI5Mi45MTkgMTc4Ljg0MlYxNDcuMjk3QzI5Mi45MTkgMTQ2Ljc0NSAyOTMuMzY2IDE0Ni4yOTcgMjkzLjkxOSAxNDYuMjk3SDQwNS41OTZDNDA2LjE0OCAxNDYuMjk3IDQwNi41OTYgMTQ2Ljc0NSA0MDYuNTk2IDE0Ny4yOTdWMTc4Ljg0MkM0MDYuNTk2IDE3OS4zOTQgNDA2LjE0OCAxNzkuODQyIDQwNS41OTYgMTc5Ljg0MkgyOTMuOTE5QzI5My4zNjYgMTc5Ljg0MiAyOTIuOTE5IDE3OS4zOTQgMjkyLjkxOSAxNzguODQyWiIgZmlsbD0id2hpdGUiIHN0cm9rZT0id2hpdGUiLz4KPHBhdGggZD0iTTI5NC45MjQgNDAwLjIzM0MyOTMuODE5IDQwMC4yMzMgMjkyLjkyNCAzOTkuMzM3IDI5Mi45MjQgMzk4LjIzM1YyOTAuNDE3QzI5Mi45MjQgMjg5LjMxMyAyOTMuODE5IDI4OC40MTcgMjk0LjkyNCAyODguNDE3SDQwMC45MzRDNDAyLjAzOCAyODguNDE3IDQwMi45MzQgMjg5LjMxMyA0MDIuOTM0IDI5MC40MTdWMzk4LjIzM0M0MDIuOTM0IDM5OS4zMzcgNDAyLjAzOCA0MDAuMjMzIDQwMC45MzQgNDAwLjIzM0gyOTQuOTI0Wk0zMjAuNTA3IDMxOS42MjJDMzE5LjQwMyAzMTkuNjIyIDMxOC41MDcgMzIwLjUxNyAzMTguNTA3IDMyMS42MjJWMzMzLjIyNEMzMTguNTA3IDMzNC4zMjggMzE5LjQwMyAzMzUuMjI0IDMyMC41MDcgMzM1LjIyNEgzNzUuMzVDMzc2LjQ1NSAzMzUuMjI0IDM3Ny4zNSAzMzQuMzI4IDM3Ny4zNSAzMzMuMjI0VjMyMS42MjJDMzc3LjM1IDMyMC41MTcgMzc2LjQ1NSAzMTkuNjIyIDM3NS4zNSAzMTkuNjIySDMyMC41MDdaTTMyMC41MDcgMzUwLjgyNkMzMTkuNDAzIDM1MC44MjYgMzE4LjUwNyAzNTEuNzIxIDMxOC41MDcgMzUyLjgyNlYzNjQuNDI4QzMxOC41MDcgMzY1LjUzMyAzMTkuNDAzIDM2Ni40MjggMzIwLjUwNyAzNjYuNDI4SDM3NS4zNUMzNzYuNDU1IDM2Ni40MjggMzc3LjM1IDM2NS41MzMgMzc3LjM1IDM2NC40MjhWMzUyLjgyNkMzNzcuMzUgMzUxLjcyMSAzNzYuNDU1IDM1MC44MjYgMzc1LjM1IDM1MC44MjZIMzIwLjUwN1oiIGZpbGwtcnVsZT0iZXZlbm9kZCIgY2xpcC1ydWxlPSJldmVub2RkIiBmaWxsPSIjMUE2RkUwIi8+CjxwYXRoIGQ9Ik0xOTQuMDY2IDM5Ni4xMzhMMTYxLjQxOSAzNjIuOTU2TDEwNi43NTkgMzA3LjM5OUMxMDYuNTY4IDMwNy4yMDQgMTA2LjU2OCAzMDYuODkyIDEwNi43NTkgMzA2LjY5OEwxMjQuMzkzIDI4OC43NzVDMTI0LjU4OSAyODguNTc2IDEyNC45MSAyODguNTc2IDEyNS4xMDYgMjg4Ljc3NUwyMTIuNDEyIDM3Ny41MTRDMjEyLjYwNCAzNzcuNzA4IDIxMi42MDQgMzc4LjAyMSAyMTIuNDEyIDM3OC4yMTVMMTk0Ljc3OSAzOTYuMTM4QzE5NC41ODMgMzk2LjMzNyAxOTQuMjYyIDM5Ni4zMzcgMTk0LjA2NiAzOTYuMTM4WiIgZmlsbD0idXJsKCNwYWludDBfbGluZWFyXzM0MF8yNTIpIiBzdHJva2U9InVybCgjcGFpbnQxX2xpbmVhcl8zNDBfMjUyKSIvPgo8cGF0aCBkPSJNMTI0LjM4OCAzOTYuMTMzTDEwNi43NDcgMzc4LjIwM0MxMDYuNTU5IDM3OC4wMTEgMTA2LjU1NSAzNzcuNzA0IDEwNi43NCAzNzcuNTA5TDE5NC4wOTIgMjg1LjAyNEMxOTQuMjc1IDI4NC44MzEgMTk0LjU3NiAyODQuODE0IDE5NC43NzkgMjg0Ljk4NkwyMTYuMDA4IDMwMi45NjhDMjE2LjIzIDMwMy4xNTYgMjE2LjI0NiAzMDMuNDkzIDIxNi4wNDIgMzAzLjdMMTI1LjEwMSAzOTYuMTMzQzEyNC45MDUgMzk2LjMzMiAxMjQuNTg0IDM5Ni4zMzIgMTI0LjM4OCAzOTYuMTMzWiIgZmlsbD0id2hpdGUiIHN0cm9rZT0id2hpdGUiLz4KPHBhdGggZD0iTTAuNSA0NjMuOTE2VjUyLjgyMTJDMC41IDIyLjkyMzQgMTUuMTI4NyAwLjUgNDguMDQyOSAwLjVINDYxLjNDNDk0LjIxNSAwLjUgNTEyLjUgMTkuMTg2MSA1MTIuNSA1Mi44MjEyVjQ2My45MTZDNTEyLjUgNDk3LjU1MSA0OTQuMjE1IDUxMi41IDQ1Ny42NDMgNTEyLjVINTEuN0MyMi40NDMgNTEyLjUgMC41MDAxMTIgNDkzLjgxNCAwLjUgNDYzLjkxNlpNNDguMDQzIDQ0NS4yM1Y3MS41MDczQzQ4LjA0MjkgNTYuNTU4NCA1MS43MDAxIDUyLjgyMTIgNjYuMzI4NyA1Mi44MjEySDQ0Ni42NzJDNDYxLjMgNTIuODIxMiA0NjQuOTU3IDY0LjAzMjggNDY0Ljk1NyA3My44NjI0VjQ0NS4yM0M0NjQuOTU3IDQ1Ni40NDIgNDU3LjY0MyA0NjMuOTE2IDQ0Ni42NzIgNDYzLjkxNkg2Ni4zMjg3QzU1LjM1NzMgNDYzLjkxNiA0OC4wNDMgNDU2LjQ0MiA0OC4wNDMgNDQ1LjIzWiIgZmlsbC1ydWxlPSJldmVub2RkIiBjbGlwLXJ1bGU9ImV2ZW5vZGQiIGZpbGw9IndoaXRlIiBzdHJva2U9IndoaXRlIi8+CjxkZWZzPgo8bGluZWFyR3JhZGllbnQgaWQ9InBhaW50MF9saW5lYXJfMzQwXzI1MiIgeDE9IjExMy43NDgiIHkxPSIyOTUuODY3IiB4Mj0iMjA2LjkxNSIgeTI9IjM4Ny41MyIgZ3JhZGllbnRVbml0cz0idXNlclNwYWNlT25Vc2UiPgo8c3RvcCBzdG9wLWNvbG9yPSIjNjFCM0ZGIi8+CjxzdG9wIG9mZnNldD0iMSIgc3RvcC1jb2xvcj0iIzFBNkZFMCIvPgo8L2xpbmVhckdyYWRpZW50Pgo8bGluZWFyR3JhZGllbnQgaWQ9InBhaW50MV9saW5lYXJfMzQwXzI1MiIgeDE9IjExMy43NDgiIHkxPSIyOTUuODY3IiB4Mj0iMjA2LjkxNSIgeTI9IjM4Ny41MyIgZ3JhZGllbnRVbml0cz0idXNlclNwYWNlT25Vc2UiPgo8c3RvcCBzdG9wLWNvbG9yPSIjNjFCM0ZGIi8+CjxzdG9wIG9mZnNldD0iMSIgc3RvcC1jb2xvcj0iIzFBNkZFMCIvPgo8L2xpbmVhckdyYWRpZW50Pgo8L2RlZnM+Cjwvc3ZnPgo=" alt="COFIN" style="width:56px;height:56px;object-fit:contain">
+    <div style="font-size:20px;font-weight:700;margin:.6rem 0 .2rem">COFIN</div>
+    <div style="font-size:13px;opacity:.8;margin-bottom:1rem">Digite seu PIN para entrar</div>
+    <input type="password" id="bloqueio-pin" inputmode="numeric" autocomplete="off" maxlength="6" placeholder="••••" oninput="this.value=this.value.replace(/\D/g,'')" onkeydown="seEnviar(event, tentarDesbloquear)">
+    <button class="btn btn-primary" style="width:100%;justify-content:center;margin-top:.75rem" onclick="tentarDesbloquear()"><i class="ti ti-lock-open"></i> Entrar</button>
+    <div id="bloqueio-erro" style="min-height:20px;font-size:12.5px;margin-top:.6rem;color:#FCA5A5"></div>
+    <a href="#" onclick="mostrarEsqueciPin(event)" style="font-size:12px">Esqueci o PIN</a>
+    <div id="bloqueio-reset" style="display:none;margin-top:.9rem;text-align:left;font-size:12px;line-height:1.5;background:rgba(0,0,0,.25);padding:.75rem;border-radius:8px">
+      Sem o PIN, a única saída é <strong>apagar os dados salvos neste aparelho</strong> (lançamentos, metas, dívidas, recorrências, categorias e regras) e remover o PIN. A planilha do OneDrive não é afetada: os lançamentos voltam por ela; o resto só volta se você tiver um backup .json.
+      <input type="text" id="bloqueio-confirma" placeholder="Digite APAGAR" autocomplete="off" style="margin-top:.5rem">
+      <button class="btn btn-danger" style="width:100%;justify-content:center;margin-top:.5rem;background:#7F1D1D;color:#fff;border-color:#7F1D1D" onclick="apagarDadosDoAparelho()">Apagar dados deste aparelho</button>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL PIN -->
+<div class="modal-bg" id="modal-pin">
+  <div class="modal" style="max-width:360px">
+    <div class="modal-head">
+      <div class="modal-title" id="pin-titulo">Definir PIN</div>
+      <button class="modal-close" onclick="fecharModal('modal-pin')"><i class="ti ti-x"></i></button>
+    </div>
+    <div class="fg" id="pin-atual-wrap" style="margin-bottom:.75rem"><label>PIN atual</label><input type="password" id="pin-atual" inputmode="numeric" maxlength="6" autocomplete="off" oninput="this.value=this.value.replace(/\D/g,'')" onkeydown="seEnviar(event, confirmarModalPin)"></div>
+    <div class="fg" id="pin-novo-wrap" style="margin-bottom:.75rem"><label>Novo PIN (4 a 6 números)</label><input type="password" id="pin-novo" inputmode="numeric" maxlength="6" autocomplete="off" oninput="this.value=this.value.replace(/\D/g,'')" onkeydown="seEnviar(event, confirmarModalPin)"></div>
+    <div class="fg" id="pin-conf-wrap"><label>Repita o novo PIN</label><input type="password" id="pin-conf" inputmode="numeric" maxlength="6" autocomplete="off" oninput="this.value=this.value.replace(/\D/g,'')" onkeydown="seEnviar(event, confirmarModalPin)"></div>
+    <div id="pin-erro" class="help-text" style="color:var(--bad);min-height:16px;margin-top:.5rem"></div>
+    <div class="modal-actions">
+      <button class="btn" onclick="fecharModal('modal-pin')">Cancelar</button>
+      <button class="btn btn-primary" onclick="confirmarModalPin()"><i class="ti ti-check"></i> Confirmar</button>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL DE CONFIRMAÇÃO CUSTOMIZADO -->
+<div class="modal-bg" id="modal-confirmacao" onclick="if(event.target === this) fecharConfirmacao()">
+  <div class="confirm-box" role="alertdialog" aria-modal="true" aria-labelledby="confirm-titulo" aria-describedby="confirm-mensagem">
+    <div class="confirm-icon-wrap"><i class="ti ti-alert-triangle"></i></div>
+    <h3 id="confirm-titulo">Atenção</h3>
+    <p id="confirm-mensagem"></p>
+    <div class="confirm-actions">
+      <button type="button" class="btn" id="btn-confirm-cancel">Cancelar</button>
+      <button type="button" class="btn" id="btn-confirm-single" style="display:none"></button>
+      <button type="button" class="btn btn-danger" id="btn-confirm-ok"><i class="ti ti-check"></i> Confirmar</button>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL ASSISTENTE DE FECHAMENTO MENSAL GUIADO (WIZARD DE FIM DE MÊS) -->
+<div class="modal-bg wizard-fullscreen" id="modal-wizard-fechamento">
+  <div class="modal wizard-modal">
+    <div class="wizard-topbar">
+      <div style="display:flex;align-items:center;gap:12px">
+        <div class="meta-vault-emblem" style="width:40px;height:40px;font-size:20px"><i class="ti ti-calendar-Stats" style="font-style:normal">📅</i></div>
+        <div>
+          <div style="font-size:16px;font-weight:800;color:var(--text)" id="wizard-titulo-mes">Assistente de Fechamento Mensal</div>
+          <div class="help-text" style="margin:0" id="wizard-subtitulo-mes">Revise pendências, confira o balanço real e destine o lucro do mês encerrado.</div>
+        </div>
+      </div>
+      <div class="wizard-steps-indicator">
+        <div class="wizard-step-pill active" id="wiz-pill-1"><span class="step-num">1</span> <span>Pendências</span></div>
+        <i class="ti ti-chevron-right" style="color:var(--text4)"></i>
+        <div class="wizard-step-pill" id="wiz-pill-2"><span class="step-num">2</span> <span>Balanço Real</span></div>
+        <i class="ti ti-chevron-right" style="color:var(--text4)"></i>
+        <div class="wizard-step-pill" id="wiz-pill-3"><span class="step-num">3</span> <span>Destino do Lucro</span></div>
+      </div>
+      <button class="btn btn-sm" onclick="adiarWizardFechamento()" title="Fechar e lembrar depois"><i class="ti ti-x"></i> Fechar</button>
+    </div>
+
+    <div class="wizard-body">
+      <!-- PASSO 1: PENDÊNCIAS DO MÊS ANTERIOR -->
+      <div class="wizard-panel active" id="wizard-step-1">
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:1rem;flex-wrap:wrap">
+          <div>
+            <h3 style="font-size:17px;font-weight:700;color:var(--text)">Passo 1: Pendências do Mês Encerrado (<span id="wiz-step1-mes-label"></span>)</h3>
+            <p class="help-text" style="margin:2px 0 0">Estes lançamentos ficaram com status <strong>"Pendente"</strong> no mês anterior. Resolva-os rapidamente em lote antes de apurar o fecho.</p>
+          </div>
+          <span class="badge badge-pendente" id="wiz-pend-count-badge" style="font-size:12px;padding:5px 12px">0 pendentes</span>
+        </div>
+
+        <div class="wizard-pend-batch" id="wiz-pend-actions-bar">
+          <div style="font-size:12.5px;font-weight:600;color:var(--text2)"><i class="ti ti-bolt" style="color:var(--accent)"></i> Ações rápidas em lote:</div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap">
+            <button type="button" class="btn btn-primary btn-sm" onclick="acaoLoteWizardPendencias('pagar')"><i class="ti ti-checks"></i> Marcar todos como Pagos</button>
+            <button type="button" class="btn btn-sm" onclick="acaoLoteWizardPendencias('mover')"><i class="ti ti-calendar-forward"></i> Mover para o mês atual</button>
+            <button type="button" class="btn btn-danger btn-sm" onclick="acaoLoteWizardPendencias('apagar')"><i class="ti ti-trash"></i> Apagar</button>
+          </div>
+        </div>
+
+        <div id="wiz-pend-list-wrap" class="table-wrap" style="max-height:360px;overflow-y:auto;border:1px solid var(--border);border-radius:var(--radius)">
+          <table>
+            <thead><tr><th>Data</th><th>Descrição</th><th>Categoria</th><th>Conta</th><th style="text-align:right">Valor</th><th style="width:120px;text-align:right">Ação</th></tr></thead>
+            <tbody id="wiz-pend-tbody"></tbody>
+          </table>
+        </div>
+        <div id="wiz-pend-empty" class="empty" style="display:none;padding:2.5rem 1rem">
+          <i class="ti ti-circle-check" style="color:var(--good);opacity:1;font-size:42px"></i>
+          <p style="font-weight:600;color:var(--text)">Tudo em dia! Nenhuma pendência restou no mês encerrado.</p>
+          <p class="help-text">Pode avançar para o Passo 2 para conferir o Balanço Real.</p>
+        </div>
+      </div>
+
+      <!-- PASSO 2: BALANÇO DO MÊS -->
+      <div class="wizard-panel" id="wizard-step-2">
+        <h3 style="font-size:17px;font-weight:700;color:var(--text);margin-bottom:4px">Passo 2: Balanço Real do Mês (<span id="wiz-step2-mes-label"></span>)</h3>
+        <p class="help-text" style="margin-top:0;margin-bottom:1.25rem">Resultado consolidado considerando apenas <strong>Receitas Efetivadas − Despesas Efetivadas</strong> (excluindo transferências entre contas).</p>
+
+        <div class="grid4" style="grid-template-columns:repeat(3, 1fr)" id="wiz-balanco-kpis"></div>
+
+        <div class="wizard-balanco-hero" id="wiz-balanco-hero"></div>
+      </div>
+
+      <!-- PASSO 3: DESTINO DO LUCRO -->
+      <div class="wizard-panel" id="wizard-step-3">
+        <h3 style="font-size:17px;font-weight:700;color:var(--text);margin-bottom:4px">Passo 3: Destino do Resultado (<span id="wiz-step3-mes-label"></span>)</h3>
+        <p class="help-text" style="margin-top:0;margin-bottom:1.25rem">Transforme o saldo positivo do mês encerrado em patrimônio protegido nos seus Cofres / Metas.</p>
+
+        <div id="wiz-destino-positivo" style="display:none">
+          <div class="banner" style="background:var(--good-bg);border-color:rgba(22,163,74,.35);color:var(--good-text);align-items:center">
+            <i class="ti ti-trophy" style="font-size:24px;flex-shrink:0"></i>
+            <div style="font-size:13.5px" id="wiz-pergunta-lucro">Deseja alocar este lucro em algum Cofre?</div>
+          </div>
+
+          <div class="card" style="background:var(--surface2);margin-top:1rem">
+            <div class="form-row">
+              <div class="fg">
+                <label>Selecionar Cofre / Meta Ativo</label>
+                <select id="wiz-select-cofre"></select>
+              </div>
+              <div class="fg">
+                <label>Valor a alocar no Cofre</label>
+                <input type="text" id="wiz-valor-alocar" placeholder="R$ 0,00" oninput="maskMoedaSmart(this)" onblur="avaliarExpressaoMoeda(this)">
+              </div>
+            </div>
+            <div class="help-text" id="wiz-sem-cofres-aviso" style="display:none;color:var(--amber-text)">
+              <i class="ti ti-info-circle"></i> Ainda não tem nenhum Cofre/Meta cadastrado. Se confirmar a alocação, criaremos automaticamente o cofre <strong>"Reserva de Lucros"</strong> para guardar o valor.
+            </div>
+          </div>
+        </div>
+
+        <div id="wiz-destino-negativo" style="display:none">
+          <div class="banner" style="background:var(--amber-bg);border-color:var(--amber-border);color:var(--amber-text);align-items:center">
+            <i class="ti ti-info-circle" style="font-size:22px;flex-shrink:0"></i>
+            <div>
+              <strong>Mês encerrado sem saldo positivo disponível para alocação.</strong><br>
+              Conclua o fechamento mensal para atualizar o período de referência e focar nas metas do novo mês.
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="wizard-footer">
+      <button type="button" class="btn" id="wiz-btn-voltar" onclick="navegarWizardStep(-1)" style="visibility:hidden"><i class="ti ti-arrow-left"></i> Passo Anterior</button>
+      <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+        <button type="button" class="btn" id="wiz-btn-pular-alocacao" onclick="concluirFechamentoMensal(false)" style="display:none">Concluir sem alocar em Cofre</button>
+        <button type="button" class="btn btn-primary" id="wiz-btn-avancar" onclick="navegarWizardStep(1)">Próximo Passo <i class="ti ti-arrow-right"></i></button>
+        <button type="button" class="btn btn-primary" id="wiz-btn-confirmar-alocacao" onclick="concluirFechamentoMensal(true)" style="display:none;background:var(--good);border-color:var(--good)"><i class="ti ti-pig-money"></i> Confirmar e Alocar no Cofre</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL SIMULADOR À VISTA VS. PARCELADO -->
+<div class="modal-bg" id="modal-simulador-parcelado">
+  <div class="modal wide" style="max-width:680px">
+    <div class="modal-head">
+      <div class="modal-title"><i class="ti ti-percentage" style="color:var(--accent);margin-right:6px"></i> Simulador: Comprar À Vista vs. Parcelado</div>
+      <button class="modal-close" onclick="fecharModal('modal-simulador-parcelado')"><i class="ti ti-x"></i></button>
+    </div>
+    <div class="help-text" style="margin-bottom:.85rem">Descubra matematicamente se vale mais a pena aproveitar o desconto à vista hoje ou parcelar a compra no cartão deixando o dinheiro render num Cofre/CDI.</div>
+    
+    <div class="form-row" style="grid-template-columns:1fr 1fr;gap:12px;margin-bottom:.75rem">
+      <div class="fg">
+        <label>Valor da Compra (R$)</label>
+        <input type="text" id="sim-parc-valor" placeholder="R$ 1.200,00" value="R$ 1.200,00" oninput="maskMoedaSmart(this); calcularSimuladorParcelado();" onblur="avaliarExpressaoMoeda(this); calcularSimuladorParcelado();">
+      </div>
+      <div class="fg">
+        <label>Desconto À Vista (%)</label>
+        <div style="display:flex;align-items:center;gap:6px">
+          <input type="number" id="sim-parc-desconto" min="0" max="99" step="0.5" value="10" oninput="calcularSimuladorParcelado()">
+          <span style="font-weight:700;color:var(--text3)">%</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="form-row" style="grid-template-columns:1fr 1fr;gap:12px;margin-bottom:1rem">
+      <div class="fg">
+        <label>Número de Parcelas (sem juros)</label>
+        <select id="sim-parc-qtd" onchange="calcularSimuladorParcelado()"></select>
+      </div>
+      <div class="fg">
+        <label>Rendimento dos Cofres (% a.m.)</label>
+        <div style="display:flex;align-items:center;gap:6px">
+          <input type="number" id="sim-parc-taxa" min="0.01" max="10" step="0.05" value="0.85" oninput="calcularSimuladorParcelado()">
+          <span style="font-weight:700;color:var(--text3)">% a.m.</span>
+        </div>
+        <span class="help-text" style="font-size:11px;margin-top:2px">Padrão 0.85% a.m. (~100% a 105% do CDI)</span>
+      </div>
+    </div>
+
+    <!-- VEREDITO VISUAL BANNER -->
+    <div id="sim-parc-veredito-banner" class="sim-veredito-box"></div>
+
+    <!-- COMPARATIVO 2 CARDS -->
+    <div class="sim-comparativo-grid" style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin:1rem 0">
+      <div class="card" style="background:var(--surface2);border:1px solid var(--border2);margin:0;padding:1rem" id="sim-card-avista">
+        <div style="font-size:11.5px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--text3);margin-bottom:4px">Opção 1: À Vista com Desconto</div>
+        <div class="valor-sensivel" style="font-size:24px;font-weight:800;color:var(--good);margin-bottom:6px" id="sim-avista-valor-final">R$ 0,00</div>
+        <div class="help-text" style="margin:0;font-size:12px" id="sim-avista-detalhe">Economia imediata de R$ 0,00 no ato da compra.</div>
+      </div>
+      <div class="card" style="background:var(--surface2);border:1px solid var(--border2);margin:0;padding:1rem" id="sim-card-parcelado">
+        <div style="font-size:11.5px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--text3);margin-bottom:4px">Opção 2: Parcelar + Rende no Cofre</div>
+        <div class="valor-sensivel" style="font-size:24px;font-weight:800;color:var(--accent);margin-bottom:6px" id="sim-parc-valor-final">R$ 0,00</div>
+        <div class="help-text" style="margin:0;font-size:12px" id="sim-parc-detalhe">Rendimento líquido acumulado no cofre durante as parcelas.</div>
+      </div>
+    </div>
+
+    <!-- DETALHAMENTO MÊS A MÊS (COLAPSO) -->
+    <details class="sim-detalhes-tabela" style="margin-top:.5rem;border:1px solid var(--border);border-radius:var(--radius);padding:8px 12px;background:var(--surface)">
+      <summary style="cursor:pointer;font-weight:600;font-size:12.5px;color:var(--text2);user-select:none"><i class="ti ti-table"></i> Ver projeção detalhada mês a mês no Cofre</summary>
+      <div class="table-wrap" style="max-height:220px;overflow-y:auto;margin-top:8px">
+        <table style="font-size:12px">
+          <thead><tr><th>Mês</th><th>Saldo Inicial</th><th>Rendimento Mês</th><th>Parcela Paga</th><th style="text-align:right">Saldo Restante</th></tr></thead>
+          <tbody id="sim-parc-mes-a-mes-tbody"></tbody>
+        </table>
+      </div>
+    </details>
+
+    <div class="modal-actions" style="margin-top:1.25rem">
+      <button class="btn" onclick="fecharModal('modal-simulador-parcelado')">Fechar</button>
+      <button class="btn btn-primary" id="btn-sim-aplicar-lancamento" onclick="lancarCompraSimulada()"><i class="ti ti-arrow-right"></i> Lançar Opção Recomendada</button>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL GESTÃO INTELIGENTE DE CARTÕES DE CRÉDITO -->
+<div class="modal-bg" id="modal-gerir-cartoes">
+  <div class="modal wide" style="max-width:760px">
+    <div class="modal-head">
+      <div class="modal-title"><i class="ti ti-credit-card" style="color:var(--accent);margin-right:6px"></i> Gestão Inteligente de Cartões de Crédito</div>
+      <button class="modal-close" onclick="fecharModal('modal-gerir-cartoes')"><i class="ti ti-x"></i></button>
+    </div>
+    <div class="help-text" style="margin-bottom:1rem">Gerencie limites totais, datas de fechamento e vencimento de cada cartão para calcular automaticamente o Melhor Dia de Compra e organizar as parcelas futuras no seu fluxo.</div>
+
+    <!-- FORMULÁRIO DE ADIÇÃO/EDIÇÃO DE CARTÃO INTELIGENTE -->
+    <div class="card" style="background:var(--surface2);border:1px solid var(--border2);margin-bottom:1.25rem;padding:1rem 1.25rem">
+      <div style="font-size:13px;font-weight:700;color:var(--text);margin-bottom:.75rem" id="cartao-int-form-titulo"><i class="ti ti-plus"></i> Cadastrar / Editar Cartão</div>
+      <input type="hidden" id="cartao-int-id">
+      <div class="form-row" style="grid-template-columns:1.5fr 1fr 1fr 1fr;gap:10px;margin-bottom:.75rem">
+        <div class="fg">
+          <label>Nome do Cartão</label>
+          <input type="text" id="cartao-int-nome" placeholder="Ex: Nubank Ultravioleta, Itaú Black..." onkeydown="seEnviar(event, salvarCartaoInteligente)">
+        </div>
+        <div class="fg">
+          <label>Limite Total (R$)</label>
+          <input type="text" id="cartao-int-limite" placeholder="R$ 0,00" oninput="maskMoeda(this)" onkeydown="seEnviar(event, salvarCartaoInteligente)">
+        </div>
+        <div class="fg">
+          <label>Dia Fechamento</label>
+          <select id="cartao-int-fechamento"></select>
+        </div>
+        <div class="fg">
+          <label>Dia Vencimento</label>
+          <select id="cartao-int-vencimento"></select>
+        </div>
+      </div>
+      <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px">
+        <div style="display:flex;align-items:center;gap:8px">
+          <label style="font-size:12px;font-weight:600;margin:0">Cor do Cartão:</label>
+          <div class="cartao-color-picker" id="cartao-int-color-picker" style="display:flex;gap:6px">
+            <span class="cartao-color-swatch active" data-color="#1A6FE0" style="background:#1A6FE0;width:22px;height:22px;border-radius:50%;cursor:pointer;display:inline-block"></span>
+            <span class="cartao-color-swatch" data-color="#8B5CF6" style="background:#8B5CF6;width:22px;height:22px;border-radius:50%;cursor:pointer;display:inline-block"></span>
+            <span class="cartao-color-swatch" data-color="#10B981" style="background:#10B981;width:22px;height:22px;border-radius:50%;cursor:pointer;display:inline-block"></span>
+            <span class="cartao-color-swatch" data-color="#F59E0B" style="background:#F59E0B;width:22px;height:22px;border-radius:50%;cursor:pointer;display:inline-block"></span>
+            <span class="cartao-color-swatch" data-color="#EC4899" style="background:#EC4899;width:22px;height:22px;border-radius:50%;cursor:pointer;display:inline-block"></span>
+            <span class="cartao-color-swatch" data-color="#334155" style="background:#334155;width:22px;height:22px;border-radius:50%;cursor:pointer;display:inline-block"></span>
+          </div>
+          <input type="hidden" id="cartao-int-cor" value="#1A6FE0">
+        </div>
+        <div style="display:flex;gap:8px">
+          <button type="button" class="btn btn-sm" id="cartao-int-btn-cancelar" onclick="cancelarEdicaoCartaoInteligente()" style="display:none">Cancelar</button>
+          <button type="button" class="btn btn-primary btn-sm" onclick="salvarCartaoInteligente()"><i class="ti ti-device-floppy"></i> Salvar Cartão</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- LISTA DE CARTÕES ATIVOS -->
+    <div style="font-size:13px;font-weight:700;color:var(--text);margin-bottom:.5rem">Seus Cartões Cadastrados</div>
+    <div id="cartoes-int-lista" style="display:flex;flex-direction:column;gap:8px;max-height:320px;overflow-y:auto"></div>
+
+    <div class="modal-actions" style="margin-top:1.25rem">
+      <button class="btn" onclick="fecharModal('modal-gerir-cartoes')">Fechar</button>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL HISTÓRICO DE SNAPSHOTS (MÁQUINA DO TEMPO) -->
+<div class="modal-bg" id="modal-historico-snapshots">
+  <div class="modal wide" style="max-width:760px">
+    <div class="modal-head">
+      <div class="modal-title"><i class="ti ti-history" style="color:var(--accent);margin-right:6px"></i> Histórico da Máquina do Tempo de Patrimônio</div>
+      <button class="modal-close" onclick="fecharModal('modal-historico-snapshots')"><i class="ti ti-x"></i></button>
+    </div>
+    <div class="help-text" style="margin-bottom:.85rem">Fotografias imutáveis do patrimônio líquido registradas nos fechamentos mensais e gravações manuais.</div>
+
+    <div class="table-wrap" style="max-height:360px;overflow-y:auto">
+      <table>
+        <thead>
+          <tr>
+            <th>Mês/Ano</th>
+            <th style="text-align:right">Saldo Livre</th>
+            <th style="text-align:right">Cofres &amp; Metas</th>
+            <th style="text-align:right">Fatura do Mês</th>
+            <th style="text-align:right">Patrimônio Líquido</th>
+            <th style="text-align:right">Variação (MoM)</th>
+            <th style="width:60px;text-align:center">Ação</th>
+          </tr>
+        </thead>
+        <tbody id="snapshots-tbody"></tbody>
+      </table>
+    </div>
+    <div id="snapshots-empty" class="empty" style="display:none;padding:2rem 1rem">
+      <i class="ti ti-camera-off"></i>
+      <p>Nenhum snapshot de patrimônio registrado ainda.</p>
+    </div>
+
+    <div class="modal-actions" style="margin-top:1.25rem">
+      <button class="btn btn-primary" onclick="registrarSnapshotAtual()"><i class="ti ti-camera"></i> Registrar Snapshot Agora</button>
+      <button class="btn" onclick="fecharModal('modal-historico-snapshots')">Fechar</button>
+    </div>
+  </div>
+</div>
+
+<!-- OVERLAY UNIVERSAL DROPZONE (OCR) -->
+<div id="dropzone-overlay" class="dropzone-overlay" style="display:none">
+  <div class="dropzone-card">
+    <div class="dropzone-icon-ring">
+      <i class="ti ti-scan"></i>
+    </div>
+    <h2 class="dropzone-title">Solte o recibo ou fatura aqui</h2>
+    <p class="dropzone-desc">Leitura inteligente de valores, datas e comprovantes via OCR local (Tesseract.js)</p>
+    <div class="dropzone-formats">
+      <span><i class="ti ti-file-type-png"></i> PNG</span>
+      <span><i class="ti ti-file-type-jpg"></i> JPG / JPEG</span>
+      <span><i class="ti ti-file-invoice"></i> PDF / WEBP</span>
+    </div>
+  </div>
+</div>
+
+<!-- INDICADOR HUD DE PROCESSAMENTO OCR -->
+<div id="ocr-loading-hud" class="ocr-loading-hud" style="display:none">
+  <div class="ocr-spinner"></div>
+  <div class="ocr-loading-text">
+    <div style="font-weight:600">A ler fatura... (OCR)</div>
+    <div id="ocr-loading-progress" style="font-size:12px;color:var(--text3)">Processando imagem...</div>
+  </div>
+</div>
+
+<!-- MODAL CONFIGURAR ANTI-METAS -->
+<div class="modal-bg" id="modal-antimetas">
+  <div class="modal" style="max-width:440px">
+    <div class="modal-head">
+      <div class="modal-title"><i class="ti ti-flame-off" style="color:#F97316;margin-right:6px"></i> Configurar Anti-Meta</div>
+      <button class="modal-close" onclick="fecharModal('modal-antimetas')"><i class="ti ti-x"></i></button>
+    </div>
+    <div class="help-text" style="margin-bottom:1rem">
+      Anti-Metas definem um teto mensal estrito para categorias onde você deseja reduzir despesas por impulso ou conter hábitos.
+    </div>
+    <input type="hidden" id="antimeta-id">
+    <div class="fg" style="margin-bottom:1rem">
+      <label>Categoria a Controlar</label>
+      <select id="antimeta-categoria"></select>
+    </div>
+    <div class="fg" style="margin-bottom:1.25rem">
+      <label>Limite Mensal Máximo</label>
+      <input type="text" id="antimeta-limite" placeholder="R$ 0,00" oninput="maskMoeda(this)">
+    </div>
+    <div style="display:flex;gap:8px;justify-content:flex-end">
+      <button class="btn" type="button" onclick="fecharModal('modal-antimetas')">Cancelar</button>
+      <button class="btn btn-primary" type="button" onclick="salvarAntiMeta()"><i class="ti ti-check"></i> Salvar Anti-Meta</button>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL DE RENDAS / RECEITAS FIXAS (AUTO-PAYCHECK) -->
+<div class="modal-bg" id="modal-rendas">
+  <div class="modal" style="max-width:540px">
+    <div class="modal-head">
+      <div class="modal-title" id="modal-rendas-title">
+        <i class="ti ti-cash-banknote" style="color:var(--good);margin-right:6px"></i>
+        <span>Receita Fixa / Salário (Auto-Paycheck)</span>
+      </div>
+      <button class="modal-close" onclick="fecharModal('modal-rendas')"><i class="ti ti-x"></i></button>
+    </div>
+    <div class="help-text" style="margin-bottom:1rem">
+      Configure o recebimento automático para crédito direto na sua conta no dia especificado (por <strong>Dia Útil</strong> ou <strong>Dia Fixo</strong> do mês).
+    </div>
+    <input type="hidden" id="modal-recfixa-id">
+    <div class="form-row" style="margin-bottom:.75rem">
+      <div class="fg">
+        <label>Descrição</label>
+        <input type="text" id="modal-recfixa-desc" placeholder="Ex: Salário Nubank" onkeydown="seEnviar(event, salvarReceitaFixaModal)">
+      </div>
+      <div class="fg">
+        <label>Valor (R$)</label>
+        <input type="text" id="modal-recfixa-valor" placeholder="R$ 0,00" oninput="maskMoeda(this)" onkeydown="seEnviar(event, salvarReceitaFixaModal)">
+      </div>
+    </div>
+    <div class="form-row" style="margin-bottom:.75rem">
+      <div class="fg">
+        <label>Conta de Destino</label>
+        <select id="modal-recfixa-conta"></select>
+      </div>
+      <div class="fg">
+        <label>Categoria</label>
+        <select id="modal-recfixa-cat"></select>
+      </div>
+    </div>
+    <div class="form-row" style="margin-bottom:.75rem">
+      <div class="fg">
+        <label>Regra de Recebimento</label>
+        <select id="modal-recfixa-tipo-regra" onchange="atualizarDicaRegraReceitaFixaModal()">
+          <option value="dia_util">Dia Útil do Mês (ex: 5º dia útil)</option>
+          <option value="dia_fixo">Dia Fixo do Mês (ex: todo dia 5)</option>
+        </select>
+      </div>
+      <div class="fg">
+        <label>Número do Dia</label>
+        <input type="number" id="modal-recfixa-dia" min="1" max="31" value="5" onchange="atualizarDicaRegraReceitaFixaModal()" oninput="atualizarDicaRegraReceitaFixaModal()" onkeydown="seEnviar(event, salvarReceitaFixaModal)">
+      </div>
+    </div>
+    <div class="help-text" id="modal-recfixa-dica-regra" style="margin-bottom:1rem;color:var(--good-text);font-weight:500"></div>
+    <div style="display:flex;gap:8px;justify-content:flex-end">
+      <button class="btn" type="button" onclick="fecharModal('modal-rendas')">Cancelar</button>
+      <button class="btn btn-primary" type="button" id="modal-recfixa-btn-salvar" onclick="salvarReceitaFixaModal()"><i class="ti ti-check"></i> Salvar Receita Fixa</button>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL DE CONCILIAÇÃO BANCÁRIA (BALANCE RECONCILER) -->
+<div class="modal-bg" id="modal-conciliacao-bancaria">
+  <div class="modal wide" style="max-width:640px">
+    <div class="modal-head">
+      <div class="modal-title" style="display:flex;align-items:center;gap:8px">
+        <i class="ti ti-scale" style="color:var(--accent);font-size:18px"></i>
+        <span>Modo de Conciliação Bancária</span>
+      </div>
+      <button class="modal-close" onclick="fecharModal('modal-conciliacao-bancaria')"><i class="ti ti-x"></i></button>
+    </div>
+    <div class="help-text" style="margin-bottom:.85rem">
+      Informe o saldo real exibido no seu banco e marque os lançamentos do mês que já compensaram no extrato para validar a exatidão da conta.
+    </div>
+
+    <div class="form-row" style="grid-template-columns:1.1fr 0.9fr 1.2fr;gap:10px;margin-bottom:.85rem">
+      <div class="fg">
+        <label>Conta Bancária</label>
+        <select id="concil-banco-conta" onchange="aoMudarFiltroConciliacaoBancaria()"></select>
+      </div>
+      <div class="fg">
+        <label>Mês de Referência</label>
+        <select id="concil-banco-mes" onchange="aoMudarFiltroConciliacaoBancaria()"></select>
+      </div>
+      <div class="fg">
+        <label>Saldo Real no Banco (R$)</label>
+        <input type="text" id="concil-saldo-real" placeholder="R$ 0,00" oninput="maskMoedaComSinal(this); atualizarCalculoConciliacaoBancaria();" onkeydown="seEnviar(event, finalizarConciliacaoBancaria)">
+      </div>
+    </div>
+
+    <div class="concil-kpis-grid">
+      <div class="concil-kpi-box">
+        <span class="concil-kpi-label">Saldo App (Base)</span>
+        <strong class="concil-kpi-val valor-sensivel" id="concil-kpi-base">R$ 0,00</strong>
+      </div>
+      <div class="concil-kpi-box">
+        <span class="concil-kpi-label">+ Selecionados</span>
+        <strong class="concil-kpi-val valor-sensivel" id="concil-kpi-selecionados">R$ 0,00</strong>
+      </div>
+      <div class="concil-kpi-box">
+        <span class="concil-kpi-label">= Saldo Esperado</span>
+        <strong class="concil-kpi-val valor-sensivel" id="concil-kpi-esperado">R$ 0,00</strong>
+      </div>
+      <div class="concil-kpi-box destaque" id="concil-kpi-dif-box">
+        <span class="concil-kpi-label">Diferença</span>
+        <strong class="concil-kpi-val valor-sensivel" id="concil-kpi-diferenca">R$ 0,00</strong>
+      </div>
+    </div>
+
+    <div id="concil-status-banner" class="concil-status-banner"></div>
+
+    <div class="concil-list-header">
+      <span class="section-title" style="margin:0" id="concil-lista-titulo">Lançamentos do mês não conciliados</span>
+      <div style="display:flex;gap:6px;align-items:center">
+        <button type="button" class="btn btn-sm" onclick="marcarTodosConciliacaoBancaria(true)"><i class="ti ti-checks"></i> Marcar todos</button>
+        <button type="button" class="btn btn-sm" onclick="marcarTodosConciliacaoBancaria(false)">Limpar</button>
+      </div>
+    </div>
+
+    <div class="concil-lista-wrap" id="concil-banco-lista"></div>
+
+    <div class="modal-actions">
+      <button type="button" class="btn" onclick="fecharModal('modal-conciliacao-bancaria')">Cancelar</button>
+      <button type="button" class="btn btn-primary" id="btn-finalizar-conciliacao" onclick="finalizarConciliacaoBancaria()"><i class="ti ti-circle-check"></i> Finalizar Conciliação</button>
+    </div>
+  </div>
+</div>
+
+<!-- MENU DE CONTEXTO NATIVO (RIGHT-CLICK LANÇAMENTOS) -->
+<div id="context-menu" class="context-menu" role="menu" aria-hidden="true">
+  <div class="context-menu-header" id="ctx-menu-titulo">Lançamento</div>
+  <button type="button" class="context-menu-item" id="ctx-btn-editar">
+    <i class="ti ti-pencil"></i>
+    <span>Editar</span>
+  </button>
+  <button type="button" class="context-menu-item" id="ctx-btn-duplicar">
+    <i class="ti ti-copy"></i>
+    <span>Duplicar Lançamento</span>
+  </button>
+  <button type="button" class="context-menu-item" id="ctx-btn-status">
+    <i class="ti ti-arrows-exchange"></i>
+    <span id="ctx-label-status">Alternar Estado (Pago/Pendente)</span>
+  </button>
+  <div class="context-menu-divider"></div>
+  <button type="button" class="context-menu-item danger" id="ctx-btn-apagar">
+    <i class="ti ti-trash"></i>
+    <span>Apagar</span>
+  </button>
+</div>
+
+<!-- CANVAS DE CELEBRAÇÕES / CONFETTIS (DOPAMINE MILESTONES) -->
+<canvas id="confetti-canvas" aria-hidden="true"></canvas>
+
+<div class="toast" id="toast"></div>
+
+<script src="app.js"></script>
+
+</body>
+</html>
