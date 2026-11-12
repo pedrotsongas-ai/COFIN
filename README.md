@@ -7,7 +7,7 @@
   </p>
 
   <p>
-    <img src="https://img.shields.io/badge/vers%C3%A3o-1.2.1-1A6FE0?style=for-the-badge" alt="Versão 1.2.1" />
+    <img src="https://img.shields.io/badge/vers%C3%A3o-1.3.0-1A6FE0?style=for-the-badge" alt="Versão 1.3.0" />
     <img src="https://img.shields.io/badge/Electron-32.0-47848F?style=for-the-badge&logo=electron&logoColor=white" alt="Electron 32" />
     <img src="https://img.shields.io/badge/Windows-NSIS%20Installer-0078D6?style=for-the-badge&logo=windows&logoColor=white" alt="Windows NSIS" />
     <img src="https://img.shields.io/badge/CI%2FCD-GitHub%20Actions-2088FF?style=for-the-badge&logo=github-actions&logoColor=white" alt="GitHub Actions" />
@@ -147,7 +147,7 @@ npm start
 ```bash
 npm run dist
 ```
-Os artefatos empacotados serão gerados em `dist/` (ex.: `dist/COFIN-Setup-1.2.1.exe`), diretório devidamente ignorado pelo Git.
+Os artefatos empacotados serão gerados em `dist/` (ex.: `dist/COFIN-Setup-1.3.0.exe`), diretório devidamente ignorado pelo Git.
 
 ### Publicar uma Nova Versão (OTA)
 1. Atualize a versão em [`package.json`](package.json), [`package-lock.json`](package-lock.json), [`app.js`](app.js) (`CURRENT_VERSION` / `APP_VERSAO`) e Patch Notes em [`index.html`](index.html).

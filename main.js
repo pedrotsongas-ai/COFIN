@@ -3,6 +3,13 @@ const path = require('path');
 const fs = require('fs');
 const http = require('http');
 const os = require('os');
+const dotenv = require('dotenv');
+const { PluggyClient } = require('pluggy-sdk');
+
+const caminhoEnv = fs.existsSync(path.join(__dirname, '.env'))
+  ? path.join(__dirname, '.env')
+  : path.join(process.resourcesPath || __dirname, '.env');
+dotenv.config({ path: caminhoEnv });
 
 function criarFallbackLogger() {
   const gravarArquivo = (nivel, args) => {
@@ -669,6 +676,81 @@ ipcMain.handle('verificar-atualizacoes-agora', async () => {
 ipcMain.handle('aplicar-atualizacao', () => executarQuitAndInstall());
 
 ipcMain.on('aplicar-atualizacao', () => executarQuitAndInstall());
+
+/* ================= OPEN FINANCE (PLUGGY CONNECT) ================= */
+let pluggyClient = null;
+
+function inicializarPluggyClient() {
+  if (pluggyClient) return pluggyClient;
+
+  const clientId = String(process.env.PLUGGY_CLIENT_ID || '').trim();
+  const clientSecret = String(process.env.PLUGGY_CLIENT_SECRET || '').trim();
+  if (!clientId || !clientSecret) {
+    return null;
+  }
+
+  pluggyClient = new PluggyClient({ clientId, clientSecret });
+  return pluggyClient;
+}
+
+try {
+  pluggyClient = inicializarPluggyClient();
+  if (!pluggyClient) {
+    console.warn('[Pluggy] Credenciais PLUGGY_CLIENT_ID/PLUGGY_CLIENT_SECRET ainda vazias no .env; aguardando configuração.');
+  }
+} catch (err) {
+  console.warn('[Pluggy] Falha ao inicializar PluggyClient:', err && err.message ? err.message : err);
+}
+
+function sanitizarOpcoesConnectToken(opcoesBrutas) {
+  if (!opcoesBrutas || typeof opcoesBrutas !== 'object' || Array.isArray(opcoesBrutas)) {
+    return { itemId: undefined, options: undefined };
+  }
+  const itemId = (typeof opcoesBrutas.itemId === 'string' && opcoesBrutas.itemId.trim())
+    ? opcoesBrutas.itemId.trim()
+    : undefined;
+  const options = {};
+  if (typeof opcoesBrutas.clientUserId === 'string' && opcoesBrutas.clientUserId.trim()) {
+    options.clientUserId = opcoesBrutas.clientUserId.trim().slice(0, 255);
+  }
+  if (typeof opcoesBrutas.avoidDuplicates === 'boolean') {
+    options.avoidDuplicates = opcoesBrutas.avoidDuplicates;
+  }
+  if (typeof opcoesBrutas.connectorSortAlphabetically === 'boolean') {
+    options.connectorSortAlphabetically = opcoesBrutas.connectorSortAlphabetically;
+  }
+  return {
+    itemId,
+    options: Object.keys(options).length > 0 ? options : undefined
+  };
+}
+
+ipcMain.handle('pluggy:createConnectToken', async (_evento, params) => {
+  try {
+    const client = inicializarPluggyClient();
+    if (!client) {
+      return {
+        ok: false,
+        erro: 'Credenciais do Pluggy não configuradas. Preencha PLUGGY_CLIENT_ID e PLUGGY_CLIENT_SECRET no arquivo .env.'
+      };
+    }
+
+    const { itemId, options } = sanitizarOpcoesConnectToken(params);
+    const data = await client.createConnectToken(itemId, options);
+    if (!data || !data.accessToken) {
+      return { ok: false, erro: 'A API do Pluggy não devolveu um accessToken válido.' };
+    }
+
+    // Expõe exclusivamente o Connect Token efêmero; chaves permanentes permanecem isoladas no Main Process
+    return { ok: true, accessToken: data.accessToken };
+  } catch (err) {
+    console.error('[Pluggy] Erro ao criar Connect Token:', err && err.message ? err.message : err);
+    return {
+      ok: false,
+      erro: 'Erro ao solicitar Connect Token na API do Pluggy. Verifique suas credenciais e conectividade.'
+    };
+  }
+});
 
 app.whenReady().then(() => {
   configurarAutoUpdater();

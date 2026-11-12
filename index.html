@@ -31,6 +31,7 @@
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
+<script src="https://cdn.pluggy.ai/pluggy-connect/v2.8.2/pluggy-connect.js"></script>
 <script>if (window.module) module = window.module;</script>
 <link rel="stylesheet" href="style.css">
 </head>
@@ -898,6 +899,31 @@
 
         <div id="p2p-status-msg" class="help-text" style="margin-top:.75rem;margin-bottom:0">
           Pronto para sincronizar na rede local (porta 45000).
+        </div>
+      </div>
+
+      <!-- OPEN FINANCE (PLUGGY CONNECT - FASE 1) -->
+      <div class="card" id="card-pluggy-open-finance">
+        <div class="card-header" style="margin-bottom:.5rem">
+          <div class="card-title" style="display:flex;align-items:center;gap:8px">
+            <i class="ti ti-building-bank" style="color:var(--accent);font-size:18px"></i>
+            <span>Open Finance (Pluggy Connect)</span>
+          </div>
+          <span class="badge" style="background:var(--accent-bg);color:var(--accent-text);font-weight:600">
+            Infraestrutura Segura
+          </span>
+        </div>
+        <div class="help-text" style="margin-bottom:.85rem">
+          Conecte instituições bancárias via Open Finance usando tokens temporários gerados no processo principal do aplicativo (sem expor credenciais na interface).
+        </div>
+        <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+          <button
+            type="button"
+            class="btn btn-primary"
+            id="btn-conectar-banco-pluggy"
+            onclick="if (typeof iniciarPluggyConnect === 'function') iniciarPluggyConnect(); else if (typeof toast === 'function') toast('Infraestrutura Pluggy pronta. O widget será ativado na próxima fase.');">
+            <i class="ti ti-plug-connected"></i> Conectar Banco (Pluggy)
+          </button>
         </div>
       </div>
 
@@ -1819,12 +1845,13 @@
         <div style="font-size:15px;font-weight:800;color:var(--text)">COFIN Enterprise Edition</div>
         <div class="patch-date-label" id="patch-notes-date">Atualização de Novembro de 2026</div>
       </div>
-      <span class="patch-version-pill" id="patch-notes-version-badge"><i class="ti ti-rocket"></i> v1.2.1</span>
+      <span class="patch-version-pill" id="patch-notes-version-badge"><i class="ti ti-rocket"></i> v1.3.0</span>
     </div>
 
     <div class="patch-section">
       <div class="patch-section-title">✨ Novo</div>
       <ul class="patch-list" id="patch-list-novo">
+        <li><strong>Infraestrutura Open Finance (Pluggy Connect · Fase 1):</strong> Integração segura no Main Process via <code>pluggy-sdk</code> + <code>dotenv</code> com isolamento total de credenciais (<code>.env</code>), canal IPC em allowlist <code>pluggy:createConnectToken</code> e script oficial Pluggy Connect preparado em Configurações.</li>
         <li><strong>Endurecimento de Segurança Desktop &amp; Rede:</strong> Ativação de <code>contextIsolation</code> estrito, <code>webSecurity</code> nativa, allowlist de canais IPC no preload, proteção contra XSS nos lançamentos/tags, guarda anti-traversal em backups e autenticação do servidor P2P na LAN.</li>
         <li><strong>Responsividade Split-View via Container Queries:</strong> Adaptação dinâmica dos grids e cartões ao abrir o visualizador de anexos lado a lado.</li>
         <li><strong>Recursos da Edição Enterprise:</strong> Ambient Glow, Magic Move, SoundScape tátil, Split-View 50/50 e Skeleton Screens em vidro.</li>
