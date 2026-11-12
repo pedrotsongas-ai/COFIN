@@ -1,6 +1,6 @@
 /* ================= ESTADO E PERSISTÊNCIA ================= */
-const CURRENT_VERSION = '1.2.0';
-const APP_VERSAO = '1.2.0 · r10';
+const CURRENT_VERSION = '1.2.1';
+const APP_VERSAO = '1.2.1 · r11';
 const STORAGE_KEY = 'controle-financeiro-dados';
 
 const SUBCATEGORIAS_PADRAO_MAP = {

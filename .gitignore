@@ -1,17 +1,27 @@
-# Dependências
+# Dependências (package-lock.json versionado para CI determinístico via npm ci)
 node_modules/
-package-lock.json
 
-# Builds e empacotamento Electron
+# Builds, empacotamento Electron e artefatos OTA
 dist/
+out/
+release/
 build/*
 !build/icon.ico
+*.exe
+*.blockmap
+latest*.yml
 
-# Backups locais e dados temporários do usuário
+# Backups locais, segredos e dados temporários
 ~backups/
+~*
 *.backup.json
+*.bak
 *.tmp
 *.log
+.env
+.env.*
+coverage/
+.eslintcache
 
 # Atalhos e links pessoais locais
 *.lnk
@@ -27,4 +37,3 @@ $RECYCLE.BIN/
 # IDEs
 .vscode/
 .idea/
-

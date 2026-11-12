@@ -1,6 +1,6 @@
 {
   "name": "cofin",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "description": "COFIN - Controle Financeiro",
   "main": "main.js",
   "scripts": {
@@ -17,17 +17,13 @@
       "**/*",
       "!dist/**",
       "!~backups/**",
-      "!~icones/**",
-      "!Icones/**",
       "!.github/**",
       "!dev-app-update.yml",
       "!LINK MAKE.txt",
       "!Cenario_COFIN_Make.json",
       "!Iniciar COFIN.bat",
-      "!netlify.toml",
-      "!onedrive-proxy.js",
-      "!LEIA-ME.txt",
-      "!*.log"
+      "!*.log",
+      "!*.bak"
     ],
     "win": {
       "target": "nsis",
