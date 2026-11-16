@@ -11,8 +11,7 @@ const ALLOWED_INVOKE_CHANNELS = new Set([
   'obter-ip-local',
   'enviar-sync',
   'verificar-atualizacoes-agora',
-  'aplicar-atualizacao',
-  'pluggy:createConnectToken'
+  'aplicar-atualizacao'
 ]);
 
 const ALLOWED_SEND_CHANNELS = new Set([
@@ -79,10 +78,7 @@ const electronAPI = Object.freeze({
   onUpdateVerificando: createListener('update-verificando'),
   onDownloadIniciado: createListener('download-iniciado'),
   onDownloadConcluido: createListener('download-concluido'),
-  aplicarAtualizacao: () => invokeAllowlisted('aplicar-atualizacao'),
-
-  // Open Finance (Pluggy Connect)
-  criarPluggyConnectToken: (opcoes) => invokeAllowlisted('pluggy:createConnectToken', opcoes)
+  aplicarAtualizacao: () => invokeAllowlisted('aplicar-atualizacao')
 });
 
 if (process.contextIsolated) {

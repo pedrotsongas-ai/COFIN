@@ -31,11 +31,12 @@
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
-<script src="https://cdn.pluggy.ai/pluggy-connect/v2.8.2/pluggy-connect.js"></script>
 <script>if (window.module) module = window.module;</script>
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
+
+<div id="ofx-drag-overlay" class="oculto"><div class="overlay-content">Solte o extrato .OFX aqui para importar</div></div>
 
 <div class="sidebar" id="sidebar">
   <div class="sidebar-brand">
@@ -180,6 +181,7 @@
       <div class="dash-toolbar">
         <div class="help-text" style="margin:0"><i class="ti ti-grip-vertical"></i> Arraste os blocos ou KPIs para personalizar a ordem do seu painel</div>
         <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+          <button type="button" class="btn btn-sm btn-primary" id="btn-importar-ofx-dash" onclick="abrirSeletorArquivoOFX()" title="Importar e conciliar extrato bancário (.OFX) localmente"><i class="ti ti-file-upload"></i> Conciliar .OFX</button>
           <button class="btn btn-sm" onclick="abrirWizardFechamentoMensal(true)" title="Assistente de Fechamento Mensal Guiado"><i class="ti ti-calendar-check" style="color:var(--good)"></i> Fechamento do Mês</button>
           <button class="btn btn-sm" onclick="abrirModalSimulador()" title="Simulador de Compra (Impacto no Orçamento)"><i class="ti ti-calculator" style="color:var(--accent)"></i> Simulador de Compra</button>
           <button class="btn btn-sm" id="btn-sim-parcelado" onclick="abrirModalSimuladorParcelado()" title="Simulador: Comprar À Vista vs. Parcelado"><i class="ti ti-percentage" style="color:var(--good)"></i> À Vista vs Parcelado</button>
@@ -902,29 +904,37 @@
         </div>
       </div>
 
-      <!-- OPEN FINANCE (PLUGGY CONNECT - FASE 1) -->
-      <div class="card" id="card-pluggy-open-finance">
+      <!-- CONCILIAÇÃO OFFLINE DE EXTRATOS OFX (DRAG & DROP LOCAL) -->
+      <div class="card" id="card-ofx-conciliacao">
         <div class="card-header" style="margin-bottom:.5rem">
           <div class="card-title" style="display:flex;align-items:center;gap:8px">
-            <i class="ti ti-building-bank" style="color:var(--accent);font-size:18px"></i>
-            <span>Open Finance (Pluggy Connect)</span>
+            <i class="ti ti-file-analytics" style="color:var(--accent);font-size:18px"></i>
+            <span>Conciliação de Extratos OFX (Offline)</span>
           </div>
-          <span class="badge" style="background:var(--accent-bg);color:var(--accent-text);font-weight:600">
-            Infraestrutura Segura
+          <span class="badge" style="background:var(--good-bg);color:var(--good-text);font-weight:600">
+            100% Local &amp; Privado
           </span>
         </div>
         <div class="help-text" style="margin-bottom:.85rem">
-          Conecte instituições bancárias via Open Finance usando tokens temporários gerados no processo principal do aplicativo (sem expor credenciais na interface).
+          Importe o extrato <code>.ofx</code> emitido pelo seu banco diretamente no navegador local, sem APIs externas ou credenciais na nuvem. Lançamentos repetidos são bloqueados automaticamente via <code>&lt;FITID&gt;</code>.
         </div>
-        <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
-          <button
-            type="button"
-            class="btn btn-primary"
-            id="btn-conectar-banco-pluggy"
-            onclick="if (typeof iniciarPluggyConnect === 'function') iniciarPluggyConnect(); else if (typeof toast === 'function') toast('Infraestrutura Pluggy pronta. O widget será ativado na próxima fase.');">
-            <i class="ti ti-plug-connected"></i> Conectar Banco (Pluggy)
-          </button>
+        <div
+          id="ofx-dropzone"
+          class="ofx-dropzone"
+          role="button"
+          tabindex="0"
+          aria-label="Arraste o seu extrato .OFX aqui para conciliar ou clique para selecionar um arquivo">
+          <div class="ofx-dropzone-icon">
+            <i class="ti ti-cloud-upload"></i>
+          </div>
+          <div class="ofx-dropzone-title">Arraste o seu extrato .OFX aqui para conciliar</div>
+          <div class="ofx-dropzone-sub">ou clique para selecionar um ficheiro <code>.ofx</code> do seu computador</div>
+          <div class="ofx-dropzone-pills">
+            <span><i class="ti ti-shield-lock"></i> Zero servidores externos</span>
+            <span><i class="ti ti-fingerprint"></i> Anti-duplicação por FITID</span>
+          </div>
         </div>
+        <input type="file" id="ofx-file-input" accept=".ofx,.qfx,.xml" style="display:none">
       </div>
 
       <!-- ATUALIZAÇÕES DO SISTEMA (AUTO-UPDATE OTA) -->
@@ -1831,7 +1841,7 @@
 
 <!-- MODAL DE PATCH NOTES (LOG DE ATUALIZAÇÃO) -->
 <div class="modal-bg" id="modal-patch-notes">
-  <div class="modal wide" style="max-width:560px">
+  <div class="modal patch-notes-modal">
     <div class="modal-head">
       <div class="modal-title" style="display:flex;align-items:center;gap:8px">
         <i class="ti ti-sparkles" style="color:var(--accent);font-size:19px"></i>
@@ -1840,37 +1850,63 @@
       <button class="modal-close" onclick="fecharModalPatchNotes()"><i class="ti ti-x"></i></button>
     </div>
 
-    <div class="patch-notes-hero">
-      <div>
-        <div style="font-size:15px;font-weight:800;color:var(--text)">COFIN Enterprise Edition</div>
-        <div class="patch-date-label" id="patch-notes-date">Atualização de Novembro de 2026</div>
+    <div class="patch-notes-body">
+      <div class="patch-notes-hero">
+        <div class="patch-notes-hero-info">
+          <div class="patch-notes-edition">COFIN Enterprise Edition</div>
+          <div class="patch-date-label" id="patch-notes-date">Atualização de Novembro de 2026</div>
+        </div>
+        <span class="patch-version-pill" id="patch-notes-version-badge"><i class="ti ti-rocket"></i> v1.4.0</span>
       </div>
-      <span class="patch-version-pill" id="patch-notes-version-badge"><i class="ti ti-rocket"></i> v1.3.0</span>
-    </div>
 
-    <div class="patch-section">
-      <div class="patch-section-title">✨ Novo</div>
-      <ul class="patch-list" id="patch-list-novo">
-        <li><strong>Infraestrutura Open Finance (Pluggy Connect · Fase 1):</strong> Integração segura no Main Process via <code>pluggy-sdk</code> + <code>dotenv</code> com isolamento total de credenciais (<code>.env</code>), canal IPC em allowlist <code>pluggy:createConnectToken</code> e script oficial Pluggy Connect preparado em Configurações.</li>
-        <li><strong>Endurecimento de Segurança Desktop &amp; Rede:</strong> Ativação de <code>contextIsolation</code> estrito, <code>webSecurity</code> nativa, allowlist de canais IPC no preload, proteção contra XSS nos lançamentos/tags, guarda anti-traversal em backups e autenticação do servidor P2P na LAN.</li>
-        <li><strong>Responsividade Split-View via Container Queries:</strong> Adaptação dinâmica dos grids e cartões ao abrir o visualizador de anexos lado a lado.</li>
-        <li><strong>Recursos da Edição Enterprise:</strong> Ambient Glow, Magic Move, SoundScape tátil, Split-View 50/50 e Skeleton Screens em vidro.</li>
-      </ul>
-    </div>
+      <div class="patch-section">
+        <div class="patch-section-title">✨ Novo</div>
+        <ul class="patch-list" id="patch-list-novo">
+          <li>
+            <strong class="patch-item-title">Motor Offline de Extratos OFX (Drag &amp; Drop + Revisão)</strong>
+            <span class="patch-item-desc">Importação local de extratos <code>.ofx</code> via <code>#ofx-dropzone</code> ou <em>Invisible Overlay</em> global em Glassmorphism sem flickering, parser SGML/XML nativo, vínculo automático por <code>&lt;ACCTID&gt;</code>, auto-categorização por palavras-chave, revisão humana em <code>#modal-revisao-ofx</code> e anti-duplicação por <code>&lt;FITID&gt;</code>.</span>
+          </li>
+          <li>
+            <strong class="patch-item-title">Endurecimento de Segurança Desktop &amp; Rede</strong>
+            <span class="patch-item-desc">Ativação de <code>contextIsolation</code> estrito, <code>webSecurity</code> nativa, allowlist de canais IPC no preload, proteção contra XSS nos lançamentos/tags, guarda anti-traversal em backups e autenticação do servidor P2P na LAN.</span>
+          </li>
+          <li>
+            <strong class="patch-item-title">Responsividade Split-View via Container Queries</strong>
+            <span class="patch-item-desc">Adaptação dinâmica dos grids e cartões ao abrir o visualizador de anexos lado a lado.</span>
+          </li>
+          <li>
+            <strong class="patch-item-title">Recursos da Edição Enterprise</strong>
+            <span class="patch-item-desc">Ambient Glow, Magic Move, SoundScape tátil, Split-View 50/50 e Skeleton Screens em vidro.</span>
+          </li>
+        </ul>
+      </div>
 
-    <div class="patch-section">
-      <div class="patch-section-title">🛠️ Melhorado/Corrigido</div>
-      <ul class="patch-list" id="patch-list-melhorado">
-        <li><strong>Conciliação &amp; Persistência Única:</strong> Correção definitiva de pagamento de faturas e limites de cartões, armazenamento único em <code>localStorage</code> sem duplicação de cota, alerta em <code>QuotaExceededError</code> e limpeza completa ao resetar dados.</li>
-        <li><strong>Performance 60fps &amp; Memória:</strong> Debounce na busca de lançamentos, Spotlight Glow O(1) sob o cursor, delegação de eventos 3D/navegação, liberação de nós Web Audio e Blob URLs, e otimização de GPU em animações shimmer/blur.</li>
-      </ul>
-    </div>
+      <div class="patch-section">
+        <div class="patch-section-title">🛠️ Melhorado/Corrigido</div>
+        <ul class="patch-list" id="patch-list-melhorado">
+          <li>
+            <strong class="patch-item-title">Modal de Patch Notes Responsivo</strong>
+            <span class="patch-item-desc">Correção de quebra de palavras, alinhamento fluido de listas e contenção de scroll horizontal em tags <code>&lt;code&gt;</code> dentro do modal de atualizações.</span>
+          </li>
+          <li>
+            <strong class="patch-item-title">Conciliação &amp; Persistência Única</strong>
+            <span class="patch-item-desc">Correção definitiva de pagamento de faturas e limites de cartões, armazenamento único em <code>localStorage</code> sem duplicação de cota, alerta em <code>QuotaExceededError</code> e limpeza completa ao resetar dados.</span>
+          </li>
+          <li>
+            <strong class="patch-item-title">Performance 60fps &amp; Memória</strong>
+            <span class="patch-item-desc">Debounce na busca de lançamentos, Spotlight Glow O(1) sob o cursor, delegação de eventos 3D/navegação, liberação de nós Web Audio e Blob URLs, e otimização de GPU em animações shimmer/blur.</span>
+          </li>
+        </ul>
+      </div>
 
-    <div class="patch-section">
-      <div class="patch-section-title">🗑️ Removido</div>
-      <ul class="patch-list" id="patch-list-removido">
-        <li>Código legado sem uso, estilos duplicados, SVGs Base64 redundantes no HTML e fallback inseguro CORS wildcard no P2P.</li>
-      </ul>
+      <div class="patch-section">
+        <div class="patch-section-title">🗑️ Removido</div>
+        <ul class="patch-list" id="patch-list-removido">
+          <li>
+            <span class="patch-item-desc">Infraestrutura Open Finance externa e dependências associadas em nuvem, além de código legado sem uso, estilos duplicados, SVGs Base64 redundantes e fallback CORS wildcard no P2P.</span>
+          </li>
+        </ul>
+      </div>
     </div>
 
     <div class="modal-actions" style="margin-top:1.1rem">
@@ -1936,6 +1972,84 @@
       <button type="button" class="btn" onclick="fecharModal('modal-pagar-fatura')">Cancelar</button>
       <button type="button" class="btn btn-primary" id="btn-confirmar-pagamento-fatura" onclick="confirmarPagamentoFatura()">
         <i class="ti ti-checks"></i> Confirmar Pagamento
+      </button>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL DE VÍNCULO DE CONTA OFX (<ACCTID> -> STATE.contas) -->
+<div class="modal-bg" id="modal-vincular-ofx" onclick="if(event.target === this) cancelarVinculoOFX()">
+  <div class="modal ofx-concil-modal">
+    <div class="modal-head">
+      <div>
+        <div class="modal-title" style="display:flex;align-items:center;gap:8px">
+          <i class="ti ti-link" style="color:var(--accent);font-size:19px"></i>
+          <span>Vincular Conta do Extrato OFX</span>
+        </div>
+        <div class="help-text" id="ofx-vincular-subtitulo">
+          Identificamos uma conta bancária nova neste extrato. Vincule-a abaixo para importações automáticas futuras.
+        </div>
+      </div>
+      <button type="button" class="modal-close" onclick="cancelarVinculoOFX()" title="Fechar">
+        <i class="ti ti-x"></i>
+      </button>
+    </div>
+
+    <div class="ofx-resumo-banner" id="ofx-vincular-banner">
+      <!-- Preenchido dinamicamente com <ORG>, <ACCTID> e resumo -->
+    </div>
+
+    <div class="fg" style="margin-bottom:.85rem">
+      <label for="ofx-vincular-conta-select">A qual conta pertence este extrato?</label>
+      <select id="ofx-vincular-conta-select" onchange="aoMudarSelectVinculoOFX()">
+        <!-- Contas existentes do STATE + opção Criar Nova Conta -->
+      </select>
+    </div>
+
+    <div class="fg" id="ofx-vincular-nova-wrap" style="display:none;margin-bottom:.85rem">
+      <label for="ofx-vincular-nova-nome">Nome da nova conta</label>
+      <input type="text" id="ofx-vincular-nova-nome" placeholder="Ex: Nubank Corrente, Itaú..." maxlength="60">
+    </div>
+
+    <div class="modal-actions" style="margin-top:1.15rem">
+      <button type="button" class="btn" onclick="cancelarVinculoOFX()">Cancelar</button>
+      <button type="button" class="btn btn-primary" id="btn-confirmar-vinculo-ofx" onclick="confirmarVinculoOFX()">
+        <i class="ti ti-arrow-right"></i> Continuar para Revisão
+      </button>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL DE REVISÃO DE IMPORTAÇÃO OFX (VALIDAÇÃO HUMANA) -->
+<div class="modal-bg" id="modal-revisao-ofx" onclick="if(event.target === this) cancelarRevisaoOFX()">
+  <div class="modal wide ofx-revisao-modal">
+    <div class="modal-head">
+      <div>
+        <div class="modal-title" style="display:flex;align-items:center;gap:8px">
+          <i class="ti ti-checklist" style="color:var(--accent);font-size:19px"></i>
+          <span>Revisão de Importação OFX</span>
+        </div>
+        <div class="help-text" id="ofx-revisao-subtitulo">
+          Confira as categorias sugeridas automaticamente antes de gravar os lançamentos.
+        </div>
+      </div>
+      <button type="button" class="modal-close" onclick="cancelarRevisaoOFX()" title="Fechar">
+        <i class="ti ti-x"></i>
+      </button>
+    </div>
+
+    <div class="ofx-resumo-banner ofx-revisao-topo" id="ofx-revisao-resumo">
+      <!-- Conta vinculada, período, novas vs duplicadas (FITID) -->
+    </div>
+
+    <div class="ofx-revisao-list" id="ofx-revisao-lista" role="region" aria-label="Transações para revisão">
+      <!-- Bento cards de revisão: Data, Descrição, Valor e <select> de Categoria -->
+    </div>
+
+    <div class="modal-actions" style="margin-top:1rem">
+      <button type="button" class="btn" onclick="cancelarRevisaoOFX()">Cancelar</button>
+      <button type="button" class="btn btn-primary" id="btn-confirmar-revisao-ofx" onclick="confirmarESalvarRevisaoOFX()">
+        <i class="ti ti-device-floppy"></i> Confirmar e Salvar
       </button>
     </div>
   </div>

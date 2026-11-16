@@ -1,6 +1,6 @@
 /* ================= ESTADO E PERSISTÊNCIA ================= */
-const CURRENT_VERSION = '1.3.0';
-const APP_VERSAO = '1.3.0 · r12';
+const CURRENT_VERSION = '1.4.0';
+const APP_VERSAO = '1.4.0 · r13';
 const STORAGE_KEY = 'controle-financeiro-dados';
 
 const SUBCATEGORIAS_PADRAO_MAP = {
@@ -2355,6 +2355,10 @@ function fecharModalEspecifico(id) {
     cancelarPrompt();
   } else if (id === 'modal-import' && typeof cancelarImportacao === 'function') {
     cancelarImportacao();
+  } else if (id === 'modal-vincular-ofx' && typeof cancelarVinculoOFX === 'function') {
+    cancelarVinculoOFX(true);
+  } else if (id === 'modal-revisao-ofx' && typeof cancelarRevisaoOFX === 'function') {
+    cancelarRevisaoOFX(true);
   } else {
     fecharModal(id);
   }
@@ -4133,15 +4137,20 @@ let itensExtratoEmRevisao = [];
 function lerArquivoExtrato(file) {
   if (!file) return;
   const nome = (file.name || '').toLowerCase();
+  if ((nome.endsWith('.ofx') || nome.endsWith('.qfx')) && typeof lerArquivoOFX === 'function') {
+    lerArquivoOFX(file);
+    return;
+  }
   const reader = new FileReader();
   reader.onload = (e) => {
     const conteudo = String(e.target.result || '');
-    let itens = [];
-    if (nome.endsWith('.ofx') || conteudo.includes('<OFX') || conteudo.includes('<STMTTRN>')) {
-      itens = parseExtratoOFX(conteudo);
-    } else {
-      itens = parseExtratoCSV(conteudo);
+    if (conteudo.includes('<OFX') || conteudo.includes('<STMTTRN>')) {
+      if (typeof processarTextoOFX === 'function') {
+        processarTextoOFX(conteudo, file.name, file);
+        return;
+      }
     }
+    const itens = parseExtratoCSV(conteudo);
     if (!itens.length) {
       toast('Nenhum lançamento válido encontrado neste arquivo (.csv / .ofx).', 'err');
       return;
@@ -4233,31 +4242,9 @@ function parseExtratoCSV(texto) {
   return itens;
 }
 function parseExtratoOFX(texto) {
-  const itens = [];
-  const blocos = String(texto || '').match(/<STMTTRN>[\s\S]*?(?:<\/STMTTRN>|(?=<STMTTRN>|<\/BANKTRANLIST>|$))/gi) || [];
-  blocos.forEach(bloco => {
-    const mDt = bloco.match(/<DTPOSTED>\s*([0-9]{8})/i);
-    const mVal = bloco.match(/<TRNAMT>\s*([+-]?[0-9.,]+)/i);
-    const mMemo = bloco.match(/<MEMO>\s*([^\r\n<]+)/i);
-    const mName = bloco.match(/<NAME>\s*([^\r\n<]+)/i);
-    const mType = bloco.match(/<TRNTYPE>\s*([^\r\n<]+)/i);
-    if (!mDt || !mVal) return;
-    const dataISO = normalizarDataExtrato(mDt[1]);
-    const valorBruto = parseValorExtrato(mVal[1]);
-    if (!dataISO || isNaN(valorBruto) || valorBruto === 0) return;
-    const descricao = ((mMemo && mMemo[1]) || (mName && mName[1]) || 'Transação OFX').trim();
-    const trnType = mType ? mType[1].trim().toUpperCase() : '';
-    const tipo = (valorBruto < 0 || trnType === 'DEBIT' || trnType === 'PAYMENT') ? 'despesa' : 'receita';
-    const valor = Math.abs(valorBruto);
-    itens.push({
-      data: dataISO,
-      descricao,
-      valor,
-      tipo,
-      categoria: sugerirCategoriaExtrato(descricao, tipo)
-    });
-  });
-  return itens;
+  if (typeof parseOFX !== 'function') return [];
+  const res = parseOFX(texto);
+  return Array.isArray(res) ? res : ((res && Array.isArray(res.transacoes)) ? res.transacoes : []);
 }
 function abrirModalRevisaoExtrato(itens) {
   itensExtratoEmRevisao = itens.map(it => ({ ...it }));
@@ -5581,7 +5568,13 @@ async function salvarConta() {
     const nomeAntigo = contaAntiga.nome;
     dados.id = contaAntiga.id || uid();
     dados.cor = contaAntiga.cor || '#1A6FE0';
-    STATE.contas[idxEdicao] = dados;
+    const contaAtualizada = { ...contaAntiga, ...dados };
+    if (tipo !== 'cartao') {
+      delete contaAtualizada.diaFechamento;
+      delete contaAtualizada.diaVencimento;
+      delete contaAtualizada.limite;
+    }
+    STATE.contas[idxEdicao] = contaAtualizada;
     if (nomeAntigo !== nome) {
       // Renomear precisa acompanhar tudo que referencia essa conta pelo nome
       STATE.lancamentos.forEach(l => { if (l.conta === nomeAntigo) l.conta = nome; });
@@ -11840,7 +11833,920 @@ function verificarPatchNotes() {
   }
 }
 
+/* ================= MOTOR LOCAL DE EXTRATOS OFX (DRAG & DROP) ================= */
+let transacoesPendentes = [];
+let _ofxPendenciaVinculo = null;
+let _ofxRevisaoContexto = null;
+
+const REGRAS_CATEGORIAS = {
+  Transporte: [
+    'UBER', '99APP', '99POP', 'CABIFY', 'POSTO', 'IPIRANGA', 'SHELL', 'PETROBRAS',
+    'BR MANIA', 'COMBUSTIVEL', 'GASOLINA', 'ETANOL', 'ESTACIONAMENTO', 'SEM PARAR',
+    'VELOE', 'PEDAGIO', 'BILHETE UNICO', 'METRO', 'ONIBUS', 'PASSAGEM'
+  ],
+  Alimentação: [
+    'IFOOD', 'RAPPI', 'ZEDELIVERY', 'MCDONALDS', 'BURGER KING', 'STARBUCKS',
+    'RESTAURANTE', 'PADARIA', 'LANCHONETE', 'PIZZARIA', 'CHURRASCARIA',
+    'SUPERMERCADO', 'MERCADO', 'CARREFOUR', 'ASSAI', 'ATACADAO', 'PAO DE ACUCAR',
+    'EXTRA', 'SONDA', 'HORTIFRUTI', 'SACOLAO', 'ACAI', 'CAFETERIA'
+  ],
+  Moradia: [
+    'ALUGUEL', 'CONDOMINIO', 'QUINTOANDAR', 'CPFL', 'ENEL', 'LIGHT', 'CEMIG',
+    'COPEL', 'SABESP', 'SANEPAR', 'COMGAS', 'ULTRAGAZ', 'CONTA DE GAS',
+    'CLARO', 'VIVO', 'TIM FIBRA', 'OI FIBRA', 'INTERNET', 'ENERGIA', 'LUZ',
+    'AGUA', 'IPTU'
+  ],
+  Saúde: [
+    'DROGASIL', 'DROGARIA', 'RAIA', 'PACHECO', 'ULTRAFARMA', 'PAGUE MENOS',
+    'FARMACIA', 'HOSPITAL', 'CLINICA', 'LABORATORIO', 'FLEURY', 'DELBONI',
+    'EXAME', 'UNIMED', 'AMIL', 'SULAMERICA', 'BRADESCO SAUDE', 'ODONTO',
+    'SMARTFIT', 'BLUEFIT', 'ACADEMIA', 'GYMPASS', 'WELLHUB'
+  ],
+  Educação: [
+    'UDEMY', 'ALURA', 'COURSERA', 'ROCKETSEAT', 'FACULDADE', 'UNIVERSIDADE',
+    'ESCOLA', 'MENSALIDADE ESCOLAR', 'SARAIVA', 'AMAZON LIVROS', 'LIVRARIA',
+    'HOTMART', 'KIWIFY', 'DUOLINGO'
+  ],
+  Lazer: [
+    'CINEMARK', 'CINEPOLIS', 'INGRESSO', 'SYMPLA', 'EVENTIM', 'AIRBNB',
+    'BOOKING', 'HOTEL', 'POUSADA', 'PLAYSTATION', 'XBOX', 'STEAM', 'NINTENDO',
+    'SHOPPING', 'VIAGEM', 'TEATRO', 'PARQUE'
+  ],
+  Assinaturas: [
+    'NETFLIX', 'SPOTIFY', 'AMAZON PRIME', 'PRIME VIDEO', 'DISNEY', 'HBO MAX',
+    'YOUTUBE', 'APPLE.COM/BILL', 'ICLOUD', 'GOOGLE ONE', 'CHATGPT', 'OPENAI',
+    'MICROSOFT', 'ADOBE', 'CANVA', 'GLOBOPLAY', 'MUBI', 'DEEZER'
+  ],
+  Salário: [
+    'SALARIO', 'PAGTO SALARIO', 'FOLHA', 'REMUNERACAO', 'DECIMO TERCEIRO',
+    '13 SALARIO', 'FERIAS', 'PRO-LABORE', 'VALE REFEICAO', 'VALE ALIMENTACAO'
+  ],
+  Investimentos: [
+    'DIVIDEND', 'JCP', 'RENDIMENTO', 'RESGATE CDB', 'TESOURO', 'CORRETORA',
+    'XP INVEST', 'BTG PACTUAL', 'NUINVEST', 'RICO', 'CLEAR', 'POUPANCA'
+  ],
+  Freelance: [
+    'FREELA', 'SERVICOS PRESTADOS', 'HONORARIOS', 'CONSULTORIA', 'NOTA FISCAL'
+  ]
+};
+
+const CATEGORIAS_OFX_RECEITA = new Set(['Salário', 'Freelance', 'Investimentos']);
+
+function normalizarTextoBuscaOFX(texto) {
+  return String(texto || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toUpperCase()
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function resolverNomeCategoriaNoStateOFX(nomeRegra, tipo) {
+  const categorias = Array.isArray(STATE.categorias) ? STATE.categorias : [];
+  const alvoLower = String(nomeRegra || '').toLowerCase();
+  const matchTipo = categorias.find(
+    c => c && c.nome && c.nome.toLowerCase() === alvoLower && (!tipo || c.tipo === tipo)
+  );
+  if (matchTipo) return matchTipo.nome;
+  const matchQualquer = categorias.find(c => c && c.nome && c.nome.toLowerCase() === alvoLower);
+  if (matchQualquer) return matchQualquer.nome;
+  return nomeRegra;
+}
+
+function autoCategorizar(memo, tipo) {
+  const textoLimpo = String(memo || '').trim();
+  if (!textoLimpo) return 'Outros';
+
+  if (typeof aplicarRegraCategorizacao === 'function') {
+    const porRegraUsuario = aplicarRegraCategorizacao(textoLimpo);
+    if (porRegraUsuario) return porRegraUsuario;
+  }
+
+  const textoNorm = normalizarTextoBuscaOFX(textoLimpo);
+  const todasEntradas = Object.entries(REGRAS_CATEGORIAS);
+  const entradasOrdenadas = tipo
+    ? [
+        ...todasEntradas.filter(([cat]) => (tipo === 'receita' ? CATEGORIAS_OFX_RECEITA.has(cat) : !CATEGORIAS_OFX_RECEITA.has(cat))),
+        ...todasEntradas.filter(([cat]) => (tipo === 'receita' ? !CATEGORIAS_OFX_RECEITA.has(cat) : CATEGORIAS_OFX_RECEITA.has(cat)))
+      ]
+    : todasEntradas;
+
+  for (const [categoria, palavras] of entradasOrdenadas) {
+    for (const palavra of (palavras || [])) {
+      const kw = normalizarTextoBuscaOFX(palavra);
+      if (!kw) continue;
+      if (textoNorm.includes(kw)) {
+        return resolverNomeCategoriaNoStateOFX(categoria, tipo);
+      }
+    }
+  }
+
+  return 'Outros';
+}
+
+const TIPOS_OFX_DEBITO = new Set([
+  'DEBIT',
+  'PAYMENT',
+  'FEE',
+  'SRVCHG',
+  'DIRECTDEBIT',
+  'CHECK',
+  'ATM',
+  'POS',
+  'CASH'
+]);
+
+function decodificarEntidadesOFX(texto) {
+  return String(texto || '')
+    .replace(/<!\[CDATA\[([\s\S]*?)\]\]>/gi, '$1')
+    .replace(/&amp;/gi, '&')
+    .replace(/&lt;/gi, '<')
+    .replace(/&gt;/gi, '>')
+    .replace(/&quot;/gi, '"')
+    .replace(/&apos;|&#39;/gi, "'")
+    .replace(/&#(\d+);/g, (_m, dec) => {
+      const code = parseInt(dec, 10);
+      return Number.isFinite(code) ? String.fromCharCode(code) : '';
+    })
+    .replace(/&#x([0-9a-f]+);/gi, (_m, hex) => {
+      const code = parseInt(hex, 16);
+      return Number.isFinite(code) ? String.fromCharCode(code) : '';
+    })
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function extrairCampoBlocoOFX(bloco, nomeTag) {
+  const raw = String(bloco || '');
+  const reFechada = new RegExp(`<${nomeTag}(?:\\s[^>]*)?>([\\s\\S]*?)</${nomeTag}>`, 'i');
+  const mFechada = raw.match(reFechada);
+  if (mFechada) {
+    return decodificarEntidadesOFX(mFechada[1]);
+  }
+  const reSgml = new RegExp(`<${nomeTag}(?:\\s[^>]*)?>\\s*([^<\\r\\n]+)`, 'i');
+  const mSgml = raw.match(reSgml);
+  return mSgml ? decodificarEntidadesOFX(mSgml[1]) : '';
+}
+
+function normalizarDataOFX(rawDate) {
+  const s = String(rawDate || '').trim();
+  if (!s) return '';
+
+  const mIsoNum = s.match(/^(\d{4})(\d{2})(\d{2})/);
+  if (mIsoNum) {
+    const ano = parseInt(mIsoNum[1], 10);
+    const mes = parseInt(mIsoNum[2], 10);
+    const dia = parseInt(mIsoNum[3], 10);
+    if (mes >= 1 && mes <= 12 && dia >= 1 && dia <= 31) {
+      const dt = new Date(Date.UTC(ano, mes - 1, dia));
+      if (dt.getUTCFullYear() === ano && dt.getUTCMonth() === mes - 1 && dt.getUTCDate() === dia) {
+        return `${String(ano).padStart(4, '0')}-${String(mes).padStart(2, '0')}-${String(dia).padStart(2, '0')}`;
+      }
+    }
+    return '';
+  }
+
+  return typeof normalizarDataExtrato === 'function' ? normalizarDataExtrato(s) : '';
+}
+
+function parseValorOFX(rawAmt) {
+  if (typeof rawAmt === 'number') return Number.isFinite(rawAmt) ? rawAmt : NaN;
+  const s = String(rawAmt || '').trim();
+  if (!s) return NaN;
+  const sinalInvertido = s.endsWith('-') && !s.startsWith('-');
+  const limpo = sinalInvertido ? `-${s.slice(0, -1)}` : s;
+  if (typeof parseValorExtrato === 'function') {
+    return parseValorExtrato(limpo);
+  }
+  const num = parseFloat(limpo.replace(/\s+/g, '').replace(',', '.'));
+  return Number.isFinite(num) ? num : NaN;
+}
+
+function normalizarTransacaoOFX(campos, mapaFallbackFitid) {
+  if (!campos) return null;
+  const dataISO = normalizarDataOFX(campos.dtPosted);
+  const valorAssinado = parseValorOFX(campos.trnAmt);
+  if (!dataISO || !Number.isFinite(valorAssinado) || valorAssinado === 0) return null;
+
+  const valor = Math.round(Math.abs(valorAssinado) * 100) / 100;
+  if (valor <= 0) return null;
+
+  const trnType = String(campos.trnType || '').trim().toUpperCase() || (valorAssinado < 0 ? 'DEBIT' : 'CREDIT');
+  const amtRaw = String(campos.trnAmt || '').trim();
+  const ehDebito = valorAssinado < 0 || (!amtRaw.startsWith('+') && TIPOS_OFX_DEBITO.has(trnType));
+  const tipo = ehDebito ? 'despesa' : 'receita';
+
+  const memoLimpo = String(campos.memo || '').trim();
+  const nameLimpo = String(campos.name || '').trim();
+  const memo = memoLimpo || nameLimpo || 'Transação OFX';
+  const descricao = memo;
+
+  let fitid = String(campos.fitid || '').trim();
+  if (!fitid) {
+    const chaveBase = `ofx_auto_${dataISO}_${trnType}_${valor.toFixed(2)}_${memo.toLowerCase().replace(/[^a-z0-9]+/g, '').slice(0, 18) || 'tx'}`;
+    const ocorrencia = (mapaFallbackFitid.get(chaveBase) || 0) + 1;
+    mapaFallbackFitid.set(chaveBase, ocorrencia);
+    fitid = `${chaveBase}_${ocorrencia}`;
+  }
+
+  const categoria = autoCategorizar(memo, tipo);
+
+  return {
+    fitid,
+    trnType,
+    data: dataISO,
+    valor,
+    valorAssinado: Math.round(valorAssinado * 100) / 100,
+    tipo,
+    memo,
+    descricao,
+    categoria
+  };
+}
+
+function extrairMetadadosOFX(texto) {
+  const src = String(texto || '').replace(/^\uFEFF/, '');
+  const org = extrairCampoBlocoOFX(src, 'ORG');
+  const bankId = extrairCampoBlocoOFX(src, 'BANKID');
+  const acctId = (extrairCampoBlocoOFX(src, 'ACCTID') || extrairCampoBlocoOFX(src, 'CARDID')).trim();
+  const curDef = extrairCampoBlocoOFX(src, 'CURDEF') || 'BRL';
+  const ledgerAmt = parseValorOFX(extrairCampoBlocoOFX(src, 'BALAMT'));
+  const ehCartao = /<CREDITCARDMSGSRSV\d*>|<CCSTMTRS\b|<CCSTMTTRNRS\b/i.test(src);
+
+  return {
+    org,
+    bankId,
+    acctId,
+    acctMascarada: acctId ? acctId.slice(-4) : '',
+    curDef,
+    ledgerBalance: Number.isFinite(ledgerAmt) ? Math.round(ledgerAmt * 100) / 100 : null,
+    ehCartao
+  };
+}
+
+function parseOFX(texto) {
+  if (typeof texto !== 'string' && !(texto instanceof String)) {
+    return { acctId: '', bankId: '', org: '', curDef: 'BRL', ledgerBalance: null, ehCartao: false, transacoes: [] };
+  }
+  const limpo = String(texto).replace(/^\uFEFF/, '').trim();
+  if (!limpo) {
+    return { acctId: '', bankId: '', org: '', curDef: 'BRL', ledgerBalance: null, ehCartao: false, transacoes: [] };
+  }
+
+  const metadados = extrairMetadadosOFX(limpo);
+  const mapaFallbackFitid = new Map();
+  const transacoes = [];
+
+  // Tenta DOMParser quando o ficheiro OFX 2.x for XML bem-formado com tags de fechamento
+  if (typeof DOMParser !== 'undefined' && /<\/STMTTRN>/i.test(limpo) && /<\?xml/i.test(limpo)) {
+    try {
+      const inicioXml = limpo.indexOf('<');
+      const xmlCandidato = inicioXml >= 0 ? limpo.slice(inicioXml) : limpo;
+      const doc = new DOMParser().parseFromString(xmlCandidato, 'text/xml');
+      const parserErro = doc && doc.getElementsByTagName('parsererror');
+      const nos = doc && (!parserErro || parserErro.length === 0)
+        ? Array.from(doc.getElementsByTagName('STMTTRN'))
+        : [];
+
+      if (doc && (!parserErro || parserErro.length === 0) && !metadados.acctId) {
+        const acctEls = doc.getElementsByTagName('ACCTID');
+        const cardEls = doc.getElementsByTagName('CARDID');
+        const acctDom = (acctEls && acctEls.length ? acctEls[0].textContent : (cardEls && cardEls.length ? cardEls[0].textContent : '')) || '';
+        metadados.acctId = decodificarEntidadesOFX(acctDom);
+        metadados.acctMascarada = metadados.acctId ? metadados.acctId.slice(-4) : '';
+      }
+
+      if (nos.length > 0) {
+        for (const no of nos) {
+          const lerNo = (tag) => {
+            const filhos = no.getElementsByTagName(tag);
+            if (!filhos || !filhos.length) {
+              const minuscula = no.getElementsByTagName(tag.toLowerCase());
+              return minuscula && minuscula.length ? decodificarEntidadesOFX(minuscula[0].textContent) : '';
+            }
+            return decodificarEntidadesOFX(filhos[0].textContent);
+          };
+          try {
+            const tx = normalizarTransacaoOFX({
+              trnType: lerNo('TRNTYPE'),
+              dtPosted: lerNo('DTPOSTED'),
+              trnAmt: lerNo('TRNAMT'),
+              fitid: lerNo('FITID'),
+              memo: lerNo('MEMO'),
+              name: lerNo('NAME')
+            }, mapaFallbackFitid);
+            if (tx) transacoes.push(tx);
+          } catch (errXmlItem) {
+            console.warn('[OFX] Bloco XML malformado ignorado:', errXmlItem);
+          }
+        }
+        if (transacoes.length > 0) {
+          return { ...metadados, transacoes };
+        }
+      }
+    } catch (errDom) {
+      console.warn('[OFX] Fallback para parser SGML:', errDom);
+    }
+  }
+
+  // Parser SGML/XML resiliente por bloco <STMTTRN> (compatível com OFX 1.x sem fechamento de tags)
+  const blocos = limpo.match(/<STMTTRN\b[^>]*>[\s\S]*?(?:<\/STMTTRN>|(?=<STMTTRN\b|<\/BANKTRANLIST>|<\/CCSTMTRS>|<\/STMTRS>|$))/gi) || [];
+  for (const bloco of blocos) {
+    try {
+      const tx = normalizarTransacaoOFX({
+        trnType: extrairCampoBlocoOFX(bloco, 'TRNTYPE'),
+        dtPosted: extrairCampoBlocoOFX(bloco, 'DTPOSTED'),
+        trnAmt: extrairCampoBlocoOFX(bloco, 'TRNAMT'),
+        fitid: extrairCampoBlocoOFX(bloco, 'FITID'),
+        memo: extrairCampoBlocoOFX(bloco, 'MEMO'),
+        name: extrairCampoBlocoOFX(bloco, 'NAME')
+      }, mapaFallbackFitid);
+      if (tx) transacoes.push(tx);
+    } catch (errBloco) {
+      console.warn('[OFX] Bloco SGML malformado ignorado:', errBloco);
+    }
+  }
+
+  return { ...metadados, transacoes };
+}
+
+function processarTextoOFX(conteudo, nomeArquivo, arquivoOriginal) {
+  const texto = String(conteudo || '');
+  if (!texto.trim() || (!/<OFX\b/i.test(texto) && !/<STMTTRN\b/i.test(texto))) {
+    toast(`O ficheiro "${nomeArquivo || 'OFX'}" não contém estrutura OFX válida.`, 'err');
+    return false;
+  }
+
+  // Resiliência contra ficheiros OFX bancários brasileiros gravados em Windows-1252 / ISO-8859-1
+  const declaraAnsi = /CHARSET\s*:\s*(1252|8859|ISO-?8859-1)/i.test(texto.slice(0, 512));
+  if (arquivoOriginal && !arquivoOriginal._reencodedWin1252 && (declaraAnsi || texto.includes('\uFFFD'))) {
+    const readerFallback = new FileReader();
+    readerFallback.onload = (ev) => {
+      arquivoOriginal._reencodedWin1252 = true;
+      processarTextoOFX(String((ev && ev.target && ev.target.result) || ''), nomeArquivo, arquivoOriginal);
+    };
+    readerFallback.onerror = () => {
+      toast('Erro ao decodificar acentuação do ficheiro OFX.', 'err');
+    };
+    readerFallback.readAsText(arquivoOriginal, 'windows-1252');
+    return true;
+  }
+
+  const resultadoOFX = parseOFX(texto);
+  const transacoes = Array.isArray(resultadoOFX.transacoes) ? resultadoOFX.transacoes : [];
+  if (!transacoes.length) {
+    toast(`Nenhuma transação válida (<STMTTRN>) encontrada em "${nomeArquivo || 'extrato.ofx'}".`, 'err');
+    return false;
+  }
+
+  const acctId = String(resultadoOFX.acctId || '').trim();
+  const contaVinculada = acctId
+    ? (STATE.contas || []).find(c => c && String(c.ofxAccountId || '').trim() === acctId)
+    : null;
+
+  if (!contaVinculada) {
+    abrirModalVincularOFX(nomeArquivo || 'extrato.ofx', resultadoOFX);
+    return true;
+  }
+
+  abrirModalRevisaoOFX(contaVinculada, transacoes, nomeArquivo || 'extrato.ofx', resultadoOFX);
+  return true;
+}
+
+function lerArquivoOFX(file) {
+  if (!file) return;
+  const nome = String(file.name || '').trim();
+  const reader = new FileReader();
+  reader.onload = (e) => {
+    const conteudo = String((e && e.target && e.target.result) || '');
+    processarTextoOFX(conteudo, nome, file);
+  };
+  reader.onerror = () => toast('Não foi possível ler o ficheiro .OFX selecionado.', 'err');
+  reader.readAsText(file, 'UTF-8');
+}
+
+function abrirSeletorArquivoOFX() {
+  const input = document.getElementById('ofx-file-input');
+  if (input) {
+    input.value = '';
+    input.click();
+  }
+}
+
+function coletarIdsExistentesContaOFX(nomeConta) {
+  const ids = new Set();
+  const alvo = String(nomeConta || '');
+  (STATE.lancamentos || []).forEach((l) => {
+    if (!l || l.conta !== alvo) return;
+    if (l.fitid) ids.add(String(l.fitid).trim());
+    if (l.ofxFitId) ids.add(String(l.ofxFitId).trim());
+    if (l.id) ids.add(String(l.id).trim());
+  });
+  return ids;
+}
+
+function sugerirContaParaOFX(metadados) {
+  const contas = Array.isArray(STATE.contas) ? STATE.contas : [];
+  if (!contas.length) return '';
+  if (metadados && metadados.org) {
+    const orgLower = metadados.org.toLowerCase();
+    const matchOrg = contas.find(c => c && c.nome && (orgLower.includes(c.nome.toLowerCase()) || c.nome.toLowerCase().includes(orgLower)));
+    if (matchOrg) return matchOrg.nome;
+  }
+  if (metadados && metadados.ehCartao) {
+    const cartao = contas.find(c => c && c.tipo === 'cartao');
+    if (cartao) return cartao.nome;
+  }
+  const contaBancaria = contas.find(c => c && c.tipo !== 'cartao');
+  return (contaBancaria || contas[0]).nome;
+}
+
+function abrirModalVincularOFX(nomeArquivo, resultadoOFX) {
+  const selConta = document.getElementById('ofx-vincular-conta-select');
+  const bannerEl = document.getElementById('ofx-vincular-banner');
+  const subtituloEl = document.getElementById('ofx-vincular-subtitulo');
+  const novaWrap = document.getElementById('ofx-vincular-nova-wrap');
+  const novaInput = document.getElementById('ofx-vincular-nova-nome');
+
+  const acctId = String((resultadoOFX && resultadoOFX.acctId) || '').trim();
+  const transacoes = Array.isArray(resultadoOFX && resultadoOFX.transacoes) ? resultadoOFX.transacoes : [];
+
+  _ofxPendenciaVinculo = {
+    nomeArquivo: String(nomeArquivo || 'extrato.ofx'),
+    acctId,
+    metadados: resultadoOFX || {},
+    transacoes
+  };
+
+  if (subtituloEl) {
+    subtituloEl.textContent = acctId
+      ? `A conta OFX (${acctId}) ainda não está vinculada. Mapeie abaixo para automatizar futuras importações.`
+      : `Ficheiro "${_ofxPendenciaVinculo.nomeArquivo}" sem tag <ACCTID>. Escolha a conta de destino antes de revisar.`;
+  }
+
+  if (bannerEl) {
+    const infos = [
+      resultadoOFX && resultadoOFX.org ? escHtml(resultadoOFX.org) : null,
+      acctId ? `ACCTID: <code>${escHtml(acctId)}</code>` : 'Sem ACCTID declarado',
+      `${transacoes.length} transação(ões) lida(s)`
+    ].filter(Boolean).join(' · ');
+    bannerEl.innerHTML = `<div><i class="ti ti-building-bank"></i> ${infos}</div>`;
+  }
+
+  const contas = Array.isArray(STATE.contas) ? STATE.contas : [];
+  if (selConta) {
+    const saldos = typeof saldoPorConta === 'function' ? saldoPorConta() : {};
+    const sugerida = sugerirContaParaOFX(resultadoOFX);
+    const optsExistentes = contas.map((c) => {
+      const ehCartao = c.tipo === 'cartao';
+      const saldoExib = ehCartao
+        ? (Number(c.saldo) || 0)
+        : (saldos[c.nome] !== undefined ? saldos[c.nome] : (Number(c.saldo) || 0));
+      const selected = c.nome === sugerida ? ' selected' : '';
+      return `<option value="${escHtml(c.nome)}"${selected}>${escHtml(c.nome)} (${ehCartao ? 'Cartão' : 'Conta'} · ${escHtml(toBRL(saldoExib))})</option>`;
+    }).join('');
+
+    selConta.innerHTML = optsExistentes + `<option value="__nova__"${!contas.length ? ' selected' : ''}>[ + Criar Nova Conta ]</option>`;
+  }
+
+  if (novaInput) {
+    const sufixoAcct = acctId ? ` (${acctId.slice(-4)})` : '';
+    const sugestaoNome = (resultadoOFX && resultadoOFX.org ? `${resultadoOFX.org}${sufixoAcct}` : `Conta OFX${sufixoAcct}`).trim();
+    novaInput.value = sugestaoNome;
+  }
+  if (novaWrap) {
+    novaWrap.style.display = selConta && selConta.value === '__nova__' ? '' : 'none';
+  }
+
+  abrirModal('modal-vincular-ofx');
+}
+
+function aoMudarSelectVinculoOFX() {
+  const selConta = document.getElementById('ofx-vincular-conta-select');
+  const novaWrap = document.getElementById('ofx-vincular-nova-wrap');
+  if (novaWrap && selConta) {
+    novaWrap.style.display = selConta.value === '__nova__' ? '' : 'none';
+  }
+}
+
+async function confirmarVinculoOFX() {
+  if (!_ofxPendenciaVinculo) {
+    toast('Nenhum extrato pendente para vincular.', 'err');
+    cancelarVinculoOFX();
+    return;
+  }
+
+  const selConta = document.getElementById('ofx-vincular-conta-select');
+  const novaInput = document.getElementById('ofx-vincular-nova-nome');
+  const escolha = selConta ? selConta.value : '';
+  const { nomeArquivo, acctId, metadados, transacoes } = _ofxPendenciaVinculo;
+
+  if (!Array.isArray(STATE.contas)) STATE.contas = [];
+  let contaDestino = null;
+
+  if (escolha === '__nova__') {
+    const nomeBase = (novaInput && novaInput.value ? novaInput.value : '').trim() || 'Nova Conta OFX';
+    let nomeSeguro = nomeBase;
+    let contador = 2;
+    while (STATE.contas.some(c => c && c.nome && c.nome.toLowerCase() === nomeSeguro.toLowerCase())) {
+      nomeSeguro = `${nomeBase} (${contador++})`;
+    }
+    const ehCartao = Boolean(metadados && metadados.ehCartao);
+    contaDestino = {
+      id: uid(),
+      nome: nomeSeguro,
+      tipo: ehCartao ? 'cartao' : 'conta',
+      cor: '#1A6FE0',
+      saldo: 0
+    };
+    if (ehCartao) {
+      contaDestino.diaFechamento = 1;
+      contaDestino.diaVencimento = 10;
+      if (!Array.isArray(STATE.cartoes)) STATE.cartoes = [];
+      STATE.cartoes.push({
+        id: contaDestino.id,
+        nome: nomeSeguro,
+        limiteTotal: 3000,
+        diaFechamento: 1,
+        diaVencimento: 10,
+        cor: '#1A6FE0'
+      });
+    }
+    STATE.contas.push(contaDestino);
+  } else {
+    contaDestino = STATE.contas.find(c => c && c.nome === escolha) || null;
+  }
+
+  if (!contaDestino) {
+    toast('Selecione ou crie uma conta válida para vincular.', 'err');
+    return;
+  }
+
+  if (acctId) {
+    STATE.contas.forEach(c => {
+      if (c && c !== contaDestino && String(c.ofxAccountId || '').trim() === acctId) {
+        delete c.ofxAccountId;
+      }
+    });
+    contaDestino.ofxAccountId = acctId;
+  }
+
+  await salvarDados();
+  popularContasSelect();
+  cancelarVinculoOFX();
+  abrirModalRevisaoOFX(contaDestino, transacoes, nomeArquivo, metadados);
+}
+
+function cancelarVinculoOFX(chamadoPorFechamento) {
+  _ofxPendenciaVinculo = null;
+  if (!chamadoPorFechamento) {
+    fecharModal('modal-vincular-ofx');
+  } else {
+    const el = document.getElementById('modal-vincular-ofx');
+    if (el) el.classList.remove('show');
+    if (typeof atualizarEstadoModais === 'function') atualizarEstadoModais();
+  }
+}
+
+function construirOptionsCategoriasOFX(tipo, categoriaSelecionada) {
+  if (typeof construirOptionsCategoriasHTML === 'function') {
+    return construirOptionsCategoriasHTML(tipo || '', categoriaSelecionada || 'Outros');
+  }
+  const nomes = new Set(['Outros']);
+  (STATE.categorias || []).forEach(c => {
+    if (c && c.nome && (!tipo || c.tipo === tipo)) nomes.add(c.nome);
+  });
+  Object.keys(REGRAS_CATEGORIAS).forEach(k => nomes.add(k));
+  if (categoriaSelecionada) nomes.add(categoriaSelecionada);
+
+  return [...nomes].map(nome => (
+    `<option value="${escHtml(nome)}"${nome === categoriaSelecionada ? ' selected' : ''}>${escHtml(nome)}</option>`
+  )).join('');
+}
+
+function abrirModalRevisaoOFX(contaDestino, transacoes, nomeArquivo, metadados) {
+  const resumoEl = document.getElementById('ofx-revisao-resumo');
+  const subtituloEl = document.getElementById('ofx-revisao-subtitulo');
+  const btnConfirmar = document.getElementById('btn-confirmar-revisao-ofx');
+
+  const idsExistentes = coletarIdsExistentesContaOFX(contaDestino.nome);
+  const vistosNoArquivo = new Set();
+
+  transacoesPendentes = (transacoes || []).map((tx) => {
+    const memo = String((tx && (tx.memo || tx.descricao)) || 'Transação OFX').trim();
+    const tipo = (tx && tx.tipo) || 'despesa';
+    const fitid = String((tx && tx.fitid) || '').trim();
+    const categoriaSugerida = (tx && tx.categoria) || autoCategorizar(memo, tipo);
+    const ehDuplicada = !fitid || idsExistentes.has(fitid) || vistosNoArquivo.has(fitid);
+    if (fitid) vistosNoArquivo.add(fitid);
+
+    return {
+      ...tx,
+      fitid,
+      memo,
+      descricao: memo,
+      tipo,
+      categoria: categoriaSugerida,
+      ehDuplicada
+    };
+  });
+
+  _ofxRevisaoContexto = {
+    nomeArquivo: String(nomeArquivo || 'extrato.ofx'),
+    contaNome: contaDestino.nome,
+    metadados: metadados || {}
+  };
+
+  if (subtituloEl) {
+    subtituloEl.textContent = `Ficheiro "${_ofxRevisaoContexto.nomeArquivo}" → Conta: ${contaDestino.nome}. Revise ou altere as categorias antes de salvar.`;
+  }
+
+  const qtdNovas = transacoesPendentes.filter(t => !t.ehDuplicada).length;
+  const qtdDup = transacoesPendentes.length - qtdNovas;
+  const totalEntradas = transacoesPendentes.filter(t => t.tipo === 'receita').reduce((s, t) => s + t.valor, 0);
+  const totalSaidas = transacoesPendentes.filter(t => t.tipo === 'despesa').reduce((s, t) => s + t.valor, 0);
+  const datas = transacoesPendentes.map(t => t.data).filter(Boolean).sort();
+  const periodoTxt = datas.length
+    ? `${datas[0].split('-').reverse().join('/')} a ${datas[datas.length - 1].split('-').reverse().join('/')}`
+    : 'Período não informado';
+
+  if (resumoEl) {
+    const acctBadge = contaDestino.ofxAccountId
+      ? ` <span class="badge badge-pago" style="font-size:10px">Vinculada (${escHtml(contaDestino.ofxAccountId)})</span>`
+      : '';
+    resumoEl.innerHTML = `
+      <div><strong>${escHtml(contaDestino.nome)}</strong>${acctBadge} · <strong>${transacoesPendentes.length}</strong> transação(ões) lida(s)</div>
+      <div class="ofx-resumo-stats">
+        <span><i class="ti ti-calendar"></i> ${escHtml(periodoTxt)}</span>
+        <span class="mv-ok">${qtdNovas} nova(s)</span>
+        <span style="color:var(--text3)">${qtdDup} duplicada(s) (FITID)</span>
+        <span class="mv-ok">+ ${escHtml(toBRL(totalEntradas))}</span>
+        <span class="mv-bad">- ${escHtml(toBRL(totalSaidas))}</span>
+      </div>
+    `;
+  }
+
+  if (btnConfirmar) {
+    btnConfirmar.disabled = transacoesPendentes.length === 0;
+  }
+
+  renderListaRevisaoOFX();
+  abrirModal('modal-revisao-ofx');
+}
+
+function aoAlterarCategoriaRevisaoOFX(idx, novaCategoria) {
+  if (transacoesPendentes[idx]) {
+    transacoesPendentes[idx].categoria = novaCategoria || 'Outros';
+  }
+}
+
+function renderListaRevisaoOFX() {
+  const cont = document.getElementById('ofx-revisao-lista');
+  if (!cont) return;
+
+  if (!transacoesPendentes.length) {
+    cont.innerHTML = '<div class="empty" style="padding:1.5rem"><p>Nenhuma transação pendente para revisão.</p></div>';
+    return;
+  }
+
+  cont.innerHTML = transacoesPendentes.map((tx, idx) => {
+    const [a, m, d] = String(tx.data || '').split('-');
+    const dataFmt = a && m && d ? `${d}/${m}/${a}` : (tx.data || '-');
+    const sinal = tx.tipo === 'receita' ? '+' : '-';
+    const badgeStatus = tx.ehDuplicada
+      ? '<span class="badge badge-cat" style="font-size:10px">Já importada (FITID)</span>'
+      : '<span class="badge badge-pago" style="font-size:10px">Novo</span>';
+    const optsCat = construirOptionsCategoriasOFX(tx.tipo, tx.categoria);
+
+    return `
+      <div class="ofx-revisao-row${tx.ehDuplicada ? ' ofx-dup' : ''}" data-ofx-row="${idx}">
+        <div class="ofx-revisao-data">${escHtml(dataFmt)}</div>
+        <div class="ofx-revisao-info">
+          <div class="ofx-revisao-desc">${escHtml(tx.memo)}</div>
+          <div class="ofx-revisao-badges">
+            ${badgeStatus}
+            <span class="badge badge-cat" style="font-size:10px">${escHtml(tx.trnType || '')}</span>
+          </div>
+        </div>
+        <div class="ofx-revisao-val valor-sensivel ${tx.tipo === 'receita' ? 'mv-ok' : 'mv-bad'}">${sinal} ${escHtml(toBRL(tx.valor))}</div>
+        <div class="ofx-revisao-cat-wrap">
+          <select
+            class="ofx-revisao-cat-select"
+            data-ofx-idx="${idx}"
+            aria-label="Categoria para ${escHtml(tx.memo)}"
+            onchange="aoAlterarCategoriaRevisaoOFX(${idx}, this.value)">
+            ${optsCat}
+          </select>
+        </div>
+      </div>
+    `;
+  }).join('');
+}
+
+function recalcularSaldoContaOFX(contaDestino) {
+  if (!contaDestino) return 0;
+  if (typeof recalcularLimitesCartoes === 'function') recalcularLimitesCartoes();
+
+  if (contaDestino.tipo === 'cartao') {
+    const pendentesCartao = (STATE.lancamentos || []).filter(
+      l => l && l.conta === contaDestino.nome && l.tipo === 'despesa' && !ehLancamentoPagamentoFatura(l) && l.faturaPaga !== true
+    );
+    const totalFaturaAberta = Math.round(pendentesCartao.reduce((s, l) => s + (Number(l.valor) || 0), 0) * 100) / 100;
+    contaDestino.saldo = totalFaturaAberta;
+    return totalFaturaAberta;
+  }
+
+  const saldos = typeof saldoPorConta === 'function' ? saldoPorConta() : {};
+  const saldoRecalculado = Math.round((Number(saldos[contaDestino.nome]) || 0) * 100) / 100;
+  contaDestino.saldo = saldoRecalculado;
+  return saldoRecalculado;
+}
+
+async function confirmarESalvarRevisaoOFX() {
+  if (!_ofxRevisaoContexto || !Array.isArray(transacoesPendentes) || !transacoesPendentes.length) {
+    toast('Não há transações OFX pendentes para salvar.', 'err');
+    cancelarRevisaoOFX();
+    return;
+  }
+
+  const contaDestino = (STATE.contas || []).find(c => c && c.nome === _ofxRevisaoContexto.contaNome);
+  if (!contaDestino) {
+    toast('A conta vinculada não foi encontrada no painel.', 'err');
+    cancelarRevisaoOFX();
+    return;
+  }
+
+  // Recolhe os valores finais dos <select>s de categoria exibidos no modal de revisão
+  if (typeof document.querySelectorAll === 'function') {
+    document.querySelectorAll('#ofx-revisao-lista .ofx-revisao-cat-select[data-ofx-idx]').forEach((sel) => {
+      const idx = parseInt(sel.dataset ? sel.dataset.ofxIdx : sel.getAttribute('data-ofx-idx'), 10);
+      if (Number.isInteger(idx) && transacoesPendentes[idx] && sel.value) {
+        transacoesPendentes[idx].categoria = sel.value;
+      }
+    });
+  }
+
+  if (!Array.isArray(STATE.lancamentos)) STATE.lancamentos = [];
+  const idsExistentes = coletarIdsExistentesContaOFX(contaDestino.nome);
+  const ehCartao = contaDestino.tipo === 'cartao';
+
+  let adicionados = 0;
+  let ignoradosDuplicados = 0;
+
+  for (const tx of transacoesPendentes) {
+    const fitid = String((tx && tx.fitid) || '').trim();
+    if (!fitid || idsExistentes.has(fitid)) {
+      ignoradosDuplicados += 1;
+      continue;
+    }
+
+    const desc = String((tx.memo || tx.descricao || 'Transação OFX')).trim();
+    const tagsInline = typeof extrairHashtagsDescricao === 'function' ? extrairHashtagsDescricao(desc) : [];
+    const dataLanc = tx.data || hojeLocalISO();
+    const categoriaFinal = String(tx.categoria || '').trim() || autoCategorizar(desc, tx.tipo || 'despesa');
+
+    const novoLanc = {
+      id: uid(),
+      fitid,
+      ofxFitId: fitid,
+      trnType: tx.trnType || (tx.tipo === 'receita' ? 'CREDIT' : 'DEBIT'),
+      origem: 'ofx',
+      tipo: tx.tipo || 'despesa',
+      data: dataLanc,
+      dataCompra: ehCartao ? dataLanc : undefined,
+      descricao: desc,
+      categoria: categoriaFinal,
+      conta: contaDestino.nome,
+      valor: Math.round((Number(tx.valor) || 0) * 100) / 100,
+      pago: ehCartao ? (tx.tipo === 'receita') : true,
+      conciliado: true,
+      sincronizado: false,
+      tags: tagsInline.length ? tagsInline : undefined
+    };
+
+    if (ehCartao && novoLanc.tipo === 'despesa' && typeof competenciaFatura === 'function') {
+      const fechamento = parseInt(contaDestino.diaFechamento, 10) || 1;
+      const vencimento = parseInt(contaDestino.diaVencimento, 10) || 10;
+      const comp = competenciaFatura(dataLanc, fechamento);
+      novoLanc.faturaAno = comp.ano;
+      novoLanc.faturaMes = comp.mes;
+      novoLanc.dataVencimentoFatura = calcularVencimentoFatura(comp.ano, comp.mes, fechamento, vencimento);
+      novoLanc.faturaPaga = false;
+      novoLanc.pago = false;
+    } else if (ehCartao && novoLanc.tipo === 'receita' && /pagamento.*fatura|fatura paga|bill payment/i.test(desc)) {
+      novoLanc.ehTransferencia = true;
+    }
+
+    STATE.lancamentos.push(novoLanc);
+    idsExistentes.add(fitid);
+    adicionados += 1;
+  }
+
+  recalcularSaldoContaOFX(contaDestino);
+  await salvarDados();
+  cancelarRevisaoOFX();
+  popularContasSelect();
+  renderDashboard();
+  renderPaginaAtiva();
+  if (typeof sincronizarEmSegundoPlano === 'function') sincronizarEmSegundoPlano();
+
+  if (adicionados > 0) {
+    const detalheDup = ignoradosDuplicados > 0
+      ? ` (${ignoradosDuplicados} duplicada(s) ignorada(s))`
+      : '';
+    toast(`Extrato importado com sucesso! ${adicionados} lançamento(s) salvo(s) em ${contaDestino.nome}${detalheDup}.`, 'ok');
+  } else {
+    toast(`Nenhuma transação nova: todas as ${ignoradosDuplicados} transação(ões) já constavam em ${contaDestino.nome}.`, 'info');
+  }
+}
+
+function cancelarRevisaoOFX(chamadoPorFechamento) {
+  transacoesPendentes = [];
+  _ofxRevisaoContexto = null;
+  const listaEl = document.getElementById('ofx-revisao-lista');
+  if (listaEl) listaEl.innerHTML = '';
+  if (!chamadoPorFechamento) {
+    fecharModal('modal-revisao-ofx');
+  } else {
+    const el = document.getElementById('modal-revisao-ofx');
+    if (el) el.classList.remove('show');
+    if (typeof atualizarEstadoModais === 'function') atualizarEstadoModais();
+  }
+}
+
+function inicializarDropzoneOFX() {
+  const dropzone = document.getElementById('ofx-dropzone');
+  const fileInput = document.getElementById('ofx-file-input');
+
+  if (fileInput && fileInput.dataset.ofxInputBound !== '1') {
+    fileInput.dataset.ofxInputBound = '1';
+    fileInput.addEventListener('change', (e) => {
+      const f = e.target && e.target.files && e.target.files[0];
+      if (f) lerArquivoOFX(f);
+      fileInput.value = '';
+    });
+  }
+
+  if (!dropzone || dropzone.dataset.ofxBound === '1') return;
+  dropzone.dataset.ofxBound = '1';
+
+  const ocultarOverlayGlobal = () => {
+    if (typeof dragDropCounter !== 'undefined') dragDropCounter = 0;
+    const overlayOCR = document.getElementById('dropzone-overlay');
+    if (overlayOCR) overlayOCR.style.display = 'none';
+    const overlayOFX = document.getElementById('ofx-drag-overlay');
+    if (overlayOFX) overlayOFX.classList.add('oculto');
+  };
+
+  dropzone.addEventListener('dragenter', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    ocultarOverlayGlobal();
+    dropzone.classList.add('dragover');
+  });
+
+  dropzone.addEventListener('dragover', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    ocultarOverlayGlobal();
+    if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy';
+    dropzone.classList.add('dragover');
+  });
+
+  dropzone.addEventListener('dragleave', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!e.relatedTarget || !dropzone.contains(e.relatedTarget)) {
+      dropzone.classList.remove('dragover');
+    }
+  });
+
+  dropzone.addEventListener('drop', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    ocultarOverlayGlobal();
+    dropzone.classList.remove('dragover');
+    const files = e.dataTransfer && e.dataTransfer.files;
+    const file = files && files[0];
+    if (file) {
+      lerArquivoOFX(file);
+    }
+  });
+
+  dropzone.addEventListener('click', () => {
+    abrirSeletorArquivoOFX();
+  });
+
+  dropzone.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      abrirSeletorArquivoOFX();
+    }
+  });
+}
+
 /* ================= INIT ================= */
+inicializarDropzoneOFX();
 const contentEl = document.querySelector('.content');
 const topbarEl = document.querySelector('.topbar');
 if (contentEl && topbarEl) {
@@ -11882,6 +12788,8 @@ document.querySelectorAll('.modal-bg').forEach(m => m.addEventListener('click', 
   if (e.target !== m) return;
   if (m.id === 'modal-prompt') { cancelarPrompt(); }
   else if (m.id === 'modal-patch-notes') { fecharModalPatchNotes(); }
+  else if (m.id === 'modal-vincular-ofx') { cancelarVinculoOFX(); }
+  else if (m.id === 'modal-revisao-ofx') { cancelarRevisaoOFX(); }
   else { fecharModal(m.id); }
 }));
 document.addEventListener('click', (e) => {
@@ -12249,11 +13157,15 @@ async function processarArquivoDropzone(file) {
   if (!file) return;
 
   const nomeArquivo = file.name || 'documento';
+  if (/\.(ofx|qfx)$/i.test(nomeArquivo)) {
+    lerArquivoOFX(file);
+    return;
+  }
   const ehImagem = (file.type && file.type.startsWith('image/')) || /\.(png|jpe?g|webp|bmp|gif)$/i.test(nomeArquivo);
   const ehPdf = file.type === 'application/pdf' || /\.pdf$/i.test(nomeArquivo);
 
   if (!ehImagem && !ehPdf) {
-    toast(`Formato de arquivo não suportado para OCR: ${nomeArquivo}. Arraste uma imagem (PNG, JPG, WEBP).`, 'err');
+    toast(`Formato de arquivo não suportado: ${nomeArquivo}. Arraste uma imagem (PNG, JPG, WEBP) para OCR ou um extrato .OFX.`, 'err');
     return;
   }
 
@@ -12382,19 +13294,69 @@ async function processarArquivoDropzone(file) {
   }
 }
 
+function ocultarOverlaysArrastoGlobais() {
+  dragDropCounter = 0;
+  const overlayOCR = document.getElementById('dropzone-overlay');
+  if (overlayOCR) overlayOCR.style.display = 'none';
+  const overlayOFX = document.getElementById('ofx-drag-overlay');
+  if (overlayOFX) overlayOFX.classList.add('oculto');
+}
+
+function ehArrastoDeFicheiroGlobal(e) {
+  const dt = e && e.dataTransfer;
+  if (!dt) return false;
+  const tipos = dt.types ? Array.from(dt.types) : [];
+  const itens = dt.items ? Array.from(dt.items) : [];
+  return tipos.includes('Files') || itens.some(it => it && it.kind === 'file') || (dt.files && dt.files.length > 0);
+}
+
+function ehArrastoArquivoOFXGlobal(e) {
+  const dt = e && e.dataTransfer;
+  if (!dt) return false;
+  const itens = dt.items ? Array.from(dt.items) : [];
+  if (itens.length > 0) {
+    const temArquivo = itens.some(it => it && it.kind === 'file');
+    if (!temArquivo) return false;
+    const ehMidiaOCR = itens.some(it => it && it.kind === 'file' && (
+      String(it.type || '').startsWith('image/') || it.type === 'application/pdf'
+    ));
+    return !ehMidiaOCR;
+  }
+  return ehArrastoDeFicheiroGlobal(e);
+}
+
 function iniciarDropzoneUniversal() {
-  const overlay = document.getElementById('dropzone-overlay');
+  const overlayOCR = document.getElementById('dropzone-overlay');
+  const overlayOFX = document.getElementById('ofx-drag-overlay');
+
+  const estaEmDropzoneLocal = (e) => Boolean(
+    e && e.target && typeof e.target.closest === 'function' && e.target.closest('#ofx-dropzone, #drop-zone-anexo')
+  );
 
   window.addEventListener('dragenter', (e) => {
     e.preventDefault();
-    if (e.dataTransfer && e.dataTransfer.types && Array.from(e.dataTransfer.types).includes('Files')) {
-      dragDropCounter++;
-      if (overlay) overlay.style.display = 'flex';
+    if (estaEmDropzoneLocal(e)) {
+      ocultarOverlaysArrastoGlobais();
+      return;
+    }
+    if (!ehArrastoDeFicheiroGlobal(e)) return;
+
+    dragDropCounter += 1;
+    if (ehArrastoArquivoOFXGlobal(e)) {
+      if (overlayOCR) overlayOCR.style.display = 'none';
+      if (overlayOFX) overlayOFX.classList.remove('oculto');
+    } else {
+      if (overlayOFX) overlayOFX.classList.add('oculto');
+      if (overlayOCR) overlayOCR.style.display = 'flex';
     }
   });
 
   window.addEventListener('dragover', (e) => {
     e.preventDefault();
+    if (estaEmDropzoneLocal(e)) {
+      ocultarOverlaysArrastoGlobais();
+      return;
+    }
     if (e.dataTransfer) {
       e.dataTransfer.dropEffect = 'copy';
     }
@@ -12402,21 +13364,39 @@ function iniciarDropzoneUniversal() {
 
   window.addEventListener('dragleave', (e) => {
     e.preventDefault();
-    dragDropCounter--;
-    if (dragDropCounter <= 0) {
-      dragDropCounter = 0;
-      if (overlay) overlay.style.display = 'none';
+    dragDropCounter = Math.max(0, dragDropCounter - 1);
+    const foraDaJanela = !e.relatedTarget || (
+      typeof document !== 'undefined' &&
+      e.relatedTarget.nodeType &&
+      typeof document.contains === 'function' &&
+      !document.contains(e.relatedTarget)
+    );
+    if (dragDropCounter === 0 && foraDaJanela) {
+      ocultarOverlaysArrastoGlobais();
+    } else if (!e.relatedTarget) {
+      ocultarOverlaysArrastoGlobais();
     }
   });
 
   window.addEventListener('drop', async (e) => {
     e.preventDefault();
-    dragDropCounter = 0;
-    if (overlay) overlay.style.display = 'none';
+    ocultarOverlaysArrastoGlobais();
 
     const files = e.dataTransfer ? e.dataTransfer.files : null;
-    if (files && files.length > 0) {
-      await processarArquivoDropzone(files[0]);
+    const file = files && files[0];
+    if (!file) return;
+
+    const nomeArquivo = String(file.name || '');
+    const ehMidiaOCR = (file.type && (file.type.startsWith('image/') || file.type === 'application/pdf'))
+      || /\.(png|jpe?g|webp|bmp|gif|pdf)$/i.test(nomeArquivo);
+
+    if (ehMidiaOCR) {
+      await processarArquivoDropzone(file);
+    } else {
+      lerArquivoOFX(file);
     }
   });
+
+  window.addEventListener('blur', ocultarOverlaysArrastoGlobais);
+  window.addEventListener('dragend', ocultarOverlaysArrastoGlobais);
 }
