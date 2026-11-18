@@ -11,7 +11,14 @@ const ALLOWED_INVOKE_CHANNELS = new Set([
   'obter-ip-local',
   'enviar-sync',
   'verificar-atualizacoes-agora',
-  'aplicar-atualizacao'
+  'aplicar-atualizacao',
+  'pluggy:saveCredentials',
+  'pluggy:checkCredentials',
+  'pluggy:createConnectToken',
+  'pluggy:openConnectInBrowser',
+  'pluggy:fetchAccounts',
+  'pluggy:fetchTransactions',
+  'pluggy:syncItem'
 ]);
 
 const ALLOWED_SEND_CHANNELS = new Set([
@@ -78,7 +85,21 @@ const electronAPI = Object.freeze({
   onUpdateVerificando: createListener('update-verificando'),
   onDownloadIniciado: createListener('download-iniciado'),
   onDownloadConcluido: createListener('download-concluido'),
-  aplicarAtualizacao: () => invokeAllowlisted('aplicar-atualizacao')
+  aplicarAtualizacao: () => invokeAllowlisted('aplicar-atualizacao'),
+
+  // Open Finance (Pluggy Connect & Credenciais Seguras .env)
+  salvarCredenciaisPluggy: (credenciais) => invokeAllowlisted('pluggy:saveCredentials', credenciais),
+  verificarCredenciaisPluggy: () => invokeAllowlisted('pluggy:checkCredentials'),
+  criarPluggyConnectToken: (opcoes) => invokeAllowlisted('pluggy:createConnectToken', opcoes),
+  abrirPluggyNoNavegador: (connectToken) => invokeAllowlisted('pluggy:openConnectInBrowser', connectToken),
+  openPluggyConnectInBrowser: (connectToken) => invokeAllowlisted('pluggy:openConnectInBrowser', connectToken),
+  onPluggyItemConnected: createListener('pluggy:itemConnected'),
+  buscarContasPluggy: (params) => invokeAllowlisted('pluggy:fetchAccounts', params),
+  buscarTransacoesPluggy: (params) => invokeAllowlisted('pluggy:fetchTransactions', params),
+  sincronizarItemPluggy: (params) => invokeAllowlisted('pluggy:syncItem', params),
+  pluggyFetchAccounts: (params) => invokeAllowlisted('pluggy:fetchAccounts', params),
+  pluggyFetchTransactions: (params) => invokeAllowlisted('pluggy:fetchTransactions', params),
+  pluggySyncItem: (params) => invokeAllowlisted('pluggy:syncItem', params)
 });
 
 if (process.contextIsolated) {

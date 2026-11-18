@@ -1,6 +1,6 @@
 /* ================= ESTADO E PERSISTÊNCIA ================= */
-const CURRENT_VERSION = '1.4.0';
-const APP_VERSAO = '1.4.0 · r13';
+const CURRENT_VERSION = '1.4.5';
+const APP_VERSAO = '1.4.5 · r14';
 const STORAGE_KEY = 'controle-financeiro-dados';
 
 const SUBCATEGORIAS_PADRAO_MAP = {
@@ -415,20 +415,43 @@ function obterMapaPagamentosDeFaturaReais() {
   return { pagamentosPorChave, idsPagamentosReais, todosCartoes };
 }
 
+function construirChaveFaturaCartao(nomeCartao, ano, mes) {
+  const nome = String(nomeCartao || '').trim();
+  const a = parseInt(ano, 10);
+  const m = parseInt(mes, 10);
+  if (!nome || !a || !m) return '';
+  return `${nome}|${a}-${String(m).padStart(2, '0')}`;
+}
+
+function normalizarChaveFaturaLower(nomeCartao, ano, mes) {
+  return construirChaveFaturaCartao(nomeCartao, ano, mes).toLowerCase();
+}
+
+function ehRegistroFaturaPagaValidoSemBanco(reg) {
+  return Boolean(
+    reg &&
+    reg.cartaoNome &&
+    reg.ano &&
+    reg.mes &&
+    (reg.quitacaoRetroativa === true || reg.pagamentoDetectado === true || Boolean(reg.origemQuitacao))
+  );
+}
+
 /**
  * Rotina de Autocorreção (Migration de Estado):
  * Destrava faturas de cartão que ficaram marcadas com `faturaPaga: true` (ou zeradas
- * prematuramente por status individual de transação) sem que exista o respectivo
- * lançamento de "Pagamento de Fatura" na conta corrente para aquele mês/ano.
+ * prematuramente por status individual de transação) sem que exista pagamento em
+ * conta corrente nem registo explícito de quitação retroativa/detectada/manual em `faturasPagas`.
  */
 function corrigirFaturasPresas() {
   if (!STATE || !Array.isArray(STATE.lancamentos)) return 0;
 
   const { pagamentosPorChave, todosCartoes } = obterMapaPagamentosDeFaturaReais();
+  const chavesQuitadasValidas = new Set(pagamentosPorChave.keys());
   let corrigidos = 0;
   let configAlterada = false;
 
-  // Limpa registos órfãos em STATE.config.faturasPagas que não possuam saída real em conta corrente
+  // Limpa registos órfãos em STATE.config.faturasPagas que não possuam saída em conta corrente nem quitação explícita válida
   if (STATE.config && STATE.config.faturasPagas && typeof STATE.config.faturasPagas === 'object') {
     Object.keys(STATE.config.faturasPagas).forEach(k => {
       const reg = STATE.config.faturasPagas[k];
@@ -437,24 +460,30 @@ function corrigirFaturasPresas() {
         configAlterada = true;
         return;
       }
-      const chaveLower = `${String(reg.cartaoNome).toLowerCase()}|${reg.ano}-${String(reg.mes).padStart(2, '0')}`;
-      if (!pagamentosPorChave.has(chaveLower)) {
+      const chaveLower = normalizarChaveFaturaLower(reg.cartaoNome, reg.ano, reg.mes);
+      if (pagamentosPorChave.has(chaveLower) || ehRegistroFaturaPagaValidoSemBanco(reg)) {
+        chavesQuitadasValidas.add(chaveLower);
+      } else {
         delete STATE.config.faturasPagas[k];
         configAlterada = true;
       }
     });
   }
 
-  // Varre todos os lançamentos de Cartão de Crédito e valida contra a conta corrente
+  // Varre todos os lançamentos de Cartão de Crédito e valida contra conta corrente + quitações explícitas
   STATE.lancamentos.forEach(l => {
     if (!l || l.tipo !== 'despesa' || ehLancamentoPagamentoFatura(l) || !ehLancamentoCartao(l)) return;
 
-    const cartaoAlvo = todosCartoes.find(c => c && c.nome === l.conta) || { nome: l.conta, diaFechamento: 1 };
+    const contaLower = String(l.conta || l.cartaoNome || '').toLowerCase();
+    const cartaoAlvo = todosCartoes.find(c => c && (
+      String(c.nome || '').toLowerCase() === contaLower || (l.cartaoId && c.id === l.cartaoId)
+    )) || { nome: l.conta || l.cartaoNome, diaFechamento: 1 };
+    const nomeCartaoRef = (cartaoAlvo && cartaoAlvo.nome) || l.cartaoNome || l.conta || '';
     const comp = calcularCompetenciaLancamentoCartao(l, cartaoAlvo);
-    const chaveLower = `${String(l.conta || '').toLowerCase()}|${comp.ano}-${String(comp.mes).padStart(2, '0')}`;
-    const existePagamentoCorrente = pagamentosPorChave.has(chaveLower);
+    const chaveLower = normalizarChaveFaturaLower(nomeCartaoRef, comp.ano, comp.mes);
+    const existeQuitacaoValida = chavesQuitadasValidas.has(chaveLower);
 
-    if (!existePagamentoCorrente) {
+    if (!existeQuitacaoValida) {
       const tinhaFaturaPaga = ('faturaPaga' in l);
       const estavaFaturaPagaTrue = l.faturaPaga === true;
       const tinhaMetaPagamento = !!(l.pagamentoFaturaId || l.dataPagamentoFatura || l.contaPagamentoFatura);
@@ -544,11 +573,11 @@ function reconciliarFaturasPagas() {
     });
   });
 
-  // 2) Restaura `faturaPaga: true` APENAS para faturas que possuem pagamento real em conta corrente
+  // 2) Restaura `faturaPaga: true` para faturas com pagamento real em conta corrente OU quitação explícita válida (retroativa/detectada/manual)
   Object.entries(STATE.config.faturasPagas).forEach(([k, reg]) => {
     if (!reg || !reg.cartaoNome || !reg.ano || !reg.mes) return;
-    const chaveLower = `${String(reg.cartaoNome).toLowerCase()}|${reg.ano}-${String(reg.mes).padStart(2, '0')}`;
-    if (!pagamentosPorChave.has(chaveLower)) {
+    const chaveLower = normalizarChaveFaturaLower(reg.cartaoNome, reg.ano, reg.mes);
+    if (!pagamentosPorChave.has(chaveLower) && !ehRegistroFaturaPagaValidoSemBanco(reg)) {
       delete STATE.config.faturasPagas[k];
       mudou = true;
       return;
@@ -559,19 +588,24 @@ function reconciliarFaturasPagas() {
     itens.forEach(item => {
       if (item.posPagamentoFatura === true || item.criadoAposPagamentoFatura === true) return;
       if (idsPermitidos) {
-        if (!idsPermitidos.has(item.id) && item.pagamentoFaturaId !== reg.pagamentoFaturaId) return;
+        const matchIdPag = Boolean(reg.pagamentoFaturaId && item.pagamentoFaturaId === reg.pagamentoFaturaId);
+        if (!idsPermitidos.has(item.id) && !matchIdPag) return;
       } else {
         if (item.faturaPaga === false) return;
         const dtItem = item.dataCompra || item.data || '';
         if (dtItem > dataCorte) return;
       }
-      if (item.faturaPaga !== true || item.pago !== true) {
+      if (item.faturaPaga !== true || item.pago !== true || item.status !== 'Liquidado') {
         item.faturaPaga = true;
         item.pago = true;
         item.status = 'Liquidado';
         item.dataPagamentoFatura = item.dataPagamentoFatura || reg.dataPagamento || hojeLocalISO();
-        item.contaPagamentoFatura = item.contaPagamentoFatura || reg.contaOrigem || '';
-        item.pagamentoFaturaId = item.pagamentoFaturaId || reg.pagamentoFaturaId || '';
+        if (reg.contaOrigem && !item.contaPagamentoFatura) {
+          item.contaPagamentoFatura = reg.contaOrigem;
+        }
+        if (reg.pagamentoFaturaId && !item.pagamentoFaturaId) {
+          item.pagamentoFaturaId = reg.pagamentoFaturaId;
+        }
         mudou = true;
       }
     });
@@ -2235,20 +2269,28 @@ async function animarBotaoMorphing(btn, callbackAsync) {
   }
 }
 
+function resolverIdModalCompat(id) {
+  if (id === 'modal-revisao-ofx' && !document.getElementById('modal-revisao-ofx')) {
+    return 'modal-revisao-importacao';
+  }
+  return id;
+}
 function fecharModal(id) {
-  const el = document.getElementById(id);
+  const realId = resolverIdModalCompat(id);
+  const el = document.getElementById(realId);
   if (el) el.classList.remove('show');
   atualizarEstadoModais();
 }
 function abrirModal(id) {
-  const el = document.getElementById(id);
+  const realId = resolverIdModalCompat(id);
+  const el = document.getElementById(realId);
   if (!el) return;
   el.classList.add('show');
   registrarEstadoInicialModal(el);
   atualizarEstadoModais();
 }
 function registrarEstadoInicialModal(modalEl) {
-  if (!modalEl) return;
+  if (!modalEl || modalEl.id === 'modal-config-pluggy') return;
   const campos = modalEl.querySelectorAll('input, select, textarea');
   campos.forEach(campo => {
     if (campo.type === 'checkbox' || campo.type === 'radio') {
@@ -2357,8 +2399,10 @@ function fecharModalEspecifico(id) {
     cancelarImportacao();
   } else if (id === 'modal-vincular-ofx' && typeof cancelarVinculoOFX === 'function') {
     cancelarVinculoOFX(true);
-  } else if (id === 'modal-revisao-ofx' && typeof cancelarRevisaoOFX === 'function') {
-    cancelarRevisaoOFX(true);
+  } else if ((id === 'modal-revisao-ofx' || id === 'modal-revisao-importacao') && typeof cancelarRevisaoImportacao === 'function') {
+    cancelarRevisaoImportacao(true);
+  } else if (id === 'modal-config-pluggy' && typeof fecharModalConfigPluggy === 'function') {
+    fecharModalConfigPluggy(true);
   } else {
     fecharModal(id);
   }
@@ -2914,7 +2958,7 @@ function renderDashboard() {
     }
   });
   const totalGuardadoMetas = calcularTotalGuardadoMetas();
-  const patrimonioTotal = Math.round((totalReceitas - totalDespesas) * 100) / 100;
+  const patrimonioTotal = Math.round((obterSomaSaldosIniciaisContas() + totalReceitas - totalDespesas) * 100) / 100;
   const saldoDisponivel = Math.round((patrimonioTotal - totalGuardadoMetas) * 100) / 100;
   const resultadoMes = Math.round((receitasMes - despesasMes) * 100) / 100;
   const mesesDoisUltimos = ultimosMeses(2);
@@ -3884,7 +3928,7 @@ async function togglePagamento(id) {
   if (!l) return;
   if (ehLancamentoCartao(l) && l.tipo === 'despesa' && !ehLancamentoPagamentoFatura(l)) {
     if (l.faturaPaga === true) {
-      toast('Esta fatura já foi liquidada via Pagamento de Fatura na conta corrente.', 'info');
+      toast('Esta fatura já está liquidada.', 'info');
       return;
     }
     const cartao = (STATE.contas || []).find(c => c.nome === l.conta && c.tipo === 'cartao') || (STATE.cartoes || []).find(c => c.nome === l.conta);
@@ -6577,24 +6621,50 @@ function fmtPct(n) {
 function classeTaxaPoupanca(taxa) {
   return taxa === null ? 'mv-info' : taxa >= 20 ? 'mv-ok' : taxa >= 0 ? 'mv-info' : 'mv-bad';
 }
-function saldoPorConta() {
-  const saldos = {};
-  STATE.contas.filter(c => c.tipo !== 'cartao').forEach(c => { saldos[c.nome] = 0; });
-  STATE.lancamentos.forEach(l => {
-    if (l.ehMovimentoCofre) return; // retenção em Metas/Cofres já é isolada no Saldo Disponível
+function obterSomaSaldosIniciaisContas(nomeContaFiltro = null) {
+  const filtro = nomeContaFiltro ? String(nomeContaFiltro).trim().toLowerCase() : '';
+  return Math.round(
+    (STATE.contas || [])
+      .filter(c => c && c.tipo !== 'cartao' && (!filtro || String(c.nome || '').trim().toLowerCase() === filtro))
+      .reduce((acc, c) => acc + (Number(c.saldoInicial) || 0), 0) * 100
+  ) / 100;
+}
+function calcularSomaLancamentosEfetivadosPorConta() {
+  const movimentos = {};
+  (STATE.contas || []).filter(c => c && c.tipo !== 'cartao').forEach(c => {
+    movimentos[c.nome] = 0;
+  });
+  (STATE.lancamentos || []).forEach(l => {
+    if (!l || l.ehMovimentoCofre) return; // retenção em Metas/Cofres já é isolada no Saldo Disponível
     if (!estaPago(l)) return; // só o que já efetivamente entrou/saiu da conta
-    if (!(l.conta in saldos)) return; // conta apagada ou é cartão — não entra no saldo
-    saldos[l.conta] += (l.tipo === 'receita' ? 1 : -1) * l.valor;
+    if (!(l.conta in movimentos)) return; // conta apagada ou é cartão — não entra no saldo
+    const delta = (l.tipo === 'receita' ? 1 : -1) * (Number(l.valor) || 0);
+    movimentos[l.conta] = Math.round((movimentos[l.conta] + delta) * 100) / 100;
+  });
+  return movimentos;
+}
+function saldoPorConta() {
+  const movimentos = calcularSomaLancamentosEfetivadosPorConta();
+  const saldos = {};
+  (STATE.contas || []).filter(c => c && c.tipo !== 'cartao').forEach(c => {
+    const inicial = Number(c.saldoInicial) || 0;
+    saldos[c.nome] = Math.round((inicial + (movimentos[c.nome] || 0)) * 100) / 100;
   });
   return saldos;
 }
 function lancamentosDaFatura(nomeCartao, ano, mes) {
-  const cartao = (STATE.contas || []).find(c => c.nome === nomeCartao && c.tipo === 'cartao') || (STATE.cartoes || []).find(c => c.nome === nomeCartao);
+  const nomeLower = String(nomeCartao || '').trim().toLowerCase();
+  const cartao = (STATE.contas || []).find(c => c && c.tipo === 'cartao' && String(c.nome || '').trim().toLowerCase() === nomeLower)
+    || (STATE.cartoes || []).find(c => c && String(c.nome || '').trim().toLowerCase() === nomeLower);
   if (!cartao) return [];
+  const cartaoLower = String(cartao.nome || nomeCartao || '').trim().toLowerCase();
   const anoAlvo = parseInt(ano, 10);
   const mesAlvo = parseInt(mes, 10);
   return (STATE.lancamentos || []).filter(l => {
-    if (!l || l.conta !== nomeCartao || l.tipo !== 'despesa' || ehLancamentoPagamentoFatura(l)) return false;
+    if (!l || l.tipo !== 'despesa' || ehLancamentoPagamentoFatura(l)) return false;
+    const contaLancLower = String(l.conta || l.cartaoNome || '').trim().toLowerCase();
+    const matchCartao = contaLancLower === cartaoLower || (!l.conta && cartao.id && l.cartaoId === cartao.id);
+    if (!matchCartao) return false;
     const comp = calcularCompetenciaLancamentoCartao(l, cartao);
     return comp.ano === anoAlvo && comp.mes === mesAlvo;
   });
@@ -6674,7 +6744,7 @@ function patrimonioAcumulado(numMeses, hashtagFiltro) {
   const primeiroMes = meses[0];
   const baseLancs = (hashtagFiltro ? STATE.lancamentos.filter(l => lancamentoTemHashtag(l, hashtagFiltro)) : STATE.lancamentos)
     .filter(l => !l.ehMovimentoCofre && !l.ehPagamentoFatura);
-  let acumulado = baseLancs
+  let acumulado = obterSomaSaldosIniciaisContas() + baseLancs
     .filter(l => estaPago(l) && mesCompetenciaLancamento(l) < primeiroMes)
     .reduce((s,l) => s + (l.tipo === 'receita' ? 1 : -1) * l.valor, 0);
   return meses.map(m => {
@@ -6776,18 +6846,23 @@ function abrirModalPagamentoFatura(idCartao, mesParam, anoParam) {
   }
 
   const contasDebito = (STATE.contas || []).filter(c => c.tipo !== 'cartao');
-  if (!contasDebito.length) {
-    toast('Cadastre pelo menos uma Conta Bancária (Débito) em Categorias & Contas para pagar a fatura.', 'err');
-    return;
-  }
-
   const saldos = saldoPorConta();
   const selConta = document.getElementById('pagar-fatura-conta-origem');
+  const btnConfirmarPag = document.getElementById('btn-confirmar-pagamento-fatura');
   if (selConta) {
-    selConta.innerHTML = contasDebito.map(c => {
-      const saldoAtual = saldos[c.nome] || 0;
-      return `<option value="${escHtml(c.id || c.nome)}" data-nome="${escHtml(c.nome)}">${escHtml(c.nome)} — Saldo: ${toBRL(saldoAtual)}</option>`;
-    }).join('');
+    if (contasDebito.length) {
+      selConta.disabled = false;
+      selConta.innerHTML = contasDebito.map(c => {
+        const saldoAtual = saldos[c.nome] || 0;
+        return `<option value="${escHtml(c.id || c.nome)}" data-nome="${escHtml(c.nome)}">${escHtml(c.nome)} — Saldo: ${toBRL(saldoAtual)}</option>`;
+      }).join('');
+    } else {
+      selConta.disabled = true;
+      selConta.innerHTML = '<option value="">Nenhuma conta bancária cadastrada (use Apenas Marcar como Paga)</option>';
+    }
+  }
+  if (btnConfirmarPag) {
+    btnConfirmarPag.disabled = contasDebito.length === 0;
   }
 
   const nomesMes = { 1:'Jan',2:'Fev',3:'Mar',4:'Abr',5:'Mai',6:'Jun',7:'Jul',8:'Ago',9:'Set',10:'Out',11:'Nov',12:'Dez' };
@@ -6846,6 +6921,93 @@ function atualizarPreviewSaldoPagamentoFatura() {
   elSaldoAtual.style.color = saldoAtual >= 0 ? 'var(--text)' : 'var(--bad)';
   elSaldoFinal.textContent = toBRL(saldoFinal);
   elSaldoFinal.style.color = saldoFinal >= 0 ? 'var(--good)' : 'var(--bad)';
+}
+
+/**
+ * Atualiza todos os lançamentos de uma fatura para Pago/Liquidado e grava em STATE.config.faturasPagas.
+ * Compartilhado por confirmarPagamentoFatura, marcarFaturaComoPaga e importação retroativa Pluggy/OFX.
+ */
+function quitarItensFaturaCartao(infoCartao, anoNum, mesNum, opcoes = {}) {
+  if (!infoCartao || !infoCartao.nome || !anoNum || !mesNum) {
+    return { itensAtualizados: 0, valorSettled: 0, chaveFaturaPaga: '' };
+  }
+
+  const nomeCartao = infoCartao.nome;
+  const cartaoIdResolvido = infoCartao.id || nomeCartao;
+  const fechamento = parseInt(infoCartao.diaFechamento, 10) || 1;
+  const vencimento = parseInt(infoCartao.diaVencimento, 10) || 10;
+  const itensFatura = lancamentosDaFatura(nomeCartao, anoNum, mesNum);
+  const itensAlvo = Array.isArray(opcoes.itensAlvo)
+    ? opcoes.itensAlvo
+    : itensFatura.filter(l => l.faturaPaga !== true);
+
+  const dataPag = opcoes.dataPagamento || hojeLocalISO();
+  const contaOrigem = opcoes.contaOrigem !== undefined ? String(opcoes.contaOrigem || '').trim() : '';
+  const pagamentoFaturaId = opcoes.pagamentoFaturaId ? String(opcoes.pagamentoFaturaId).trim() : '';
+  const origemQuitacao = opcoes.origemQuitacao || (pagamentoFaturaId ? 'conta_corrente' : 'manual_sem_conta');
+  const valorCalculado = Math.round(itensAlvo.reduce((s, l) => s + (Number(l.valor) || 0), 0) * 100) / 100;
+  const valorFinal = (typeof opcoes.valorTotal === 'number' && !isNaN(opcoes.valorTotal) && opcoes.valorTotal > 0)
+    ? Math.round(opcoes.valorTotal * 100) / 100
+    : valorCalculado;
+  const refCompetencia = `${String(mesNum).padStart(2, '0')}/${anoNum}`;
+  const dataVencCalc = typeof calcularVencimentoFatura === 'function'
+    ? calcularVencimentoFatura(anoNum, mesNum, fechamento, vencimento)
+    : undefined;
+
+  itensAlvo.forEach(l => {
+    l.pago = true;
+    l.faturaPaga = true;
+    l.status = 'Liquidado';
+    l.cartaoNome = l.cartaoNome || nomeCartao;
+    if (!l.cartaoId && cartaoIdResolvido) l.cartaoId = cartaoIdResolvido;
+    l.faturaAno = anoNum;
+    l.faturaMes = mesNum;
+    l.faturaCompetencia = l.faturaCompetencia || refCompetencia;
+    if (dataVencCalc && !l.dataVencimentoFatura) l.dataVencimentoFatura = dataVencCalc;
+    delete l.posPagamentoFatura;
+    delete l.criadoAposPagamentoFatura;
+    l.dataPagamentoFatura = dataPag;
+    if (contaOrigem) {
+      l.contaPagamentoFatura = contaOrigem;
+    } else if (!l.contaPagamentoFatura) {
+      delete l.contaPagamentoFatura;
+    }
+    if (pagamentoFaturaId) {
+      l.pagamentoFaturaId = pagamentoFaturaId;
+    }
+    l.sincronizado = false;
+  });
+
+  if (!STATE.config) STATE.config = {};
+  if (!STATE.config.faturasPagas || typeof STATE.config.faturasPagas !== 'object') {
+    STATE.config.faturasPagas = {};
+  }
+
+  const chaveFaturaPaga = construirChaveFaturaCartao(nomeCartao, anoNum, mesNum);
+  const regAnterior = STATE.config.faturasPagas[chaveFaturaPaga];
+  const idsExistentesReg = (regAnterior && Array.isArray(regAnterior.itensPagosIds)) ? regAnterior.itensPagosIds : [];
+  const idsTodosFatura = itensFatura.map(l => l.id).filter(Boolean);
+  const idsNovos = itensAlvo.map(l => l.id).filter(Boolean);
+  const todosIdsPagos = [...new Set([...idsExistentesReg, ...idsTodosFatura, ...idsNovos])];
+  const totalBrutoFatura = Math.round(itensFatura.reduce((s, l) => s + (Number(l.valor) || 0), 0) * 100) / 100;
+
+  STATE.config.faturasPagas[chaveFaturaPaga] = {
+    ...(regAnterior || {}),
+    cartaoNome: nomeCartao,
+    cartaoId: cartaoIdResolvido,
+    ano: anoNum,
+    mes: mesNum,
+    valor: valorFinal || totalBrutoFatura || (regAnterior && regAnterior.valor) || 0,
+    dataPagamento: dataPag,
+    contaOrigem: contaOrigem || (regAnterior && regAnterior.contaOrigem) || '',
+    pagamentoFaturaId: pagamentoFaturaId || (regAnterior && regAnterior.pagamentoFaturaId) || undefined,
+    quitacaoRetroativa: Boolean(opcoes.quitacaoRetroativa || (regAnterior && regAnterior.quitacaoRetroativa)),
+    pagamentoDetectado: Boolean(opcoes.pagamentoDetectado || (regAnterior && regAnterior.pagamentoDetectado)),
+    origemQuitacao,
+    itensPagosIds: todosIdsPagos
+  };
+
+  return { itensAtualizados: itensAlvo.length, valorSettled: valorFinal, chaveFaturaPaga };
 }
 
 async function confirmarPagamentoFatura(idContaOrigem, idCartao, valorFatura, mes, ano) {
@@ -6936,39 +7098,15 @@ async function confirmarPagamentoFatura(idContaOrigem, idCartao, valorFatura, me
     };
     STATE.lancamentos.push(lancamentoPagamento);
 
-    // Ação Atómica (b): Marca todos os lançamentos pendentes dessa fatura como pagos explicitamente via faturaPaga === true
-    itensPendentes.forEach(l => {
-      l.pago = true;
-      l.faturaPaga = true;
-      l.status = 'Liquidado';
-      delete l.posPagamentoFatura;
-      delete l.criadoAposPagamentoFatura;
-      l.dataPagamentoFatura = dataHoje;
-      l.contaPagamentoFatura = nomeContaOrigem;
-      l.pagamentoFaturaId = idTransacaoPagamento;
-      l.sincronizado = false;
-    });
-
-    // Regista permanentemente a liquidação da fatura em STATE.config.faturasPagas
-    if (!STATE.config) STATE.config = {};
-    if (!STATE.config.faturasPagas || typeof STATE.config.faturasPagas !== 'object') {
-      STATE.config.faturasPagas = {};
-    }
-    const chaveFaturaPaga = `${nomeCartao}|${anoNum}-${String(mesNum).padStart(2, '0')}`;
-    const regAnterior = STATE.config.faturasPagas[chaveFaturaPaga];
-    const idsExistentesReg = (regAnterior && Array.isArray(regAnterior.itensPagosIds)) ? regAnterior.itensPagosIds : [];
-    const todosIdsPagos = [...new Set([...idsExistentesReg, ...itensPendentes.map(l => l.id)])];
-    STATE.config.faturasPagas[chaveFaturaPaga] = {
-      cartaoNome: nomeCartao,
-      cartaoId: cartaoIdResolvido,
-      ano: anoNum,
-      mes: mesNum,
-      valor: valorFinal,
+    // Ação Atómica (b): Marca todos os lançamentos pendentes dessa fatura como pagos e regista em STATE.config.faturasPagas
+    quitarItensFaturaCartao(infoCartao, anoNum, mesNum, {
+      itensAlvo: itensPendentes,
       dataPagamento: dataHoje,
       contaOrigem: nomeContaOrigem,
       pagamentoFaturaId: idTransacaoPagamento,
-      itensPagosIds: todosIdsPagos
-    };
+      valorTotal: valorFinal,
+      origemQuitacao: 'conta_corrente'
+    });
 
     // Ação Atómica (c): Recalcula dinamicamente o limiteUsado e limiteDisponivel em STATE.cartoes e STATE.contas
     recalcularLimitesCartoes();
@@ -7003,6 +7141,80 @@ function pagarFaturaInteira(nomeCartao, ano, mes) {
   abrirModalPagamentoFatura(nomeCartao, mes, ano);
 }
 
+/**
+ * Marca uma fatura inteira como Paga/Liquidada sem gerar novo lançamento de saída em conta bancária.
+ * Útil para faturas históricas já quitadas, importações via Pluggy/OFX ou cartões sem conta vinculada.
+ */
+async function marcarFaturaComoPaga(idCartao, mesParam, anoParam, opcoes = {}) {
+  const infoCartao = resolverCartaoPorIdOuNome(idCartao);
+  if (!infoCartao) {
+    toast('Cartão de crédito não encontrado.', 'err');
+    return false;
+  }
+
+  const { id: cartaoIdResolvido, nome: nomeCartao, diaFechamento } = infoCartao;
+  const compAtual = competenciaFatura(hojeLocalISO(), diaFechamento);
+  const mesNum = parseInt(mesParam, 10) || compAtual.mes;
+  const anoNum = parseInt(anoParam, 10) || compAtual.ano;
+
+  const itensFatura = lancamentosDaFatura(nomeCartao, anoNum, mesNum);
+  const itensPendentes = itensFatura.filter(l => l.faturaPaga !== true);
+  if (!itensFatura.length) {
+    toast('Não há lançamentos nesta competência para marcar como paga.', 'info');
+    return false;
+  }
+
+  const chaveFatura = construirChaveFaturaCartao(nomeCartao, anoNum, mesNum);
+  const jaRegistrada = Boolean(STATE.config && STATE.config.faturasPagas && STATE.config.faturasPagas[chaveFatura]);
+  if (!itensPendentes.length && jaRegistrada) {
+    toast('Esta fatura já está marcada como Paga.', 'info');
+    return false;
+  }
+
+  const resultado = quitarItensFaturaCartao(infoCartao, anoNum, mesNum, {
+    itensAlvo: itensPendentes,
+    dataPagamento: opcoes.dataPagamento || hojeLocalISO(),
+    contaOrigem: opcoes.contaOrigem || '',
+    pagamentoFaturaId: opcoes.pagamentoFaturaId || '',
+    quitacaoRetroativa: opcoes.quitacaoRetroativa !== undefined ? Boolean(opcoes.quitacaoRetroativa) : true,
+    pagamentoDetectado: Boolean(opcoes.pagamentoDetectado),
+    origemQuitacao: opcoes.origemQuitacao || 'manual_sem_conta'
+  });
+
+  recalcularLimitesCartoes();
+
+  try {
+    persistirStateNoLocalStorage();
+  } catch (errStorage) {
+    console.error('Erro na gravação imediata do localStorage:', errStorage);
+  }
+  await salvarDados();
+  renderPaginaAtiva();
+  renderDashboard();
+  if (document.getElementById('page-cartoes')) renderCartoes();
+  if (typeof sincronizarEmSegundoPlano === 'function') sincronizarEmSegundoPlano();
+
+  const refComp = `${String(mesNum).padStart(2, '0')}/${anoNum}`;
+  if (!opcoes.silencioso) {
+    toast(`Fatura de ${nomeCartao} (${refComp} · ${toBRL(resultado.valorSettled)}) marcada como Paga!`, 'ok');
+  }
+  return { ...resultado, cartaoId: cartaoIdResolvido, nomeCartao, ano: anoNum, mes: mesNum };
+}
+
+async function confirmarMarcarFaturaComoPaga() {
+  const inpCartao = document.getElementById('pagar-fatura-cartao-id');
+  const inpMes = document.getElementById('pagar-fatura-mes');
+  const inpAno = document.getElementById('pagar-fatura-ano');
+  const idCartao = (inpCartao && inpCartao.value) || (_contextoPagamentoFatura && _contextoPagamentoFatura.idCartao);
+  const mes = (inpMes && inpMes.value) ? parseInt(inpMes.value, 10) : (_contextoPagamentoFatura && _contextoPagamentoFatura.mes);
+  const ano = (inpAno && inpAno.value) ? parseInt(inpAno.value, 10) : (_contextoPagamentoFatura && _contextoPagamentoFatura.ano);
+
+  const ok = await marcarFaturaComoPaga(idCartao, mes, ano, { origemQuitacao: 'manual_sem_conta' });
+  if (ok) {
+    fecharModal('modal-pagar-fatura');
+  }
+}
+
 function renderCartoes() {
   recalcularLimitesCartoes();
   const cartoes = STATE.contas.filter(c => c.tipo === 'cartao');
@@ -7034,6 +7246,7 @@ function renderCartoes() {
       const elHeroSub = document.getElementById('cartoes-hero-sub');
       const elHeroBadge = document.getElementById('cartoes-hero-badge-paga');
       const btnHeroPagar = document.getElementById('btn-hero-pagar-fatura');
+      const btnHeroMarcarPaga = document.getElementById('btn-hero-marcar-paga');
 
       if (elHeroValor) {
         elHeroValor.textContent = toBRL(totalAbertoHero);
@@ -7046,6 +7259,13 @@ function renderCartoes() {
         elHeroSub.textContent = faturaPagaHeroComItens
           ? `${cartaoHero.nome} (${nomesMes[mesH]}/${anoH}) · Fatura Paga (${toBRL(totalBrutoHero)})`
           : `${cartaoHero.nome} · Competência ${nomesMes[mesH]}/${anoH} (${itensPendentesHero.length} pendente(s))`;
+      }
+      if (btnHeroMarcarPaga) {
+        btnHeroMarcarPaga.style.display = faturaSemSaldoHero ? 'none' : 'inline-flex';
+        btnHeroMarcarPaga.disabled = faturaSemSaldoHero;
+        btnHeroMarcarPaga.setAttribute('data-cartao-id', cartaoHero.id || cartaoHero.nome);
+        btnHeroMarcarPaga.setAttribute('data-mes', String(mesH));
+        btnHeroMarcarPaga.setAttribute('data-ano', String(anoH));
       }
       if (btnHeroPagar) {
         btnHeroPagar.disabled = faturaSemSaldoHero;
@@ -7111,6 +7331,7 @@ function renderCartoes() {
               <button class="icon-btn" data-cartao-nome="${escHtml(cartao.nome)}" onclick="navegarFatura(this.dataset.cartaoNome, -1)" title="Fatura anterior"><i class="ti ti-chevron-left"></i></button>
               <span style="font-size:12.5px;font-weight:600;min-width:90px;text-align:center">${nomesMes[mes]}/${ano}</span>
               <button class="icon-btn" data-cartao-nome="${escHtml(cartao.nome)}" onclick="navegarFatura(this.dataset.cartaoNome, 1)" title="Próxima fatura"><i class="ti ti-chevron-right"></i></button>
+              ${!faturaSemSaldo ? `<button type="button" class="btn btn-sm btn-marcar-fatura-paga" style="margin-left:4px" data-cartao-id="${idOuNomeCartao}" data-mes="${mes}" data-ano="${ano}" title="Marcar fatura como Paga sem gerar débito em conta"><i class="ti ti-circle-check"></i> Marcar como Paga</button>` : ''}
               <button type="button" class="btn btn-sm btn-primary btn-pagar-fatura" style="margin-left:6px" data-cartao-id="${idOuNomeCartao}" data-mes="${mes}" data-ano="${ano}" ${faturaSemSaldo ? 'disabled' : ''}>
                 <i class="ti ${faturaSemSaldo ? 'ti-circle-check' : 'ti-cash-banknote'}"></i> ${faturaSemSaldo ? 'Fatura Paga' : 'Pagar Fatura'}
               </button>
@@ -7154,6 +7375,19 @@ function inicializarDelegacaoPagarFatura() {
   window._delegacaoPagarFaturaAtiva = true;
 
   document.addEventListener('click', (event) => {
+    const btnMarcarPaga = event.target.closest('.btn-marcar-fatura-paga');
+    if (btnMarcarPaga && !btnMarcarPaga.disabled) {
+      event.preventDefault();
+      event.stopPropagation();
+
+      const idCartao = btnMarcarPaga.getAttribute('data-cartao-id') || btnMarcarPaga.dataset.cartaoId || '';
+      const mesAttr = btnMarcarPaga.getAttribute('data-mes') || btnMarcarPaga.dataset.mes;
+      const anoAttr = btnMarcarPaga.getAttribute('data-ano') || btnMarcarPaga.dataset.ano;
+
+      marcarFaturaComoPaga(idCartao, mesAttr, anoAttr, { origemQuitacao: 'manual_sem_conta' });
+      return;
+    }
+
     const btn = event.target.closest('.btn-pagar-fatura');
     if (!btn || btn.disabled) return;
 
@@ -7237,7 +7471,7 @@ function calcularSaldoDisponivelGeral(mesAnoLimite) {
     if (l.tipo === 'receita') totalReceitas += (Number(l.valor) || 0);
     else totalDespesas += (Number(l.valor) || 0);
   });
-  const saldoTotal = Math.round((totalReceitas - totalDespesas) * 100) / 100;
+  const saldoTotal = Math.round((obterSomaSaldosIniciaisContas() + totalReceitas - totalDespesas) * 100) / 100;
   const totalAlocado = calcularTotalGuardadoMetas();
   return {
     totalReceitas: Math.round(totalReceitas * 100) / 100,
@@ -10404,11 +10638,14 @@ function obterContextoConciliacaoBancaria() {
 
   const idsElegiveis = new Set(itensElegiveis.map(l => l.id));
 
-  // Saldo App (Base): lançamentos efetivados da conta fora da lista pendente de conciliação (já conciliados ou de meses anteriores)
+  // Saldo App (Base): saldo inicial + lançamentos efetivados da conta fora da lista pendente de conciliação
+  const saldoInicialBase = contaSel === '__todas__'
+    ? obterSomaSaldosIniciaisContas()
+    : obterSomaSaldosIniciaisContas(contaSel);
   const saldoAppBase = Math.round(
-    (STATE.lancamentos || [])
+    (saldoInicialBase + (STATE.lancamentos || [])
       .filter(l => pertenceAConta(l) && estaPago(l) && !idsElegiveis.has(l.id))
-      .reduce((acc, l) => acc + (l.tipo === 'receita' ? 1 : -1) * (Number(l.valor) || 0), 0) * 100
+      .reduce((acc, l) => acc + (l.tipo === 'receita' ? 1 : -1) * (Number(l.valor) || 0), 0)) * 100
   ) / 100;
 
   const somaSelecionados = Math.round(
@@ -12209,7 +12446,11 @@ function processarTextoOFX(conteudo, nomeArquivo, arquivoOriginal) {
     return true;
   }
 
-  abrirModalRevisaoOFX(contaVinculada, transacoes, nomeArquivo || 'extrato.ofx', resultadoOFX);
+  processarNovasTransacoes(transacoes, 'OFX', {
+    contaDestino: contaVinculada,
+    nomeArquivo: nomeArquivo || 'extrato.ofx',
+    metadados: resultadoOFX
+  });
   return true;
 }
 
@@ -12233,17 +12474,26 @@ function abrirSeletorArquivoOFX() {
   }
 }
 
-function coletarIdsExistentesContaOFX(nomeConta) {
+function coletarIdsExistentesImportacao(nomeConta) {
   const ids = new Set();
-  const alvo = String(nomeConta || '');
+  const alvo = nomeConta ? String(nomeConta).trim() : '';
   (STATE.lancamentos || []).forEach((l) => {
-    if (!l || l.conta !== alvo) return;
-    if (l.fitid) ids.add(String(l.fitid).trim());
-    if (l.ofxFitId) ids.add(String(l.ofxFitId).trim());
-    if (l.id) ids.add(String(l.id).trim());
+    if (!l) return;
+    // IDs globais de API (Pluggy/externalId) são sempre verificados; FITIDs de arquivo verificam globalmente e na conta
+    if (l.pluggyId) ids.add(String(l.pluggyId).trim());
+    if (l.externalId) ids.add(String(l.externalId).trim());
+    if (!alvo || !l.conta || l.conta === alvo) {
+      if (l.fitid) ids.add(String(l.fitid).trim());
+      if (l.ofxFitId) ids.add(String(l.ofxFitId).trim());
+      if (l.id) ids.add(String(l.id).trim());
+    }
+  });
+  (STATE.excluidosPendentes || []).forEach((idEx) => {
+    if (idEx) ids.add(String(idEx).trim());
   });
   return ids;
 }
+const coletarIdsExistentesContaOFX = coletarIdsExistentesImportacao;
 
 function sugerirContaParaOFX(metadados) {
   const contas = Array.isArray(STATE.contas) ? STATE.contas : [];
@@ -12394,7 +12644,11 @@ async function confirmarVinculoOFX() {
   await salvarDados();
   popularContasSelect();
   cancelarVinculoOFX();
-  abrirModalRevisaoOFX(contaDestino, transacoes, nomeArquivo, metadados);
+  processarNovasTransacoes(transacoes, 'OFX', {
+    contaDestino,
+    nomeArquivo,
+    metadados
+  });
 }
 
 function cancelarVinculoOFX(chamadoPorFechamento) {
@@ -12424,74 +12678,1586 @@ function construirOptionsCategoriasOFX(tipo, categoriaSelecionada) {
   )).join('');
 }
 
-function abrirModalRevisaoOFX(contaDestino, transacoes, nomeArquivo, metadados) {
-  const resumoEl = document.getElementById('ofx-revisao-resumo');
+function mapearCategoriaPluggy(categoriaPluggy, descricao, tipo) {
+  const catRaw = String(categoriaPluggy || '').trim();
+  if (catRaw) {
+    const exata = (STATE.categorias || []).find(
+      c => c && c.nome && (!tipo || c.tipo === tipo) && c.nome.toLowerCase() === catRaw.toLowerCase()
+    );
+    if (exata) return exata.nome;
+
+    const cLow = catRaw.toLowerCase();
+    const mapaSemantico = [
+      { padrao: /food|grocer|restaur|eating|supermarket|alimenta|mercado|padaria|delivery|lanche/i, nome: 'Alimentação' },
+      { padrao: /transport|taxi|ride|uber|fuel|gas|parking|auto|combust|pedagio/i, nome: 'Transporte' },
+      { padrao: /hous|rent|utilit|electric|water|internet|phone|moradia|aluguel|condom|energia/i, nome: 'Moradia' },
+      { padrao: /health|pharmac|medical|doctor|dentist|hospital|gym|sa[uú]de|farm[aá]cia|academia/i, nome: 'Saúde' },
+      { padrao: /educat|school|college|university|book|course|educa|curso|livro|faculdade/i, nome: 'Educação' },
+      { padrao: /entertain|leisure|movie|music|game|travel|hotel|lazer|viagem|passeio|cinema/i, nome: 'Lazer' },
+      { padrao: /subscript|streaming|software|digital|assinatura/i, nome: 'Assinaturas' },
+      { padrao: /salary|payroll|wage|sal[aá]rio|remunera/i, nome: 'Salário' },
+      { padrao: /invest|dividend|interest|rendimento|fii/i, nome: 'Investimentos' },
+      { padrao: /freelanc|service|consulting|consultoria|servi[cç]o/i, nome: 'Freelance' }
+    ];
+    for (const item of mapaSemantico) {
+      if (item.padrao.test(cLow)) {
+        return resolverNomeCategoriaNoStateOFX(item.nome, tipo);
+      }
+    }
+  }
+  return autoCategorizar(descricao, tipo);
+}
+
+function normalizarTipoContaPluggy(accountTypeBruto, origemNorm = 'OFX') {
+  if (String(origemNorm || '').toUpperCase() === 'OFX') return 'BANK';
+  const t = String(accountTypeBruto || '').trim().toUpperCase();
+  if (t === 'CREDIT' || t === 'CREDIT_CARD' || t === 'CARTAO' || t === 'CARTÃO') {
+    return 'CREDIT';
+  }
+  return 'BANK';
+}
+
+function construirChaveOrigemPluggy(accountName, accountType) {
+  const tipo = normalizarTipoContaPluggy(accountType, 'PLUGGY');
+  const nome = String(accountName || '').trim() || (tipo === 'CREDIT' ? 'Cartão de Crédito' : 'Conta Corrente');
+  return `${tipo}::${nome}`;
+}
+
+function sugerirNomeContaDestinoCOFIN(accountName, accountType, contaPadraoFallback, temMultiplasOrigensBanco = false) {
+  if (typeof sincronizarEstruturaCartoes === 'function') sincronizarEstruturaCartoes();
+  if (!Array.isArray(STATE.contas)) STATE.contas = [];
+
+  const tipoNorm = normalizarTipoContaPluggy(accountType, 'PLUGGY');
+  const nomeBruto = String(accountName || '').trim();
+  const nLow = nomeBruto.toLowerCase();
+
+  const cartoes = STATE.contas.filter(c => c && c.tipo === 'cartao' && c.nome);
+  const contasBancarias = STATE.contas.filter(c => c && c.tipo !== 'cartao' && c.nome);
+
+  const tentarMatchPorNome = (lista) => {
+    if (!nLow || !lista.length) return null;
+    const exata = lista.find(c => c.nome.toLowerCase() === nLow);
+    if (exata) return exata;
+    const parcial = lista.find(c => nLow.includes(c.nome.toLowerCase()) || c.nome.toLowerCase().includes(nLow));
+    if (parcial) return parcial;
+    const tokens = nLow.split(/[^a-zà-ÿ0-9]+/i).filter(t => t.length >= 3);
+    if (tokens.length) {
+      const porToken = lista.find(c => tokens.some(tok => c.nome.toLowerCase().includes(tok)));
+      if (porToken) return porToken;
+    }
+    return null;
+  };
+
+  if (tipoNorm === 'CREDIT') {
+    const matchCartao = tentarMatchPorNome(cartoes);
+    if (matchCartao) return matchCartao.nome;
+    if (cartoes.length === 1) return cartoes[0].nome;
+    if (cartoes.length > 1) return cartoes[0].nome;
+    // Se ainda não houver nenhum cartão cadastrado no COFIN, sugere criar automaticamente um Cartão de Crédito com o nome vindo do Pluggy
+    const nomeNovoCartao = nomeBruto ? `Cartão ${nomeBruto}` : 'Cartão de Crédito Pluggy';
+    return `__CRIAR_CARTAO__:${nomeNovoCartao}`;
+  }
+
+  const matchConta = tentarMatchPorNome(contasBancarias);
+  if (matchConta) return matchConta.nome;
+  if (temMultiplasOrigensBanco && nomeBruto) {
+    return `__CRIAR_CONTA__:${nomeBruto}`;
+  }
+  if (contaPadraoFallback && contaPadraoFallback.tipo !== 'cartao' && contaPadraoFallback.nome) {
+    return contaPadraoFallback.nome;
+  }
+  if (contasBancarias[0]) return contasBancarias[0].nome;
+  if (contaPadraoFallback && contaPadraoFallback.nome) return contaPadraoFallback.nome;
+  return 'Conta Principal';
+}
+
+function construirOptionsContasECartoesRevisaoHTML(valorSelecionado, accountTypeSugerido, accountNameSugerido) {
+  if (typeof sincronizarEstruturaCartoes === 'function') sincronizarEstruturaCartoes();
+  const contas = Array.isArray(STATE.contas) ? STATE.contas : [];
+  const contasBancarias = contas.filter(c => c && c.tipo !== 'cartao' && c.nome);
+  const cartoes = contas.filter(c => c && c.tipo === 'cartao' && c.nome);
+  const tipoNorm = normalizarTipoContaPluggy(accountTypeSugerido, 'PLUGGY');
+  const nomeBruto = String(accountNameSugerido || '').trim();
+
+  const opcoesCartoes = cartoes.map(c => (
+    `<option value="${escHtml(c.nome)}"${c.nome === valorSelecionado ? ' selected' : ''}>💳 ${escHtml(c.nome)} (Cartão)</option>`
+  )).join('');
+
+  const opcoesBancos = contasBancarias.map(c => (
+    `<option value="${escHtml(c.nome)}"${c.nome === valorSelecionado ? ' selected' : ''}>🏦 ${escHtml(c.nome)} (Conta/Débito)</option>`
+  )).join('');
+
+  const nomeAutoCartao = nomeBruto ? ( /^cart[aã]o\b/i.test(nomeBruto) ? nomeBruto : `Cartão ${nomeBruto}` ) : 'Cartão de Crédito Pluggy';
+  const valCriarCartao = `__CRIAR_CARTAO__:${nomeAutoCartao}`;
+  const jaTemCartaoMesmoNome = cartoes.some(c => c.nome.toLowerCase() === nomeAutoCartao.toLowerCase() || (nomeBruto && c.nome.toLowerCase() === nomeBruto.toLowerCase()));
+  const optCriarCartao = (!jaTemCartaoMesmoNome && (tipoNorm === 'CREDIT' || String(valorSelecionado || '').startsWith('__CRIAR_CARTAO__:')))
+    ? `<option value="${escHtml(valCriarCartao)}"${valorSelecionado === valCriarCartao ? ' selected' : ''}>✨ Criar "${escHtml(nomeAutoCartao)}" (Novo Cartão)</option>`
+    : '';
+
+  const nomeAutoConta = nomeBruto || 'Conta Corrente Pluggy';
+  const valCriarConta = `__CRIAR_CONTA__:${nomeAutoConta}`;
+  const jaTemContaMesmoNome = contasBancarias.some(c => c.nome.toLowerCase() === nomeAutoConta.toLowerCase());
+  const optCriarConta = (!jaTemContaMesmoNome && nomeBruto && (tipoNorm === 'BANK' || String(valorSelecionado || '').startsWith('__CRIAR_CONTA__:')))
+    ? `<option value="${escHtml(valCriarConta)}"${valorSelecionado === valCriarConta ? ' selected' : ''}>✨ Criar "${escHtml(nomeAutoConta)}" (Nova Conta)</option>`
+    : '';
+
+  let html = '';
+  if (tipoNorm === 'CREDIT') {
+    if (opcoesCartoes || optCriarCartao) {
+      html += `<optgroup label="Cartões de Crédito">${opcoesCartoes}${optCriarCartao}</optgroup>`;
+    }
+    if (opcoesBancos || optCriarConta) {
+      html += `<optgroup label="Contas Bancárias (Débito)">${opcoesBancos}${optCriarConta}</optgroup>`;
+    }
+  } else {
+    if (opcoesBancos || optCriarConta) {
+      html += `<optgroup label="Contas Bancárias (Débito)">${opcoesBancos}${optCriarConta}</optgroup>`;
+    }
+    if (opcoesCartoes || optCriarCartao) {
+      html += `<optgroup label="Cartões de Crédito">${opcoesCartoes}${optCriarCartao}</optgroup>`;
+    }
+  }
+
+  if (!html) {
+    html = `<option value="Conta Principal" selected>🏦 Conta Principal</option>`;
+  }
+  return html;
+}
+
+function resolverOuCriarContaDestinoTransacao(valorContaDestino, accountTypeTx, contaFallback) {
+  if (typeof sincronizarEstruturaCartoes === 'function') sincronizarEstruturaCartoes();
+  if (!Array.isArray(STATE.contas)) STATE.contas = [];
+  if (!Array.isArray(STATE.cartoes)) STATE.cartoes = [];
+
+  const val = String(valorContaDestino || '').trim();
+  const tipoNorm = normalizarTipoContaPluggy(accountTypeTx, 'PLUGGY');
+
+  if (val.startsWith('__CRIAR_CARTAO__:')) {
+    const nomeCartao = val.slice('__CRIAR_CARTAO__:'.length).trim() || 'Cartão de Crédito';
+    let existente = STATE.contas.find(c => c && c.nome && c.nome.toLowerCase() === nomeCartao.toLowerCase());
+    if (!existente) {
+      const novoId = uid();
+      existente = {
+        id: novoId,
+        nome: nomeCartao,
+        tipo: 'cartao',
+        diaFechamento: 1,
+        diaVencimento: 10,
+        limite: 5000,
+        cor: '#8B5CF6',
+        saldo: 0
+      };
+      STATE.contas.push(existente);
+      STATE.cartoes.push({
+        id: novoId,
+        nome: nomeCartao,
+        limiteTotal: 5000,
+        diaFechamento: 1,
+        diaVencimento: 10,
+        cor: '#8B5CF6'
+      });
+    } else if (existente.tipo !== 'cartao') {
+      // Se já existia uma conta bancária com o mesmo nome, cria uma entrada distinta para o cartão
+      const nomeDistinto = `${nomeCartao} (Cartão)`;
+      let cartaoDistinto = STATE.contas.find(c => c && c.nome && c.nome.toLowerCase() === nomeDistinto.toLowerCase());
+      if (!cartaoDistinto) {
+        const novoId = uid();
+        cartaoDistinto = {
+          id: novoId,
+          nome: nomeDistinto,
+          tipo: 'cartao',
+          diaFechamento: 1,
+          diaVencimento: 10,
+          limite: 5000,
+          cor: '#8B5CF6',
+          saldo: 0
+        };
+        STATE.contas.push(cartaoDistinto);
+        STATE.cartoes.push({
+          id: novoId,
+          nome: nomeDistinto,
+          limiteTotal: 5000,
+          diaFechamento: 1,
+          diaVencimento: 10,
+          cor: '#8B5CF6'
+        });
+      }
+      return cartaoDistinto;
+    }
+    return existente;
+  }
+
+  if (val.startsWith('__CRIAR_CONTA__:')) {
+    const nomeConta = val.slice('__CRIAR_CONTA__:'.length).trim() || 'Conta Corrente';
+    let existente = STATE.contas.find(c => c && c.nome && c.nome.toLowerCase() === nomeConta.toLowerCase());
+    if (!existente) {
+      existente = {
+        id: uid(),
+        nome: nomeConta,
+        tipo: 'conta',
+        cor: '#1A6FE0',
+        saldo: 0
+      };
+      STATE.contas.push(existente);
+    }
+    return existente;
+  }
+
+  if (val) {
+    const encontrada = STATE.contas.find(c => c && c.nome === val)
+      || STATE.contas.find(c => c && c.nome && c.nome.toLowerCase() === val.toLowerCase());
+    if (encontrada) return encontrada;
+  }
+
+  if (tipoNorm === 'CREDIT') {
+    const primeiroCartao = STATE.contas.find(c => c && c.tipo === 'cartao');
+    if (primeiroCartao) return primeiroCartao;
+  }
+
+  return contaFallback || STATE.contas[0] || { id: uid(), nome: 'Conta Principal', tipo: 'conta', cor: '#1A6FE0', saldo: 0 };
+}
+
+function resolverContaDestinoImportacao(opcoesExtras, listaNormalizada) {
+  if (typeof sincronizarEstruturaCartoes === 'function') sincronizarEstruturaCartoes();
+  if (!Array.isArray(STATE.contas)) STATE.contas = [];
+  if (opcoesExtras && opcoesExtras.contaDestino && typeof opcoesExtras.contaDestino === 'object') {
+    return opcoesExtras.contaDestino;
+  }
+  if (opcoesExtras && typeof opcoesExtras.contaNome === 'string' && opcoesExtras.contaNome.trim()) {
+    const porNome = STATE.contas.find(c => c && c.nome === opcoesExtras.contaNome.trim());
+    if (porNome) return porNome;
+  }
+
+  const txComConta = (listaNormalizada || []).find(t => t && (t.accountName || t.conta));
+  if (txComConta) {
+    const nomeSugeridoTx = txComConta.accountName || txComConta.conta || '';
+    const tipoTx = txComConta.accountType || 'BANK';
+    const sLow = nomeSugeridoTx.toLowerCase();
+    const candidatos = tipoTx === 'CREDIT'
+      ? STATE.contas.filter(c => c && c.tipo === 'cartao')
+      : STATE.contas.filter(c => c && c.tipo !== 'cartao');
+    const matchConta = candidatos.find(
+      c => c && c.nome && (c.nome.toLowerCase() === sLow || sLow.includes(c.nome.toLowerCase()) || c.nome.toLowerCase().includes(sLow))
+    );
+    if (matchConta) return matchConta;
+  }
+
+  const primeiraBancaria = STATE.contas.find(c => c && c.tipo !== 'cartao');
+  if (primeiraBancaria) return primeiraBancaria;
+  if (STATE.contas[0]) return STATE.contas[0];
+
+  const contaPadrao = { id: uid(), nome: 'Conta Principal', tipo: 'conta', cor: '#1A6FE0', saldo: 0 };
+  STATE.contas.push(contaPadrao);
+  return contaPadrao;
+}
+
+function ehTransacaoPagamentoFaturaPluggy(memo, rawCategory = '') {
+  const texto = String(memo || '').trim();
+  const cat = String(rawCategory || '').trim();
+  if (/credit\s*card\s*payment|pagamento\s*(?:de\s*)?fatura/i.test(cat)) return true;
+  return /pagamento\s*(?:de\s*|da\s*|efetuado\s*(?:de\s*|na\s*)?)?fatura|pagamento\s*recebido|pag(?:to|amento)?\.?\s*recebido|fatura\s*paga|bill\s*payment|pgto\.?\s*fatura|pagto\.?\s*fatura|cr[eé]dito\s*(?:em\s*)?fatura/i.test(texto);
+}
+
+function obterConfigCartaoParaRevisao(destinoNome) {
+  const bruto = String(destinoNome || '').trim();
+  const ehMarcadorNovo = /^__CRIAR_CARTAO__:/i.test(bruto);
+  const nomeLimpo = bruto.replace(/^__CRIAR_CARTAO__:/i, '').trim();
+  const nomeLower = nomeLimpo.toLowerCase();
+  const cartao = (STATE.contas || []).find(c => c && c.tipo === 'cartao' && String(c.nome || '').trim().toLowerCase() === nomeLower)
+    || (STATE.cartoes || []).find(c => c && String(c.nome || '').trim().toLowerCase() === nomeLower)
+    || null;
+  if (cartao) {
+    return {
+      cartao,
+      nomeCartao: cartao.nome,
+      isCartao: true,
+      diaFechamento: parseInt(cartao.diaFechamento, 10) || 1,
+      diaVencimento: parseInt(cartao.diaVencimento, 10) || 10
+    };
+  }
+  return {
+    cartao: null,
+    nomeCartao: nomeLimpo,
+    isCartao: ehMarcadorNovo,
+    diaFechamento: 1,
+    diaVencimento: 10
+  };
+}
+
+function estimarCompetenciaPorDataPagamento(dataISO, diaFechamento, diaVencimento) {
+  const [aStr, mStr] = String(dataISO || hojeLocalISO()).slice(0, 10).split('-');
+  let ano = parseInt(aStr, 10) || new Date().getFullYear();
+  let mes = parseInt(mStr, 10) || (new Date().getMonth() + 1);
+  const fech = parseInt(diaFechamento, 10) || 1;
+  const venc = parseInt(diaVencimento, 10) || 10;
+  if (venc <= fech) {
+    mes -= 1;
+    if (mes < 1) {
+      mes = 12;
+      ano -= 1;
+    }
+  }
+  return { ano, mes };
+}
+
+function resolverCompetenciaPagamentoCartao(txPagamento, candidatosComp, cfgCartao) {
+  const dataPag = String((txPagamento && (txPagamento.data || txPagamento.dataCompra)) || hojeLocalISO()).slice(0, 10);
+  const valorPag = Math.round((Number(txPagamento && txPagamento.valor) || 0) * 100) / 100;
+  const fech = (cfgCartao && cfgCartao.diaFechamento) || 1;
+  const venc = (cfgCartao && cfgCartao.diaVencimento) || 10;
+  const lista = Array.isArray(candidatosComp) ? candidatosComp.filter(c => c && c.ano && c.mes && c.totalBruto > 0) : [];
+
+  if (lista.length > 0 && /^\d{4}-\d{2}-\d{2}$/.test(dataPag)) {
+    const pagMs = new Date(`${dataPag}T12:00:00`).getTime();
+    const candidatosNoIntervalo = lista.map((c) => {
+      const dueStr = calcularVencimentoFatura(c.ano, c.mes, fech, venc);
+      const dueMs = new Date(`${dueStr}T12:00:00`).getTime();
+      const diffDias = (pagMs - dueMs) / 86400000;
+      const diffValor = Math.abs((Number(c.totalBruto) || 0) - valorPag);
+      return { c, diffDias, absDias: Math.abs(diffDias), diffValor };
+    }).filter(x => Number.isFinite(x.diffDias) && x.diffDias >= -18 && x.diffDias <= 32);
+
+    if (candidatosNoIntervalo.length > 0) {
+      const toleranciaValor = Math.max(1.00, valorPag * 0.02);
+      const comMesmoValor = candidatosNoIntervalo.filter(x => valorPag > 0 && x.diffValor <= toleranciaValor);
+      if (comMesmoValor.length > 0) {
+        comMesmoValor.sort((a, b) => (a.diffValor - b.diffValor) || (a.absDias - b.absDias));
+        return { ano: comMesmoValor[0].c.ano, mes: comMesmoValor[0].c.mes };
+      }
+      candidatosNoIntervalo.sort((a, b) => {
+        const aPrefer = a.diffDias >= -7 ? 0 : 1;
+        const bPrefer = b.diffDias >= -7 ? 0 : 1;
+        if (aPrefer !== bPrefer) return aPrefer - bPrefer;
+        return a.absDias - b.absDias;
+      });
+      return { ano: candidatosNoIntervalo[0].c.ano, mes: candidatosNoIntervalo[0].c.mes };
+    }
+  }
+
+  return estimarCompetenciaPorDataPagamento(dataPag, fech, venc);
+}
+
+function calcularPlanoQuitacaoFaturasRevisao(listaTransacoes, opcoes = {}) {
+  const marcarAnteriores = opcoes.marcarFaturasAnterioresPagas !== false;
+  const dataRef = String(opcoes.dataReferencia || hojeLocalISO()).slice(0, 10);
+  const mesAtualKey = dataRef.slice(0, 7);
+  const contaPadraoNome = (_ofxRevisaoContexto && _ofxRevisaoContexto.contaNome) || '';
+  const contasResolvidasPorTx = opcoes.contasResolvidasPorTx instanceof Map ? opcoes.contasResolvidasPorTx : null;
+
+  const candidatosPorCartao = new Map();
+  const obterOuCriarGrupoCartao = (nomeCartaoRaw, cfgFallback) => {
+    const cleanName = String(nomeCartaoRaw || '').replace(/^__CRIAR_CARTAO__:/i, '').trim();
+    if (!cleanName) return null;
+    const keyLower = cleanName.toLowerCase();
+    if (!candidatosPorCartao.has(keyLower)) {
+      const cfg = cfgFallback || obterConfigCartaoParaRevisao(cleanName);
+      candidatosPorCartao.set(keyLower, {
+        nomeCartao: cfg.nomeCartao || cleanName,
+        cfg,
+        competencias: new Map()
+      });
+    }
+    return candidatosPorCartao.get(keyLower);
+  };
+
+  const registrarDespesaCartao = (grupo, ano, mes, valor) => {
+    if (!grupo || !ano || !mes) return null;
+    const compKey = `${ano}-${String(mes).padStart(2, '0')}`;
+    if (!grupo.competencias.has(compKey)) {
+      grupo.competencias.set(compKey, { ano, mes, compKey, totalBruto: 0 });
+    }
+    const entry = grupo.competencias.get(compKey);
+    entry.totalBruto = Math.round((entry.totalBruto + (Number(valor) || 0)) * 100) / 100;
+    return entry;
+  };
+
+  const todosCartoesExistentes = [
+    ...((STATE && Array.isArray(STATE.contas)) ? STATE.contas.filter(c => c && c.tipo === 'cartao') : []),
+    ...((STATE && Array.isArray(STATE.cartoes)) ? STATE.cartoes : [])
+  ];
+
+  // Inclui despesas de cartão já gravadas em STATE.lancamentos para melhorar o batimento de valores
+  (STATE.lancamentos || []).forEach((l) => {
+    if (!l || l.tipo !== 'despesa' || ehLancamentoPagamentoFatura(l) || !ehLancamentoCartao(l)) return;
+    const nomeC = l.conta || l.cartaoNome;
+    if (!nomeC) return;
+    const cfg = obterConfigCartaoParaRevisao(nomeC);
+    const grupo = obterOuCriarGrupoCartao(cfg.nomeCartao, cfg);
+    const comp = calcularCompetenciaLancamentoCartao(l, cfg.cartao || { nome: cfg.nomeCartao, diaFechamento: cfg.diaFechamento });
+    registrarDespesaCartao(grupo, comp.ano, comp.mes, l.valor);
+  });
+
+  // Inclui despesas de cartão do lote atual em revisão/importação
+  (listaTransacoes || []).forEach((tx) => {
+    if (!tx || tx.ehDuplicada) return;
+    const contaResolvida = contasResolvidasPorTx ? contasResolvidasPorTx.get(tx) : null;
+    const destinoNome = (contaResolvida && contaResolvida.nome) || tx.contaDestino || contaPadraoNome;
+    const cfg = contaResolvida
+      ? {
+          cartao: contaResolvida,
+          nomeCartao: contaResolvida.nome,
+          isCartao: contaResolvida.tipo === 'cartao',
+          diaFechamento: parseInt(contaResolvida.diaFechamento, 10) || 1,
+          diaVencimento: parseInt(contaResolvida.diaVencimento, 10) || 10
+        }
+      : obterConfigCartaoParaRevisao(destinoNome);
+
+    const ehTipoCartao = cfg.isCartao || normalizarTipoContaPluggy(tx.accountType, tx.origem === 'pluggy' ? 'PLUGGY' : 'OFX') === 'CREDIT';
+    const ehPagCartao = Boolean(tx.ehPagamentoFaturaNoCartao || (ehTipoCartao && ehTransacaoPagamentoFaturaPluggy(tx.memo || tx.descricao, tx.rawCategory)));
+    if (!ehTipoCartao || !cfg.isCartao || tx.tipo !== 'despesa' || ehPagCartao || tx.selecionada === false) return;
+
+    const grupo = obterOuCriarGrupoCartao(cfg.nomeCartao, cfg);
+    const comp = competenciaFatura(tx.dataCompra || tx.data, cfg.diaFechamento);
+    registrarDespesaCartao(grupo, comp.ano, comp.mes, tx.valor);
+  });
+
+  const pagamentosDetectadosPorChave = new Map();
+
+  // 1) Pagamentos de fatura detectados no próprio cartão (ex.: "Pagamento recebido", "Credit Card Payment")
+  (listaTransacoes || []).forEach((tx) => {
+    if (!tx || tx.ehDuplicada) return;
+    const contaResolvida = contasResolvidasPorTx ? contasResolvidasPorTx.get(tx) : null;
+    const destinoNome = (contaResolvida && contaResolvida.nome) || tx.contaDestino || contaPadraoNome;
+    const cfg = contaResolvida
+      ? {
+          cartao: contaResolvida,
+          nomeCartao: contaResolvida.nome,
+          isCartao: contaResolvida.tipo === 'cartao',
+          diaFechamento: parseInt(contaResolvida.diaFechamento, 10) || 1,
+          diaVencimento: parseInt(contaResolvida.diaVencimento, 10) || 10
+        }
+      : obterConfigCartaoParaRevisao(destinoNome);
+
+    const ehTipoCartao = cfg.isCartao || normalizarTipoContaPluggy(tx.accountType, tx.origem === 'pluggy' ? 'PLUGGY' : 'OFX') === 'CREDIT';
+    const ehPagCartao = Boolean(tx.ehPagamentoFaturaNoCartao || (ehTipoCartao && ehTransacaoPagamentoFaturaPluggy(tx.memo || tx.descricao, tx.rawCategory)));
+    if (!ehPagCartao || !cfg.isCartao) return;
+
+    const grupo = obterOuCriarGrupoCartao(cfg.nomeCartao, cfg);
+    const candidatos = grupo ? [...grupo.competencias.values()] : [];
+    const compPag = resolverCompetenciaPagamentoCartao(tx, candidatos, cfg);
+    registrarDespesaCartao(grupo, compPag.ano, compPag.mes, 0);
+
+    const chaveLower = normalizarChaveFaturaLower(grupo.nomeCartao, compPag.ano, compPag.mes);
+    if (chaveLower) {
+      pagamentosDetectadosPorChave.set(chaveLower, {
+        dataPagamento: String(tx.data || dataRef).slice(0, 10),
+        valor: Number(tx.valor) || 0,
+        contaOrigem: '',
+        pagamentoFaturaId: '',
+        cartaoNome: grupo.nomeCartao,
+        ano: compPag.ano,
+        mes: compPag.mes,
+        fonte: 'cartao'
+      });
+    }
+  });
+
+  // 2) Pagamentos de fatura vindos da conta bancária (BANK) no mesmo lote ou já importados
+  const bancosPagamentoLista = [
+    ...(Array.isArray(opcoes.pagamentosBancoRecentes) ? opcoes.pagamentosBancoRecentes : []),
+    ...(listaTransacoes || []).filter((tx) => {
+      if (!tx || tx.ehDuplicada || tx.selecionada === false) return false;
+      const ehTipoCartao = normalizarTipoContaPluggy(tx.accountType, tx.origem === 'pluggy' ? 'PLUGGY' : 'OFX') === 'CREDIT';
+      if (ehTipoCartao) return false;
+      return tx.tipo === 'despesa' && Boolean(tx.ehPagamentoFaturaDetectado || ehTransacaoPagamentoFaturaPluggy(tx.memo || tx.descricao, tx.rawCategory));
+    })
+  ];
+
+  bancosPagamentoLista.forEach((pagBank) => {
+    const descBank = String(pagBank.descricao || pagBank.memo || '').toLowerCase();
+    let grupoAlvo = null;
+    for (const g of candidatosPorCartao.values()) {
+      const nomeLow = g.nomeCartao.toLowerCase();
+      if (descBank.includes(nomeLow) || (pagBank.cartaoNome && String(pagBank.cartaoNome).toLowerCase() === nomeLow)) {
+        grupoAlvo = g;
+        break;
+      }
+    }
+    if (!grupoAlvo && candidatosPorCartao.size === 1) {
+      grupoAlvo = [...candidatosPorCartao.values()][0];
+    }
+    if (!grupoAlvo && todosCartoesExistentes.length === 1) {
+      const cfgUnico = obterConfigCartaoParaRevisao(todosCartoesExistentes[0].nome);
+      grupoAlvo = obterOuCriarGrupoCartao(cfgUnico.nomeCartao, cfgUnico);
+    }
+    if (!grupoAlvo) return;
+
+    const candidatos = [...grupoAlvo.competencias.values()];
+    const compBank = (pagBank.faturaAno && pagBank.faturaMes)
+      ? { ano: parseInt(pagBank.faturaAno, 10), mes: parseInt(pagBank.faturaMes, 10) }
+      : resolverCompetenciaPagamentoCartao({ data: pagBank.data, valor: pagBank.valor }, candidatos, grupoAlvo.cfg);
+    registrarDespesaCartao(grupoAlvo, compBank.ano, compBank.mes, 0);
+
+    const chaveLower = normalizarChaveFaturaLower(grupoAlvo.nomeCartao, compBank.ano, compBank.mes);
+    const anterior = pagamentosDetectadosPorChave.get(chaveLower);
+    pagamentosDetectadosPorChave.set(chaveLower, {
+      dataPagamento: String(pagBank.data || (anterior && anterior.dataPagamento) || dataRef).slice(0, 10),
+      valor: Number(pagBank.valor) || (anterior && anterior.valor) || 0,
+      contaOrigem: (pagBank.conta || pagBank.contaDestino || (anterior && anterior.contaOrigem) || '').replace(/^__CRIAR_CARTAO__:/i, ''),
+      pagamentoFaturaId: pagBank._lancId || pagBank.idPagamentoLanc || (anterior && anterior.pagamentoFaturaId) || '',
+      lancBancoRef: pagBank._lancRef || (anterior && anterior.lancBancoRef) || null,
+      cartaoNome: grupoAlvo.nomeCartao,
+      ano: compBank.ano,
+      mes: compBank.mes,
+      fonte: 'banco'
+    });
+  });
+
+  const porChaveLower = new Map();
+  const faturasParaQuitar = [];
+
+  candidatosPorCartao.forEach((grupo) => {
+    grupo.competencias.forEach((comp) => {
+      const chaveLower = normalizarChaveFaturaLower(grupo.nomeCartao, comp.ano, comp.mes);
+      if (!chaveLower) return;
+      const pagInfo = pagamentosDetectadosPorChave.get(chaveLower) || null;
+      const ehMesAnterior = comp.compKey < mesAtualKey;
+      const deveQuitar = Boolean(pagInfo) || (marcarAnteriores && ehMesAnterior);
+      if (!deveQuitar) return;
+
+      const dataVenc = calcularVencimentoFatura(comp.ano, comp.mes, grupo.cfg.diaFechamento, grupo.cfg.diaVencimento);
+      const planoItem = {
+        chaveLower,
+        cartaoNome: grupo.nomeCartao,
+        ano: comp.ano,
+        mes: comp.mes,
+        compKey: comp.compKey,
+        dataPagamento: (pagInfo && pagInfo.dataPagamento) || dataVenc || dataRef,
+        contaOrigem: (pagInfo && pagInfo.contaOrigem) || '',
+        pagamentoFaturaId: (pagInfo && pagInfo.pagamentoFaturaId) || '',
+        lancBancoRef: (pagInfo && pagInfo.lancBancoRef) || null,
+        quitacaoRetroativa: Boolean(marcarAnteriores && ehMesAnterior),
+        pagamentoDetectado: Boolean(pagInfo),
+        origemQuitacao: pagInfo
+          ? (pagInfo.contaOrigem ? 'pluggy_conta_e_cartao' : 'pluggy_pagamento_detectado')
+          : 'pluggy_mes_anterior'
+      };
+      porChaveLower.set(chaveLower, planoItem);
+      faturasParaQuitar.push(planoItem);
+    });
+  });
+
+  return {
+    porChaveLower,
+    faturasParaQuitar,
+    pagamentosDetectadosPorChave,
+    qtdPagamentosCartaoDetectados: [...pagamentosDetectadosPorChave.values()].filter(p => p.fonte === 'cartao').length
+  };
+}
+
+function normalizarTextoParaMatchTransferencia(str) {
+  return String(str || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function extrairNomeLimpoDestinoImportacao(valorDestino) {
+  return String(valorDestino || '')
+    .replace(/^__(?:CRIAR_CARTAO|CRIAR_CONTA)__:/i, '')
+    .trim();
+}
+
+function ehMovimentacaoDinheiroFisicoImportacao(memo, rawCategory = '') {
+  const catNorm = normalizarTextoParaMatchTransferencia(rawCategory);
+  const memoNorm = normalizarTextoParaMatchTransferencia(memo);
+  return (
+    /\bcash\b|same\s*person\s*transfer\s*-\s*cash/i.test(catNorm) ||
+    /\b(?:dep\s*dinheiro|deposito\s*(?:em\s*)?dinheiro|saques?|bco\s*24\s*h|banco\s*24\s*h|caixa\s*eletronico)\b/i.test(memoNorm)
+  );
+}
+
+function calcularDiferencaDiasISOUtc(dataA, dataB) {
+  const mA = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(dataA || '').trim());
+  const mB = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(dataB || '').trim());
+  if (!mA || !mB) return Infinity;
+  const msA = Date.UTC(Number(mA[1]), Number(mA[2]) - 1, Number(mA[3]));
+  const msB = Date.UTC(Number(mB[1]), Number(mB[2]) - 1, Number(mB[3]));
+  return Math.abs(msA - msB) / 86400000;
+}
+
+function contasBancariasSaoDiferentesTransferencia(txA, txB) {
+  const destA = extrairNomeLimpoDestinoImportacao(txA && (txA.contaDestino || txA.conta)).toLowerCase();
+  const destB = extrairNomeLimpoDestinoImportacao(txB && (txB.contaDestino || txB.conta)).toLowerCase();
+  if (destA && destB && destA !== destB) return true;
+
+  const rawIdA = String((txA && txA.accountId) || '').trim();
+  const rawIdB = String((txB && txB.accountId) || '').trim();
+  if (rawIdA && rawIdB && rawIdA !== rawIdB) return true;
+
+  const rawNameA = String((txA && txA.accountName) || '').trim().toLowerCase();
+  const rawNameB = String((txB && txB.accountName) || '').trim().toLowerCase();
+  if (rawNameA && rawNameB && rawNameA !== rawNameB) return true;
+
+  return false;
+}
+
+function detectarTransferenciasNoLoteImportacao(itensRevisao) {
+  if (!Array.isArray(itensRevisao) || !itensRevisao.length) return;
+
+  const elegiveis = itensRevisao.filter(
+    tx => tx && !tx.ehDuplicada && !tx.ehCartaoCredito && !tx.ehPagamentoFaturaDetectado && !tx.ehPagamentoFaturaNoCartao && !tx.isCashMovement && (Number(tx.valor) || 0) > 0
+  );
+  const pareadosNoLote = new Set();
+
+  // 1) Pareamento exato dentro do próprio lote atual (saída na Conta A + entrada na Conta B, mesmo valor, diff <= 1 dia)
+  const candidatosPares = [];
+  for (let i = 0; i < elegiveis.length; i += 1) {
+    for (let j = i + 1; j < elegiveis.length; j += 1) {
+      const a = elegiveis[i];
+      const b = elegiveis[j];
+      const dirA = a.direcaoOriginal || a.tipo;
+      const dirB = b.direcaoOriginal || b.tipo;
+      if (dirA === dirB) continue;
+      if (Math.abs((Number(a.valor) || 0) - (Number(b.valor) || 0)) > 0.01) continue;
+      if (!contasBancariasSaoDiferentesTransferencia(a, b)) continue;
+      const diffDias = calcularDiferencaDiasISOUtc(a.data, b.data);
+      if (diffDias > 1) continue;
+      candidatosPares.push({ i, j, a, b, diffDias });
+    }
+  }
+
+  candidatosPares.sort((p1, p2) => p1.diffDias - p2.diffDias);
+
+  candidatosPares.forEach(({ a, b }) => {
+    if (pareadosNoLote.has(a) || pareadosNoLote.has(b)) return;
+    pareadosNoLote.add(a);
+    pareadosNoLote.add(b);
+
+    const dirA = a.direcaoOriginal || a.tipo;
+    const txSaida = dirA === 'despesa' ? a : b;
+    const txEntrada = dirA === 'receita' ? a : b;
+
+    const nomeLimpoSaida = extrairNomeLimpoDestinoImportacao(txSaida.contaDestino);
+    const nomeLimpoEntrada = extrairNomeLimpoDestinoImportacao(txEntrada.contaDestino);
+    if (nomeLimpoSaida.toLowerCase() === nomeLimpoEntrada.toLowerCase() && txEntrada.accountName && txEntrada.accountName.toLowerCase() !== nomeLimpoSaida.toLowerCase()) {
+      txEntrada.contaDestino = `__CRIAR_CONTA__:${txEntrada.accountName}`;
+    }
+
+    const origemFinal = txSaida.contaDestino || 'Conta Origem';
+    const destinoFinal = txEntrada.contaDestino || 'Conta Destino';
+    const nomeOrigemExib = extrairNomeLimpoDestinoImportacao(origemFinal);
+    const nomeDestExib = extrairNomeLimpoDestinoImportacao(destinoFinal);
+
+    txSaida.direcaoOriginal = 'despesa';
+    txSaida.ehTransferencia = true;
+    txSaida.tipoRevisao = 'transferencia';
+    txSaida.categoria = 'Transferência';
+    txSaida.contaContraparte = destinoFinal;
+    txSaida.transferenciaParId = txEntrada.fitid || txEntrada.id;
+    txSaida.transferenciaMotivo = `Par automático detectado (${nomeOrigemExib} → ${nomeDestExib})`;
+    txSaida.selecionada = true;
+
+    txEntrada.direcaoOriginal = 'receita';
+    txEntrada.ehTransferencia = true;
+    txEntrada.ehParTransferenciaConsolidado = true;
+    txEntrada.tipoRevisao = 'transferencia';
+    txEntrada.categoria = 'Transferência';
+    txEntrada.contaContraparte = origemFinal;
+    txEntrada.transferenciaPrincipalId = txSaida.fitid || txSaida.id;
+    txEntrada.transferenciaMotivo = `Consolidada com saída em ${nomeOrigemExib}`;
+    txEntrada.selecionada = false;
+  });
+
+  // 2) Pareamento com lançamentos já existentes em STATE.lancamentos (apenas contas BANK conectadas do utilizador)
+  const nomesBancosExistentes = new Set(
+    (STATE.contas || []).filter(c => c && c.tipo !== 'cartao' && c.nome).map(c => String(c.nome).trim().toLowerCase())
+  );
+  const existentesUsados = new Set();
+  const existingBancarios = (STATE.lancamentos || []).filter(
+    l => l && !l.ehMovimentoCofre && !ehLancamentoPagamentoFatura(l) && !ehLancamentoCartao(l)
+      && (Number(l.valor) || 0) > 0 && nomesBancosExistentes.has(String(l.conta || '').trim().toLowerCase())
+  );
+
+  elegiveis.forEach((tx) => {
+    if (pareadosNoLote.has(tx)) return;
+    const dirTx = tx.direcaoOriginal || tx.tipo;
+    const contaTxLimpa = extrairNomeLimpoDestinoImportacao(tx.contaDestino || tx.accountName).toLowerCase();
+
+    // Verifica primeiro se já existe uma ponta manual de transferência NÃO conciliada nesta mesma conta (para conciliar sem duplicar saldo)
+    const legManualMesmaConta = existingBancarios.find((l) => {
+      if (existentesUsados.has(l.id)) return false;
+      if (l.ehTransferencia !== true || l.fitid || l.pluggyId || l.ofxFitId || l.externalId) return false;
+      if (l.tipo !== dirTx) return false;
+      if (String(l.conta || '').trim().toLowerCase() !== contaTxLimpa) return false;
+      if (Math.abs((Number(l.valor) || 0) - (Number(tx.valor) || 0)) > 0.01) return false;
+      return calcularDiferencaDiasISOUtc(l.data, tx.data) <= 1;
+    });
+
+    if (legManualMesmaConta) {
+      existentesUsados.add(legManualMesmaConta.id);
+      pareadosNoLote.add(tx);
+      tx.direcaoOriginal = dirTx;
+      tx.ehTransferencia = true;
+      tx.tipoRevisao = 'transferencia';
+      tx.categoria = 'Transferência';
+      tx.contaContraparte = legManualMesmaConta.transferenciaContraparte || '__SEM_CONTRAPARTE__';
+      tx.transferenciaConciliarLegId = legManualMesmaConta.id;
+      tx.transferenciaMotivo = 'Concilia transferência já existente';
+      return;
+    }
+
+    // Procura lançamento oposto em outra conta já gravada em STATE.lancamentos
+    let melhorExistente = null;
+    let melhorDiff = Infinity;
+    existingBancarios.forEach((l) => {
+      if (existentesUsados.has(l.id)) return;
+      if (l.tipo === dirTx) return;
+      if (l.ehTransferencia && l.transferenciaContraparte) return; // já faz parte de transferência completa
+      const contaL = String(l.conta || '').trim();
+      if (!contaL || contaL.toLowerCase() === contaTxLimpa) return;
+      if (Math.abs((Number(l.valor) || 0) - (Number(tx.valor) || 0)) > 0.01) return;
+      const diff = calcularDiferencaDiasISOUtc(l.data, tx.data);
+      if (diff <= 1 && diff < melhorDiff) {
+        melhorExistente = l;
+        melhorDiff = diff;
+      }
+    });
+
+    if (melhorExistente) {
+      existentesUsados.add(melhorExistente.id);
+      pareadosNoLote.add(tx);
+      tx.direcaoOriginal = dirTx;
+      tx.ehTransferencia = true;
+      tx.tipoRevisao = 'transferencia';
+      tx.categoria = 'Transferência';
+      tx.contaContraparte = melhorExistente.conta;
+      tx.transferenciaExistenteId = melhorExistente.id;
+      tx.transferenciaMotivo = `Pareada com lançamento em ${melhorExistente.conta}`;
+    }
+  });
+
+  itensRevisao.forEach((tx) => {
+    if (tx) {
+      if (!tx.direcaoOriginal) tx.direcaoOriginal = tx.tipo === 'receita' ? 'receita' : 'despesa';
+      if (!tx.tipoRevisao) tx.tipoRevisao = tx.ehTransferencia ? 'transferencia' : tx.direcaoOriginal;
+      tx._transferenciaAvaliada = true;
+    }
+  });
+}
+
+function construirOptionsContraparteTransferenciaHTML(valorSelecionado, contaLinhaAtual) {
+  if (typeof sincronizarEstruturaCartoes === 'function') sincronizarEstruturaCartoes();
+  const contas = Array.isArray(STATE.contas) ? STATE.contas : [];
+  const contaAtualLimpa = extrairNomeLimpoDestinoImportacao(contaLinhaAtual).toLowerCase();
+  const contasBancarias = contas.filter(c => c && c.tipo !== 'cartao' && c.nome && c.nome.toLowerCase() !== contaAtualLimpa);
+  const cartoes = contas.filter(c => c && c.tipo === 'cartao' && c.nome && c.nome.toLowerCase() !== contaAtualLimpa);
+
+  const valAtual = String(valorSelecionado || '').trim();
+  const valNormCriar = valAtual.startsWith('__CRIAR_CONTA__:') ? extrairNomeLimpoDestinoImportacao(valAtual) : '';
+  const jaTemNoState = valNormCriar && contasBancarias.some(c => c.nome.toLowerCase() === valNormCriar.toLowerCase());
+
+  const opcoesBancos = contasBancarias.map(c => (
+    `<option value="${escHtml(c.nome)}"${c.nome === valAtual ? ' selected' : ''}>🏦 ${escHtml(c.nome)}</option>`
+  )).join('');
+
+  const opCriar = (valNormCriar && !jaTemNoState)
+    ? `<option value="${escHtml(valAtual)}" selected>✨ Criar "${escHtml(valNormCriar)}" (Nova Conta)</option>`
+    : '';
+
+  const opcoesCartoes = cartoes.map(c => (
+    `<option value="${escHtml(c.nome)}"${c.nome === valAtual ? ' selected' : ''}>💳 ${escHtml(c.nome)} (Cartão)</option>`
+  )).join('');
+
+  let html = `<option value=""${(!valAtual || valAtual === '__SEM_CONTRAPARTE__') ? ' selected' : ''}>-- Selecione a conta de contrapartida --</option>`;
+  if (opcoesBancos || opCriar) {
+    html += `<optgroup label="Contas Bancárias">${opcoesBancos}${opCriar}</optgroup>`;
+  }
+  if (opcoesCartoes) {
+    html += `<optgroup label="Cartões">${opcoesCartoes}</optgroup>`;
+  }
+  return html;
+}
+
+/**
+ * Pipeline Unificado de Normalização e Anti-Duplicação (PLUGGY & OFX).
+ * Mapeia transações brutas da API Pluggy ou de ficheiros OFX para o formato canônico do COFIN,
+ * identifica automaticamente Conta/Débito (BANK) vs Cartão de Crédito (CREDIT) e transferências entre contas,
+ * verifica os IDs únicos contra STATE.lancamentos e abre o #modal-revisao-importacao.
+ */
+function normalizarListaContasPluggyMeta(opcoesExtras = {}, transacoesBrutas = null, listaEntrada = []) {
+  const mapaPorChave = new Map();
+  const registrar = (acc) => {
+    if (!acc || typeof acc !== 'object') return;
+    const id = String(acc.id || acc.accountId || '').trim();
+    const name = String(acc.name || acc.accountName || acc.marketingName || acc.conta || '').trim();
+    const type = normalizarTipoContaPluggy(acc.type || acc.accountType, 'PLUGGY');
+    const balRaw = acc.balance !== undefined ? acc.balance : acc.accountBalance;
+    const balNum = (balRaw !== undefined && balRaw !== null && balRaw !== '') ? Number(balRaw) : NaN;
+    const hasBalance = type === 'BANK' && Number.isFinite(balNum);
+    const balance = hasBalance ? Math.round(balNum * 100) / 100 : null;
+    if (!id && !name) return;
+
+    const key = id ? `ID:${id}` : `NAME:${type}::${name.toLowerCase()}`;
+    const anterior = mapaPorChave.get(key);
+    mapaPorChave.set(key, {
+      id: id || (anterior && anterior.id) || '',
+      itemId: String(acc.itemId || (anterior && anterior.itemId) || ''),
+      name: name || (anterior && anterior.name) || (type === 'CREDIT' ? 'Cartão de Crédito' : 'Conta Corrente'),
+      type,
+      balance: balance !== null ? balance : (anterior ? anterior.balance : null),
+      hasBalance: hasBalance || Boolean(anterior && anterior.hasBalance)
+    });
+  };
+
+  if (opcoesExtras && Array.isArray(opcoesExtras.accounts)) {
+    opcoesExtras.accounts.forEach(registrar);
+  }
+  if (transacoesBrutas && !Array.isArray(transacoesBrutas) && Array.isArray(transacoesBrutas.accounts)) {
+    transacoesBrutas.accounts.forEach(registrar);
+  }
+  (listaEntrada || []).forEach((raw) => {
+    if (!raw || typeof raw !== 'object') return;
+    if (raw.account && typeof raw.account === 'object') {
+      registrar(raw.account);
+    } else if (raw.accountBalance !== undefined && raw.accountBalance !== null) {
+      registrar({
+        id: raw.accountId,
+        name: raw.accountName || raw.conta,
+        type: raw.accountType || 'BANK',
+        balance: raw.accountBalance
+      });
+    }
+  });
+
+  return [...mapaPorChave.values()];
+}
+
+function processarNovasTransacoes(transacoesBrutas, origem = 'OFX', opcoesExtras = {}) {
+  const origemNorm = String(origem || 'OFX').trim().toUpperCase();
+  let listaEntrada = [];
+  let metadadosInferidos = (opcoesExtras && opcoesExtras.metadados) ? { ...opcoesExtras.metadados } : {};
+
+  if (typeof transacoesBrutas === 'string') {
+    const parsed = parseOFX(transacoesBrutas);
+    listaEntrada = Array.isArray(parsed.transacoes) ? parsed.transacoes : [];
+    metadadosInferidos = { ...parsed, ...metadadosInferidos };
+  } else if (Array.isArray(transacoesBrutas)) {
+    listaEntrada = transacoesBrutas;
+  } else if (transacoesBrutas && Array.isArray(transacoesBrutas.transactions)) {
+    listaEntrada = transacoesBrutas.transactions;
+  } else if (transacoesBrutas && Array.isArray(transacoesBrutas.transacoes)) {
+    listaEntrada = transacoesBrutas.transacoes;
+  } else if (transacoesBrutas && Array.isArray(transacoesBrutas.results)) {
+    listaEntrada = transacoesBrutas.results;
+  }
+
+  const contasPluggyMeta = origemNorm === 'PLUGGY'
+    ? normalizarListaContasPluggyMeta(opcoesExtras, transacoesBrutas, listaEntrada)
+    : [];
+
+  const mapaFallbackFitid = new Map();
+  const normalizadas = [];
+
+  listaEntrada.forEach((raw) => {
+    if (!raw || typeof raw !== 'object') return;
+
+    if (origemNorm === 'PLUGGY') {
+      const rawId = String(raw.id || raw.pluggyId || raw.providerId || raw.externalId || raw.fitid || '').trim();
+      const dataBruta = raw.date || raw.data || (raw.creditCardMetadata && raw.creditCardMetadata.purchaseDate);
+      const dataISO = (dataBruta instanceof Date && !isNaN(dataBruta.getTime()))
+        ? dataBruta.toISOString().slice(0, 10)
+        : (normalizarDataOFX(dataBruta) || normalizarDataExtrato(dataBruta) || hojeLocalISO());
+
+      const valorBruto = typeof raw.amount === 'number'
+        ? raw.amount
+        : parseValorOFX(raw.amount !== undefined ? raw.amount : raw.valor);
+      if (!Number.isFinite(valorBruto) || valorBruto === 0) return;
+
+      const valor = Math.round(Math.abs(valorBruto) * 100) / 100;
+      if (valor <= 0) return;
+
+      // Diferenciação estrita: accountType ('CREDIT' | 'BANK') define o meio de pagamento (Cartão vs Conta),
+      // enquanto raw.type ('DEBIT' | 'CREDIT') define a direção do lançamento (Despesa vs Receita).
+      const accountType = normalizarTipoContaPluggy(
+        raw.accountType || (raw.account && raw.account.type),
+        'PLUGGY'
+      );
+      const accountName = String(
+        raw.accountName || (raw.account && raw.account.name) || raw.conta || ''
+      ).trim();
+      const accountId = String(
+        raw.accountId || (raw.account && raw.account.id) || ''
+      ).trim();
+      const ehCartaoCredito = accountType === 'CREDIT';
+      const meioPagamento = ehCartaoCredito ? 'cartao' : 'conta';
+
+      const pluggyType = String(raw.type || raw.trnType || raw.tipo || '').trim().toUpperCase();
+      const ehDebito = pluggyType === 'DEBIT' || pluggyType === 'DESPESA' || (pluggyType !== 'CREDIT' && pluggyType !== 'RECEITA' && valorBruto < 0);
+      const tipo = ehDebito ? 'despesa' : 'receita';
+      const trnType = ehDebito ? 'DEBIT' : 'CREDIT';
+
+      const memo = String(
+        raw.description ||
+        raw.descriptionRaw ||
+        raw.memo ||
+        raw.descricao ||
+        (raw.merchant && (raw.merchant.name || raw.merchant.businessName)) ||
+        'Transação Open Finance'
+      ).trim();
+
+      let uniqueId = rawId;
+      if (!uniqueId) {
+        const chaveBase = `pluggy_auto_${dataISO}_${trnType}_${valor.toFixed(2)}_${memo.toLowerCase().replace(/[^a-z0-9]+/g, '').slice(0, 18) || 'tx'}`;
+        const ocorrencia = (mapaFallbackFitid.get(chaveBase) || 0) + 1;
+        mapaFallbackFitid.set(chaveBase, ocorrencia);
+        uniqueId = `${chaveBase}_${ocorrencia}`;
+      }
+
+      const catFonte = raw.category || (raw.merchant && raw.merchant.category) || '';
+      const categoria = mapearCategoriaPluggy(catFonte, memo, tipo);
+      const statusPluggy = String(raw.status || 'POSTED').toUpperCase();
+      const ehPagamentoFaturaDetectado = ehTransacaoPagamentoFaturaPluggy(memo, catFonte);
+      const ehPagamentoFaturaNoCartao = ehCartaoCredito && ehPagamentoFaturaDetectado;
+      const isCashMovement = ehMovimentacaoDinheiroFisicoImportacao(memo, catFonte);
+
+      normalizadas.push({
+        id: uniqueId,
+        fitid: uniqueId,
+        pluggyId: uniqueId,
+        externalId: uniqueId,
+        trnType,
+        data: dataISO,
+        dataCompra: ehCartaoCredito ? dataISO : undefined,
+        valor,
+        valorAssinado: ehDebito ? -valor : valor,
+        tipo,
+        direcaoOriginal: tipo,
+        memo,
+        descricao: memo,
+        categoria,
+        rawCategory: String(catFonte || ''),
+        accountId,
+        accountName,
+        accountType,
+        meioPagamento,
+        ehCartaoCredito,
+        ehPagamentoFaturaDetectado,
+        ehPagamentoFaturaNoCartao,
+        isCashMovement,
+        conta: accountName,
+        pago: ehCartaoCredito ? (tipo === 'receita') : (statusPluggy !== 'PENDING'),
+        origem: 'pluggy'
+      });
+      return;
+    }
+
+    // Origem OFX (Conta / Débito por padrão)
+    if (raw.fitid && raw.data && typeof raw.valor === 'number' && (raw.tipo === 'despesa' || raw.tipo === 'receita')) {
+      const memo = String(raw.memo || raw.descricao || 'Transação OFX').trim();
+      const fitid = String(raw.fitid).trim();
+      const accType = normalizarTipoContaPluggy(raw.accountType, 'OFX');
+      const accName = String(raw.accountName || raw.conta || '').trim();
+      const ehPagFaturaDetect = ehTransacaoPagamentoFaturaPluggy(memo, raw.categoria || '');
+      const isCashOfx = ehMovimentacaoDinheiroFisicoImportacao(memo, raw.categoria || '');
+      normalizadas.push({
+        ...raw,
+        id: fitid,
+        fitid,
+        externalId: fitid,
+        direcaoOriginal: raw.tipo,
+        memo,
+        descricao: memo,
+        accountName: accName,
+        accountType: accType,
+        meioPagamento: accType === 'CREDIT' ? 'cartao' : 'conta',
+        ehCartaoCredito: accType === 'CREDIT',
+        ehPagamentoFaturaDetectado: ehPagFaturaDetect,
+        ehPagamentoFaturaNoCartao: accType === 'CREDIT' && ehPagFaturaDetect,
+        isCashMovement: isCashOfx,
+        ehTransferencia: false,
+        categoria: raw.categoria || autoCategorizar(memo, raw.tipo),
+        origem: 'ofx'
+      });
+      return;
+    }
+
+    const txOfx = normalizarTransacaoOFX({
+      fitid: raw.FITID || raw.fitid || raw.id || raw.externalId,
+      dtPosted: raw.DTPOSTED || raw.dtPosted || raw.data || raw.date,
+      trnAmt: raw.TRNAMT !== undefined ? raw.TRNAMT : (raw.trnAmt !== undefined ? raw.trnAmt : raw.valor),
+      trnType: raw.TRNTYPE || raw.trnType || raw.tipo,
+      memo: raw.MEMO || raw.memo || raw.descricao,
+      name: raw.NAME || raw.name
+    }, mapaFallbackFitid);
+
+    if (txOfx) {
+      const accName = String(raw.accountName || raw.conta || '').trim();
+      const ehPagFaturaRaw = ehTransacaoPagamentoFaturaPluggy(txOfx.memo, raw.categoria || '');
+      const isCashRaw = ehMovimentacaoDinheiroFisicoImportacao(txOfx.memo, raw.categoria || '');
+      normalizadas.push({
+        ...txOfx,
+        id: txOfx.fitid,
+        externalId: txOfx.fitid,
+        direcaoOriginal: txOfx.tipo,
+        accountName: accName,
+        accountType: 'BANK',
+        meioPagamento: 'conta',
+        ehCartaoCredito: false,
+        ehPagamentoFaturaDetectado: ehPagFaturaRaw,
+        isCashMovement: isCashRaw,
+        categoria: txOfx.categoria,
+        conta: accName,
+        origem: 'ofx'
+      });
+    }
+  });
+
+  const temContasPluggyComSaldo = origemNorm === 'PLUGGY' && contasPluggyMeta.some(a => a && a.hasBalance);
+  if (!normalizadas.length && !temContasPluggyComSaldo) {
+    toast(`Nenhuma transação válida encontrada para processar (${origemNorm}).`, 'err');
+    return [];
+  }
+
+  const contaDestino = resolverContaDestinoImportacao(opcoesExtras, normalizadas);
+  const idsExistentesGlobal = coletarIdsExistentesImportacao();
+  const vistosNoLote = new Set();
+  const nomesContasBankNoLote = new Set(
+    normalizadas
+      .filter(t => t && t.accountType !== 'CREDIT' && String(t.accountName || t.conta || '').trim())
+      .map(t => String(t.accountName || t.conta).trim().toLowerCase())
+  );
+  const temMultiplasOrigensBanco = nomesContasBankNoLote.size > 1;
+
+  const transacoesProcessadas = [];
+  const transacoesLimpas = [];
+  let qtdDuplicadasIgnoradas = 0;
+
+  normalizadas.forEach((tx) => {
+    const uniqueId = String(tx.fitid || tx.id || tx.externalId || '').trim();
+    const ehDuplicada = !uniqueId || idsExistentesGlobal.has(uniqueId) || vistosNoLote.has(uniqueId);
+    if (uniqueId) vistosNoLote.add(uniqueId);
+
+    const contaSugerida = (origemNorm === 'PLUGGY')
+      ? sugerirNomeContaDestinoCOFIN(tx.accountName, tx.accountType, contaDestino, temMultiplasOrigensBanco)
+      : (contaDestino ? contaDestino.nome : 'Conta Principal');
+
+    const ehPagCartao = Boolean(tx.ehPagamentoFaturaNoCartao || (tx.ehCartaoCredito && tx.ehPagamentoFaturaDetectado));
+    const itemRevisao = {
+      ...tx,
+      id: uniqueId,
+      fitid: uniqueId,
+      externalId: uniqueId,
+      direcaoOriginal: tx.direcaoOriginal || (tx.tipo === 'receita' ? 'receita' : 'despesa'),
+      ehPagamentoFaturaNoCartao: ehPagCartao,
+      contaDestino: tx.contaDestino || contaSugerida,
+      selecionada: !ehDuplicada && !ehPagCartao,
+      ehDuplicada
+    };
+
+    transacoesProcessadas.push(itemRevisao);
+    if (ehDuplicada) {
+      qtdDuplicadasIgnoradas += 1;
+    } else {
+      transacoesLimpas.push(itemRevisao);
+    }
+  });
+
+  detectarTransferenciasNoLoteImportacao(transacoesProcessadas);
+
+  abrirModalRevisaoImportacao(contaDestino, transacoesProcessadas, {
+    origem: origemNorm,
+    nomeArquivo: (opcoesExtras && opcoesExtras.nomeArquivo) || (origemNorm === 'PLUGGY' ? 'Pluggy Open Finance' : 'extrato.ofx'),
+    metadados: metadadosInferidos,
+    accounts: contasPluggyMeta,
+    qtdNovas: transacoesLimpas.length,
+    qtdDuplicadas: qtdDuplicadasIgnoradas
+  });
+
+  return transacoesLimpas;
+}
+
+function encontrarContaPluggyParaOrigem(contasPluggy, accountId, accountName, accountType) {
+  const lista = Array.isArray(contasPluggy) ? contasPluggy : [];
+  if (!lista.length) return null;
+  const idLimpo = String(accountId || '').trim();
+  if (idLimpo) {
+    const porId = lista.find(a => a && String(a.id || '').trim() === idLimpo);
+    if (porId) return porId;
+  }
+  const nomeLower = String(accountName || '').trim().toLowerCase();
+  const tipoNorm = normalizarTipoContaPluggy(accountType, 'PLUGGY');
+  return lista.find(a => a && String(a.name || '').trim().toLowerCase() === nomeLower && a.type === tipoNorm)
+    || lista.find(a => a && String(a.name || '').trim().toLowerCase() === nomeLower)
+    || null;
+}
+
+function coletarOrigensDistintasPluggy(listaTransacoes, contaAlvoPadrao, contasPluggy = []) {
+  const mapa = new Map();
+  const listaContasMeta = Array.isArray(contasPluggy) ? contasPluggy : [];
+  const nomesContasBankUnicas = new Set([
+    ...(listaTransacoes || []).filter(t => t && t.accountType !== 'CREDIT' && (t.accountName || t.conta)).map(t => String(t.accountName || t.conta).trim().toLowerCase()),
+    ...listaContasMeta.filter(a => a && a.type !== 'CREDIT' && a.name).map(a => String(a.name).trim().toLowerCase())
+  ]);
+  const temMultiplasContasBank = nomesContasBankUnicas.size > 1;
+
+  (listaTransacoes || []).forEach((tx) => {
+    if (!tx) return;
+    const accountType = normalizarTipoContaPluggy(tx.accountType, tx.origem === 'pluggy' ? 'PLUGGY' : 'OFX');
+    const accountName = String(tx.accountName || tx.conta || '').trim() || (accountType === 'CREDIT' ? 'Cartão de Crédito' : 'Conta Corrente');
+    const chave = construirChaveOrigemPluggy(accountName, accountType);
+    const metaAcc = encontrarContaPluggyParaOrigem(listaContasMeta, tx.accountId, accountName, accountType);
+
+    if (!mapa.has(chave)) {
+      const destinoInicial = tx.contaDestino || sugerirNomeContaDestinoCOFIN(accountName, accountType, contaAlvoPadrao, temMultiplasContasBank);
+      const balanceVal = (metaAcc && metaAcc.hasBalance) ? metaAcc.balance : null;
+      mapa.set(chave, {
+        chave,
+        accountId: (metaAcc && metaAcc.id) || String(tx.accountId || '').trim(),
+        accountName,
+        accountType,
+        rotuloTipo: accountType === 'CREDIT' ? 'Cartão de Crédito' : 'Débito/Conta',
+        contaDestino: destinoInicial,
+        balance: balanceVal,
+        hasBalance: balanceVal !== null && accountType === 'BANK',
+        quantidade: 0
+      });
+    } else if (mapa.get(chave).balance === null && metaAcc && metaAcc.hasBalance) {
+      const item = mapa.get(chave);
+      item.balance = metaAcc.balance;
+      item.hasBalance = accountType === 'BANK';
+      if (!item.accountId && metaAcc.id) item.accountId = metaAcc.id;
+    }
+    mapa.get(chave).quantidade += 1;
+  });
+
+  // Garante também contas Pluggy `BANK` com saldo retornado mesmo se ainda não houver lançamentos no lote
+  listaContasMeta.forEach((acc) => {
+    if (!acc || acc.type !== 'BANK') return;
+    const accountName = String(acc.name || '').trim() || 'Conta Corrente';
+    const chave = construirChaveOrigemPluggy(accountName, 'BANK');
+    if (!mapa.has(chave) && acc.hasBalance) {
+      mapa.set(chave, {
+        chave,
+        accountId: acc.id || '',
+        accountName,
+        accountType: 'BANK',
+        rotuloTipo: 'Débito/Conta',
+        contaDestino: sugerirNomeContaDestinoCOFIN(accountName, 'BANK', contaAlvoPadrao, temMultiplasContasBank),
+        balance: acc.balance,
+        hasBalance: true,
+        quantidade: 0
+      });
+    }
+  });
+
+  return [...mapa.values()];
+}
+
+function abrirModalRevisaoImportacao(contaDestino, transacoes, opcoes = {}) {
   const subtituloEl = document.getElementById('ofx-revisao-subtitulo');
+  const tituloEl = document.getElementById('revisao-importacao-titulo');
   const btnConfirmar = document.getElementById('btn-confirmar-revisao-ofx');
 
-  const idsExistentes = coletarIdsExistentesContaOFX(contaDestino.nome);
-  const vistosNoArquivo = new Set();
+  const origemNorm = String((opcoes && opcoes.origem) || (transacoes && transacoes[0] && transacoes[0].origem) || 'OFX').toUpperCase();
+  const nomeArquivo = String((opcoes && opcoes.nomeArquivo) || (origemNorm === 'PLUGGY' ? 'Pluggy Open Finance' : 'extrato.ofx'));
+  const metadados = (opcoes && opcoes.metadados) || {};
+  const contaAlvo = contaDestino || resolverContaDestinoImportacao({}, transacoes);
+
+  const idsExistentes = coletarIdsExistentesImportacao();
+  const vistosNoLote = new Set();
 
   transacoesPendentes = (transacoes || []).map((tx) => {
-    const memo = String((tx && (tx.memo || tx.descricao)) || 'Transação OFX').trim();
+    const memo = String((tx && (tx.memo || tx.descricao)) || (origemNorm === 'PLUGGY' ? 'Transação Open Finance' : 'Transação OFX')).trim();
     const tipo = (tx && tx.tipo) || 'despesa';
-    const fitid = String((tx && tx.fitid) || '').trim();
+    const fitid = String((tx && (tx.fitid || tx.id || tx.externalId)) || '').trim();
     const categoriaSugerida = (tx && tx.categoria) || autoCategorizar(memo, tipo);
-    const ehDuplicada = !fitid || idsExistentes.has(fitid) || vistosNoArquivo.has(fitid);
-    if (fitid) vistosNoArquivo.add(fitid);
+    const accountType = normalizarTipoContaPluggy(tx && tx.accountType, origemNorm);
+    const accountName = String((tx && (tx.accountName || tx.conta)) || '').trim();
+    const ehCartaoCredito = accountType === 'CREDIT';
+    const meioPagamento = ehCartaoCredito ? 'cartao' : 'conta';
+
+    const ehDuplicada = typeof tx.ehDuplicada === 'boolean'
+      ? tx.ehDuplicada
+      : (!fitid || idsExistentes.has(fitid) || vistosNoLote.has(fitid));
+    if (fitid) vistosNoLote.add(fitid);
+
+    const contaDestinoTx = (tx && tx.contaDestino)
+      ? tx.contaDestino
+      : (origemNorm === 'PLUGGY'
+        ? sugerirNomeContaDestinoCOFIN(accountName, accountType, contaAlvo)
+        : (contaAlvo ? contaAlvo.nome : 'Conta Principal'));
+
+    const ehPagDetect = Boolean(
+      (tx && tx.ehPagamentoFaturaDetectado) || ehTransacaoPagamentoFaturaPluggy(memo, (tx && tx.rawCategory) || (tx && tx.category) || '')
+    );
+    const ehPagCartao = Boolean((tx && tx.ehPagamentoFaturaNoCartao) || (ehCartaoCredito && ehPagDetect));
+    const ehTransfFlag = Boolean(tx && (tx.ehTransferencia || tx.tipoRevisao === 'transferencia'));
+    const dirOriginal = (tx && tx.direcaoOriginal) || (tipo === 'receita' ? 'receita' : 'despesa');
 
     return {
       ...tx,
+      id: fitid,
       fitid,
+      externalId: fitid,
       memo,
       descricao: memo,
       tipo,
-      categoria: categoriaSugerida,
+      direcaoOriginal: dirOriginal,
+      tipoRevisao: (tx && tx.tipoRevisao) || (ehTransfFlag ? 'transferencia' : dirOriginal),
+      ehTransferencia: ehTransfFlag,
+      contaContraparte: (tx && tx.contaContraparte) || '',
+      accountName,
+      accountType,
+      meioPagamento,
+      ehCartaoCredito,
+      ehPagamentoFaturaDetectado: ehPagDetect,
+      ehPagamentoFaturaNoCartao: ehPagCartao,
+      contaDestino: contaDestinoTx,
+      categoria: ehTransfFlag ? 'Transferência' : categoriaSugerida,
+      origem: (tx && tx.origem) ? String(tx.origem).toLowerCase() : origemNorm.toLowerCase(),
+      selecionada: typeof tx.selecionada === 'boolean' ? tx.selecionada : (!ehDuplicada && !ehPagCartao),
       ehDuplicada
     };
   });
 
-  _ofxRevisaoContexto = {
-    nomeArquivo: String(nomeArquivo || 'extrato.ofx'),
-    contaNome: contaDestino.nome,
-    metadados: metadados || {}
-  };
-
-  if (subtituloEl) {
-    subtituloEl.textContent = `Ficheiro "${_ofxRevisaoContexto.nomeArquivo}" → Conta: ${contaDestino.nome}. Revise ou altere as categorias antes de salvar.`;
+  if (transacoesPendentes.some(t => t && !t._transferenciaAvaliada)) {
+    detectarTransferenciasNoLoteImportacao(transacoesPendentes);
   }
 
-  const qtdNovas = transacoesPendentes.filter(t => !t.ehDuplicada).length;
-  const qtdDup = transacoesPendentes.length - qtdNovas;
-  const totalEntradas = transacoesPendentes.filter(t => t.tipo === 'receita').reduce((s, t) => s + t.valor, 0);
-  const totalSaidas = transacoesPendentes.filter(t => t.tipo === 'despesa').reduce((s, t) => s + t.valor, 0);
+  const contasPluggyMeta = originNormSafe();
+  function originNormSafe() {
+    return origemNorm === 'PLUGGY'
+      ? normalizarListaContasPluggyMeta(opcoes, null, transacoesPendentes)
+      : [];
+  }
+  const origensPluggy = coletarOrigensDistintasPluggy(transacoesPendentes, contaAlvo, contasPluggyMeta);
+  const mapaOrigens = {};
+  origensPluggy.forEach((o) => {
+    mapaOrigens[o.chave] = o.contaDestino;
+  });
+  const temContasPluggyComSaldo = origensPluggy.some(o => o.hasBalance);
+
+  _ofxRevisaoContexto = {
+    origem: origemNorm,
+    nomeArquivo,
+    contaNome: contaAlvo.nome,
+    contasPluggy: contasPluggyMeta,
+    mapaOrigens,
+    marcarFaturasAnterioresPagas: opcoes.marcarFaturasAnterioresPagas !== undefined ? Boolean(opcoes.marcarFaturasAnterioresPagas) : true,
+    ajustarSaldoInicialPluggy: opcoes.ajustarSaldoInicialPluggy !== undefined ? Boolean(opcoes.ajustarSaldoInicialPluggy) : true,
+    metadados
+  };
+
+  if (tituloEl) {
+    const icone = origemNorm === 'PLUGGY' ? 'ti-plug-connected' : 'ti-checklist';
+    const textoTitulo = origemNorm === 'PLUGGY'
+      ? 'Revisão de Importação (Open Finance · Pluggy)'
+      : 'Revisão de Importação (Extrato OFX)';
+    tituloEl.innerHTML = `<i class="ti ${icone}" style="color:var(--accent);font-size:19px"></i><span>${escHtml(textoTitulo)}</span>`;
+  }
+
+  if (subtituloEl) {
+    subtituloEl.textContent = origemNorm === 'PLUGGY'
+      ? 'Confira o mapeamento de Contas (Débito) e Cartões de Crédito, desmarque itens indesejados (como pagamento de fatura) e revise as categorias.'
+      : `Origem: "${_ofxRevisaoContexto.nomeArquivo}" → Conta: ${contaAlvo.nome}. Revise ou altere as categorias antes de salvar.`;
+  }
+
+  atualizarResumoModalRevisaoImportacao(contaAlvo);
+
+  if (btnConfirmar) {
+    btnConfirmar.disabled = transacoesPendentes.length === 0 && !temContasPluggyComSaldo;
+  }
+
+  renderListaRevisaoOFX();
+  abrirModal('modal-revisao-importacao');
+}
+
+function atualizarResumoModalRevisaoImportacao(contaAlvo) {
+  const resumoEl = document.getElementById('ofx-revisao-resumo');
+  if (!resumoEl || !_ofxRevisaoContexto) return;
+
+  const origemNorm = _ofxRevisaoContexto.origem || 'OFX';
+  const selecionadasAtivas = transacoesPendentes.filter(t => !t.ehDuplicada && t.selecionada !== false);
+  const qtdNovas = selecionadasAtivas.length;
+  const qtdDup = transacoesPendentes.filter(t => t.ehDuplicada).length;
+  const qtdCredit = transacoesPendentes.filter(t => t.accountType === 'CREDIT').length;
+  const qtdBank = transacoesPendentes.length - qtdCredit;
+  const qtdTransfAtivas = selecionadasAtivas.filter(t => t.ehTransferencia === true || t.tipoRevisao === 'transferencia').length;
+  const totalEntradas = selecionadasAtivas
+    .filter(t => !t.ehTransferencia && t.tipoRevisao !== 'transferencia' && t.tipo === 'receita')
+    .reduce((s, t) => s + t.valor, 0);
+  const totalSaidas = selecionadasAtivas
+    .filter(t => !t.ehTransferencia && t.tipoRevisao !== 'transferencia' && t.tipo === 'despesa')
+    .reduce((s, t) => s + t.valor, 0);
   const datas = transacoesPendentes.map(t => t.data).filter(Boolean).sort();
   const periodoTxt = datas.length
     ? `${datas[0].split('-').reverse().join('/')} a ${datas[datas.length - 1].split('-').reverse().join('/')}`
     : 'Período não informado';
 
-  if (resumoEl) {
-    const acctBadge = contaDestino.ofxAccountId
-      ? ` <span class="badge badge-pago" style="font-size:10px">Vinculada (${escHtml(contaDestino.ofxAccountId)})</span>`
-      : '';
-    resumoEl.innerHTML = `
-      <div><strong>${escHtml(contaDestino.nome)}</strong>${acctBadge} · <strong>${transacoesPendentes.length}</strong> transação(ões) lida(s)</div>
-      <div class="ofx-resumo-stats">
-        <span><i class="ti ti-calendar"></i> ${escHtml(periodoTxt)}</span>
-        <span class="mv-ok">${qtdNovas} nova(s)</span>
-        <span style="color:var(--text3)">${qtdDup} duplicada(s) (FITID)</span>
-        <span class="mv-ok">+ ${escHtml(toBRL(totalEntradas))}</span>
-        <span class="mv-bad">- ${escHtml(toBRL(totalSaidas))}</span>
+  const acctBadge = (contaAlvo && contaAlvo.ofxAccountId)
+    ? ` <span class="badge badge-pago" style="font-size:10px">Vinculada (${escHtml(contaAlvo.ofxAccountId)})</span>`
+    : '';
+  const origemBadge = `<span class="badge badge-info" style="font-size:10px">${escHtml(origemNorm)}</span>`;
+
+  const optsContasPadrao = (STATE.contas || []).map(c => (
+    `<option value="${escHtml(c.nome)}"${c.nome === _ofxRevisaoContexto.contaNome ? ' selected' : ''}>${escHtml(c.nome)}${c.tipo === 'cartao' ? ' (Cartão)' : ' (Conta)'}</option>`
+  )).join('');
+
+  let blocoMapeamentoPluggy = '';
+  if (origemNorm === 'PLUGGY') {
+    const origens = coletarOrigensDistintasPluggy(transacoesPendentes, contaAlvo, _ofxRevisaoContexto.contasPluggy || []);
+    if (origens.length > 0) {
+      const temSaldoPluggyBanco = origens.some(o => o.hasBalance);
+      const ajustarSaldoChecked = _ofxRevisaoContexto.ajustarSaldoInicialPluggy !== false;
+      const linhasMapeamento = origens.map((orig) => {
+        const destinoAtual = (_ofxRevisaoContexto.mapaOrigens && _ofxRevisaoContexto.mapaOrigens[orig.chave]) || orig.contaDestino;
+        const badgeTipo = orig.accountType === 'CREDIT'
+          ? '<span class="badge badge-pluggy-credit"><i class="ti ti-credit-card"></i> Cartão de Crédito</span>'
+          : '<span class="badge badge-pluggy-bank"><i class="ti ti-building-bank"></i> Débito / Conta</span>';
+        const badgeSaldoReal = orig.hasBalance
+          ? `<span class="badge badge-pluggy-saldo"><i class="ti ti-wallet"></i> Saldo real no banco: <strong>${escHtml(toBRL(orig.balance))}</strong></span>`
+          : '';
+        const optsSelect = construirOptionsContasECartoesRevisaoHTML(destinoAtual, orig.accountType, orig.accountName);
+        return `
+          <div class="pluggy-mapeamento-item">
+            <div class="pluggy-mapeamento-origem">
+              <span>${escHtml(orig.accountName)} (${escHtml(orig.rotuloTipo)})</span>
+              ${badgeTipo}
+              ${badgeSaldoReal}
+              <span class="badge badge-cat" style="font-size:10px">${orig.quantidade} lançamento(s)</span>
+            </div>
+            <div class="pluggy-mapeamento-destino">
+              <span style="font-size:11px;color:var(--text3);white-space:nowrap">Gravar em:</span>
+              <select
+                class="pluggy-mapa-conta-select"
+                data-origem-key="${escHtml(orig.chave)}"
+                onchange="aoMudarMapeamentoContaPluggy(this.getAttribute('data-origem-key'), this.value)">
+                ${optsSelect}
+              </select>
+            </div>
+          </div>
+        `;
+      }).join('');
+
+      const toggleAjusteSaldoHTML = temSaldoPluggyBanco
+        ? `
+          <label class="pluggy-retro-toggle pluggy-saldo-toggle" for="pluggy-ajustar-saldo-inicial">
+            <input type="checkbox" id="pluggy-ajustar-saldo-inicial" ${ajustarSaldoChecked ? 'checked' : ''} onchange="aoAlternarAjustarSaldoInicialPluggy(this.checked)">
+            <span><strong>Ajustar Saldo Inicial automaticamente para bater com o saldo real do banco</strong></span>
+          </label>
+        `
+        : '';
+
+      blocoMapeamentoPluggy = `
+        <div class="pluggy-mapeamento-box" id="pluggy-mapeamento-contas">
+          <div class="pluggy-mapeamento-title">
+            <i class="ti ti-arrows-right-left" style="color:var(--accent)"></i>
+            <span>Mapeamento de Contas &amp; Cartões (Pluggy → COFIN)</span>
+          </div>
+          <div class="pluggy-mapeamento-grid">
+            ${linhasMapeamento}
+          </div>
+          ${toggleAjusteSaldoHTML}
+        </div>
+      `;
+    }
+  }
+
+  const marcarAnterioresChecked = _ofxRevisaoContexto.marcarFaturasAnterioresPagas !== false;
+  const planoPreview = qtdCredit > 0
+    ? calcularPlanoQuitacaoFaturasRevisao(transacoesPendentes, { marcarFaturasAnterioresPagas: marcarAnterioresChecked })
+    : { qtdPagamentosCartaoDetectados: 0, faturasParaQuitar: [] };
+  const blocoQuitacaoRetroativa = (qtdCredit > 0 || origemNorm === 'PLUGGY')
+    ? `
+      <label class="pluggy-retro-toggle" for="pluggy-marcar-faturas-anteriores" style="display:flex;align-items:center;gap:8px;margin-top:8px;padding:7px 10px;border-radius:8px;background:rgba(16,185,129,0.08);border:1px solid rgba(16,185,129,0.22);font-size:12px;cursor:pointer">
+        <input type="checkbox" id="pluggy-marcar-faturas-anteriores" ${marcarAnterioresChecked ? 'checked' : ''} onchange="aoAlternarMarcarFaturasAnteriores(this.checked)">
+        <span><strong>Marcar faturas de meses anteriores como Pagas</strong> <span style="color:var(--text3)">(faturas anteriores ao mês atual${planoPreview.qtdPagamentosCartaoDetectados > 0 ? ` + ${planoPreview.qtdPagamentosCartaoDetectados} pagamento(s) de fatura detectado(s)` : ''} serão gravadas como Pagas)</span></span>
+      </label>
+    `
+    : '';
+
+  resumoEl.innerHTML = `
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap">
+      <div><strong>${escHtml(_ofxRevisaoContexto.contaNome)}</strong>${acctBadge} ${origemBadge} · <strong>${transacoesPendentes.length}</strong> transação(ões) lida(s)</div>
+      <div style="display:flex;align-items:center;gap:6px">
+        <label for="revisao-importacao-conta-select" style="font-size:11px;margin:0">Conta padrão:</label>
+        <select id="revisao-importacao-conta-select" onchange="aoMudarContaRevisaoImportacao(this.value)" style="padding:3px 8px;font-size:11.5px;width:auto">
+          ${optsContasPadrao}
+        </select>
       </div>
-    `;
-  }
+    </div>
+    <div class="ofx-resumo-stats">
+      <span><i class="ti ti-calendar"></i> ${escHtml(periodoTxt)}</span>
+      <span class="mv-ok">${qtdNovas} selecionada(s)</span>
+      <span style="color:var(--text3)">${qtdDup} duplicada(s) (${origemNorm === 'PLUGGY' ? 'ID' : 'FITID'})</span>
+      ${qtdBank > 0 ? `<span class="badge badge-pluggy-bank"><i class="ti ti-building-bank"></i> ${qtdBank} Débito/Conta</span>` : ''}
+      ${qtdCredit > 0 ? `<span class="badge badge-pluggy-credit"><i class="ti ti-credit-card"></i> ${qtdCredit} Crédito</span>` : ''}
+      ${qtdTransfAtivas > 0 ? `<span class="badge badge-pluggy-transfer"><i class="ti ti-transfer"></i> ${qtdTransfAtivas} Transferência(s)</span>` : ''}
+      <span class="mv-ok">+ ${escHtml(toBRL(totalEntradas))}</span>
+      <span class="mv-bad">- ${escHtml(toBRL(totalSaidas))}</span>
+    </div>
+    ${blocoQuitacaoRetroativa}
+    ${blocoMapeamentoPluggy}
+  `;
+}
 
-  if (btnConfirmar) {
-    btnConfirmar.disabled = transacoesPendentes.length === 0;
+function obterFlagMarcarFaturasAnterioresRevisao() {
+  const chk = typeof document !== 'undefined' ? document.getElementById('pluggy-marcar-faturas-anteriores') : null;
+  if (chk && String(chk.type || '').toLowerCase() === 'checkbox') {
+    return Boolean(chk.checked);
   }
+  return !_ofxRevisaoContexto || _ofxRevisaoContexto.marcarFaturasAnterioresPagas !== false;
+}
 
+function aoAlternarMarcarFaturasAnteriores(marcado) {
+  if (!_ofxRevisaoContexto) return;
+  _ofxRevisaoContexto.marcarFaturasAnterioresPagas = Boolean(marcado);
   renderListaRevisaoOFX();
-  abrirModal('modal-revisao-ofx');
+}
+
+function obterFlagAjustarSaldoInicialPluggy() {
+  const chk = typeof document !== 'undefined' ? document.getElementById('pluggy-ajustar-saldo-inicial') : null;
+  if (chk && String(chk.type || '').toLowerCase() === 'checkbox') {
+    return Boolean(chk.checked);
+  }
+  return !_ofxRevisaoContexto || _ofxRevisaoContexto.ajustarSaldoInicialPluggy !== false;
+}
+
+function aoAlternarAjustarSaldoInicialPluggy(marcado) {
+  if (!_ofxRevisaoContexto) return;
+  _ofxRevisaoContexto.ajustarSaldoInicialPluggy = Boolean(marcado);
+}
+
+function sincronizarContraparteAposMudancaConta(tx, novoDestino) {
+  if (!tx || !novoDestino) return;
+  const novoLimpo = extrairNomeLimpoDestinoImportacao(novoDestino).toLowerCase();
+  if (tx.transferenciaPrincipalId) {
+    const principal = transacoesPendentes.find(p => p && (p.fitid === tx.transferenciaPrincipalId || p.id === tx.transferenciaPrincipalId));
+    if (principal) principal.contaContraparte = novoDestino;
+  }
+  if (tx.ehTransferencia && extrairNomeLimpoDestinoImportacao(tx.contaContraparte).toLowerCase() === novoLimpo) {
+    tx.contaContraparte = '';
+  }
+}
+
+function aoMudarMapeamentoContaPluggy(chaveOrigem, novoDestino) {
+  if (!_ofxRevisaoContexto || !chaveOrigem || !novoDestino) return;
+  if (!_ofxRevisaoContexto.mapaOrigens) _ofxRevisaoContexto.mapaOrigens = {};
+  _ofxRevisaoContexto.mapaOrigens[chaveOrigem] = novoDestino;
+
+  transacoesPendentes.forEach((tx) => {
+    const chaveTx = construirChaveOrigemPluggy(tx.accountName || tx.conta, tx.accountType);
+    if (chaveTx === chaveOrigem) {
+      tx.contaDestino = novoDestino;
+      sincronizarContraparteAposMudancaConta(tx, novoDestino);
+    }
+  });
+
+  const contaAlvo = (STATE.contas || []).find(c => c && c.nome === _ofxRevisaoContexto.contaNome) || STATE.contas[0];
+  atualizarResumoModalRevisaoImportacao(contaAlvo);
+  renderListaRevisaoOFX();
+}
+
+function aoMudarContaRevisaoImportacao(novoNomeConta) {
+  if (!_ofxRevisaoContexto || !novoNomeConta) return;
+  const novaConta = (STATE.contas || []).find(c => c && c.nome === novoNomeConta);
+  if (!novaConta) return;
+
+  _ofxRevisaoContexto.contaNome = novaConta.nome;
+  const idsExistentes = coletarIdsExistentesImportacao(novaConta.nome);
+  const vistos = new Set();
+  transacoesPendentes.forEach((tx) => {
+    if (_ofxRevisaoContexto.origem !== 'PLUGGY' || !tx.contaDestino) {
+      tx.contaDestino = novaConta.nome;
+    }
+    const id = String(tx.fitid || tx.id || '').trim();
+    tx.ehDuplicada = !id || idsExistentes.has(id) || vistos.has(id);
+    if (id) vistos.add(id);
+  });
+
+  atualizarResumoModalRevisaoImportacao(novaConta);
+  renderListaRevisaoOFX();
+}
+
+function aoAlterarContaLinhaRevisaoImportacao(idx, novoDestino) {
+  const tx = transacoesPendentes[idx];
+  if (tx && novoDestino) {
+    tx.contaDestino = novoDestino;
+    sincronizarContraparteAposMudancaConta(tx, novoDestino);
+    const contaAlvo = (STATE.contas || []).find(c => c && c.nome === (_ofxRevisaoContexto && _ofxRevisaoContexto.contaNome)) || STATE.contas[0];
+    atualizarResumoModalRevisaoImportacao(contaAlvo);
+    renderListaRevisaoOFX();
+  }
+}
+
+function aoAlterarTipoRevisaoImportacao(idx, novoTipoRaw) {
+  const tx = transacoesPendentes[idx];
+  if (!tx) return;
+  const novoTipo = ['despesa', 'receita', 'transferencia'].includes(novoTipoRaw) ? novoTipoRaw : 'despesa';
+  tx.tipoRevisao = novoTipo;
+
+  if (novoTipo === 'transferencia') {
+    if (!tx.direcaoOriginal) tx.direcaoOriginal = tx.tipo === 'receita' ? 'receita' : 'despesa';
+    tx.ehTransferencia = true;
+    tx.categoria = 'Transferência';
+    const contraAtualLimpa = extrairNomeLimpoDestinoImportacao(tx.contaContraparte).toLowerCase();
+    const contaLinhaLimpa = extrairNomeLimpoDestinoImportacao(tx.contaDestino).toLowerCase();
+    if (!contraAtualLimpa || contraAtualLimpa === contaLinhaLimpa || tx.contaContraparte === '__SEM_CONTRAPARTE__') {
+      tx.contaContraparte = '';
+    }
+    if (!tx.transferenciaMotivo) tx.transferenciaMotivo = 'Definida manualmente como Transferência';
+  } else {
+    if (tx.transferenciaParId) {
+      const par = transacoesPendentes.find(p => p && p !== tx && (p.fitid === tx.transferenciaParId || p.id === tx.transferenciaParId));
+      if (par && par.ehParTransferenciaConsolidado) {
+        par.ehParTransferenciaConsolidado = false;
+        par.ehTransferencia = false;
+        par.tipoRevisao = par.direcaoOriginal || par.tipo || 'receita';
+        par.categoria = autoCategorizar(par.memo, par.tipoRevisao);
+        par.selecionada = !par.ehDuplicada;
+        delete par.transferenciaPrincipalId;
+        delete par.transferenciaMotivo;
+      }
+      delete tx.transferenciaParId;
+    }
+    tx.ehTransferencia = false;
+    tx.ehParTransferenciaConsolidado = false;
+    tx.tipo = novoTipo;
+    tx.direcaoOriginal = novoTipo;
+    tx.categoria = autoCategorizar(tx.memo, novoTipo);
+    delete tx.contaContraparte;
+    delete tx.transferenciaExistenteId;
+    delete tx.transferenciaConciliarLegId;
+    delete tx.transferenciaPrincipalId;
+    delete tx.transferenciaMotivo;
+  }
+
+  const contaAlvo = (STATE.contas || []).find(c => c && c.nome === (_ofxRevisaoContexto && _ofxRevisaoContexto.contaNome)) || STATE.contas[0];
+  atualizarResumoModalRevisaoImportacao(contaAlvo);
+  renderListaRevisaoOFX();
+}
+
+function aoAlterarContraparteTransferenciaRevisao(idx, novaContraparte) {
+  const tx = transacoesPendentes[idx];
+  if (!tx) return;
+  tx.contaContraparte = String(novaContraparte || '').trim();
+  if (tx.ehTransferencia && tx.transferenciaMotivo && tx.transferenciaMotivo.startsWith('Par automático detectado')) {
+    const origemLimpa = extrairNomeLimpoDestinoImportacao(tx.contaDestino);
+    const contraLimpa = tx.contaContraparte ? extrairNomeLimpoDestinoImportacao(tx.contaContraparte) : 'Selecione';
+    tx.transferenciaMotivo = `Transferência (${origemLimpa} → ${contraLimpa})`;
+  }
+}
+
+function aoAlternarSelecaoRevisaoImportacao(idx, marcado) {
+  if (!transacoesPendentes[idx]) return;
+  transacoesPendentes[idx].selecionada = Boolean(marcado);
+  const rowEl = document.querySelector(`#ofx-revisao-lista .ofx-revisao-row[data-ofx-row="${idx}"]`);
+  if (rowEl) {
+    rowEl.classList.toggle('ofx-desmarcado', !marcado);
+  }
+  const contaAlvo = (STATE.contas || []).find(c => c && c.nome === (_ofxRevisaoContexto && _ofxRevisaoContexto.contaNome)) || STATE.contas[0];
+  atualizarResumoModalRevisaoImportacao(contaAlvo);
+}
+
+function abrirModalRevisaoOFX(contaDestino, transacoes, nomeArquivo, metadados) {
+  return abrirModalRevisaoImportacao(contaDestino, transacoes, {
+    origem: 'OFX',
+    nomeArquivo: nomeArquivo || 'extrato.ofx',
+    metadados: metadados || {}
+  });
 }
 
 function aoAlterarCategoriaRevisaoOFX(idx, novaCategoria) {
@@ -12509,26 +14275,73 @@ function renderListaRevisaoOFX() {
     return;
   }
 
+  const rotuloId = (_ofxRevisaoContexto && _ofxRevisaoContexto.origem === 'PLUGGY') ? 'Pluggy ID' : 'FITID';
+  const contaPadraoNome = (_ofxRevisaoContexto && _ofxRevisaoContexto.contaNome) || (STATE.contas[0] && STATE.contas[0].nome) || 'Conta Principal';
+  const planoPreview = calcularPlanoQuitacaoFaturasRevisao(transacoesPendentes, {
+    marcarFaturasAnterioresPagas: obterFlagMarcarFaturasAnterioresRevisao()
+  });
+
   cont.innerHTML = transacoesPendentes.map((tx, idx) => {
     const [a, m, d] = String(tx.data || '').split('-');
     const dataFmt = a && m && d ? `${d}/${m}/${a}` : (tx.data || '-');
-    const sinal = tx.tipo === 'receita' ? '+' : '-';
-    const badgeStatus = tx.ehDuplicada
-      ? '<span class="badge badge-cat" style="font-size:10px">Já importada (FITID)</span>'
-      : '<span class="badge badge-pago" style="font-size:10px">Novo</span>';
-    const optsCat = construirOptionsCategoriasOFX(tx.tipo, tx.categoria);
+    const tipoLinhaAtual = tx.tipoRevisao || (tx.ehTransferencia ? 'transferencia' : (tx.tipo === 'receita' ? 'receita' : 'despesa'));
+    const ehTransf = tipoLinhaAtual === 'transferencia' || tx.ehTransferencia === true;
+    const direcaoLinha = tx.direcaoOriginal || (tx.tipo === 'receita' ? 'receita' : 'despesa');
+    const sinal = ehTransf ? '⇄' : (tipoLinhaAtual === 'receita' ? '+' : '-');
+    const classeValor = ehTransf ? 'mv-transfer' : (tipoLinhaAtual === 'receita' ? 'mv-ok' : 'mv-bad');
+    const destinoAtual = tx.contaDestino || contaPadraoNome;
+    const cfgCartaoPreview = obterConfigCartaoParaRevisao(destinoAtual);
+    const ehCredito = normalizarTipoContaPluggy(tx.accountType, tx.origem === 'pluggy' ? 'PLUGGY' : 'OFX') === 'CREDIT';
+    const badgeMeioPagamento = ehCredito
+      ? '<span class="badge badge-pluggy-credit" title="Lançamento de Cartão de Crédito (Fatura)"><i class="ti ti-credit-card"></i> Crédito</span>'
+      : '<span class="badge badge-pluggy-bank" title="Movimentação de Conta Corrente / Débito"><i class="ti ti-building-bank"></i> Débito / Conta</span>';
 
-    return `
-      <div class="ofx-revisao-row${tx.ehDuplicada ? ' ofx-dup' : ''}" data-ofx-row="${idx}">
-        <div class="ofx-revisao-data">${escHtml(dataFmt)}</div>
-        <div class="ofx-revisao-info">
-          <div class="ofx-revisao-desc">${escHtml(tx.memo)}</div>
-          <div class="ofx-revisao-badges">
-            ${badgeStatus}
-            <span class="badge badge-cat" style="font-size:10px">${escHtml(tx.trnType || '')}</span>
-          </div>
+    const badgeContaOrigem = tx.accountName
+      ? `<span class="badge badge-cat" style="font-size:10px"><i class="ti ti-Building"></i>${escHtml(tx.accountName)}</span>`
+      : '';
+
+    const badgeTransferencia = ehTransf
+      ? `<span class="badge badge-pluggy-transfer" style="font-size:10px" title="${escHtml(tx.transferenciaMotivo || 'Transferência entre contas próprias — não contabilizada como Receita ou Despesa')}"><i class="ti ti-transfer"></i> ${tx.ehParTransferenciaConsolidado ? 'Transferência pareada (Consolidada)' : 'Transferência'}</span>`
+      : '';
+
+    const badgePagFatura = tx.ehPagamentoFaturaDetectado
+      ? `<span class="badge badge-pendente" style="font-size:10px" title="${tx.ehPagamentoFaturaNoCartao ? 'Pagamento de fatura detectado no cartão — desmarcado por padrão para evitar duplicidade, mas usado para marcar a fatura como Paga' : 'Saída em conta referente a pagamento de fatura — vinculada para evitar duplicidade no gráfico/DRE'}"><i class="ti ti-alert-triangle"></i> Pagamento de fatura detectado</span>`
+      : '';
+
+    let badgeFaturaPreview = '';
+    if ((ehCredito || cfgCartaoPreview.isCartao) && cfgCartaoPreview.isCartao && !ehTransf && tipoLinhaAtual === 'despesa' && !tx.ehPagamentoFaturaNoCartao) {
+      const compTx = competenciaFatura(tx.dataCompra || tx.data, cfgCartaoPreview.diaFechamento);
+      const chavePrev = normalizarChaveFaturaLower(cfgCartaoPreview.nomeCartao, compTx.ano, compTx.mes);
+      const quitadaPrev = planoPreview.porChaveLower.has(chavePrev);
+      const labelComp = `${String(compTx.mes).padStart(2, '0')}/${compTx.ano}`;
+      badgeFaturaPreview = quitadaPrev
+        ? `<span class="badge badge-pago" style="font-size:10px" title="Será importada como Fatura Paga"><i class="ti ti-circle-check"></i> Fatura ${escHtml(labelComp)} · Paga</span>`
+        : `<span class="badge badge-pendente" style="font-size:10px" title="Ficará em aberto em Cartões &amp; Faturas"><i class="ti ti-clock"></i> Fatura ${escHtml(labelComp)} · Aberta</span>`;
+    }
+
+    const badgeStatus = tx.ehDuplicada
+      ? `<span class="badge badge-cat" style="font-size:10px">Já importada (${rotuloId})</span>`
+      : '<span class="badge badge-pago" style="font-size:10px">Novo</span>';
+
+    const optsContaLinha = construirOptionsContasECartoesRevisaoHTML(destinoAtual, tx.accountType, tx.accountName);
+    const optsCat = construirOptionsCategoriasOFX(tipoLinhaAtual === 'receita' ? 'receita' : 'despesa', tx.categoria);
+    const contraparteAtual = tx.contaContraparte || '';
+    const optsContraparte = ehTransf ? construirOptionsContraparteTransferenciaHTML(contraparteAtual, destinoAtual) : '';
+    const rotuloContraparte = direcaoLinha === 'despesa' ? 'Para (Conta Destino):' : 'De (Conta Origem):';
+    const colunaDireitaHTML = ehTransf
+      ? `
+        <div class="ofx-revisao-contraparte-wrap">
+          <span class="ofx-revisao-contraparte-label">${escHtml(rotuloContraparte)}</span>
+          <select
+            class="ofx-revisao-contraparte-select"
+            data-ofx-contraparte-idx="${idx}"
+            aria-label="${escHtml(rotuloContraparte)} ${escHtml(tx.memo)}"
+            onchange="aoAlterarContraparteTransferenciaRevisao(${idx}, this.value)">
+            ${optsContraparte}
+          </select>
         </div>
-        <div class="ofx-revisao-val valor-sensivel ${tx.tipo === 'receita' ? 'mv-ok' : 'mv-bad'}">${sinal} ${escHtml(toBRL(tx.valor))}</div>
+      `
+      : `
         <div class="ofx-revisao-cat-wrap">
           <select
             class="ofx-revisao-cat-select"
@@ -12538,6 +14351,56 @@ function renderListaRevisaoOFX() {
             ${optsCat}
           </select>
         </div>
+      `;
+
+    const estaSelecionada = !tx.ehDuplicada && tx.selecionada !== false;
+
+    return `
+      <div class="ofx-revisao-row${tx.ehDuplicada ? ' ofx-dup' : ''}${!estaSelecionada ? ' ofx-desmarcado' : ''}" data-ofx-row="${idx}">
+        <div class="ofx-revisao-chk-wrap">
+          <input
+            type="checkbox"
+            class="ofx-revisao-chk"
+            data-ofx-chk="${idx}"
+            aria-label="Incluir ${escHtml(tx.memo)}"
+            ${estaSelecionada ? 'checked' : ''}
+            ${tx.ehDuplicada ? 'disabled' : ''}
+            onchange="aoAlternarSelecaoRevisaoImportacao(${idx}, this.checked)">
+        </div>
+        <div class="ofx-revisao-data">${escHtml(dataFmt)}</div>
+        <div class="ofx-revisao-info">
+          <div class="ofx-revisao-desc">${escHtml(tx.memo)}</div>
+          <div class="ofx-revisao-badges">
+            ${badgeMeioPagamento}
+            ${badgeTransferencia}
+            ${badgeContaOrigem}
+            ${badgeStatus}
+            ${badgePagFatura}
+            ${badgeFaturaPreview}
+          </div>
+        </div>
+        <div class="ofx-revisao-val valor-sensivel ${classeValor}">${sinal} ${escHtml(toBRL(tx.valor))}</div>
+        <div class="ofx-revisao-tipo-wrap">
+          <select
+            class="ofx-revisao-tipo-select"
+            data-ofx-tipo-idx="${idx}"
+            aria-label="Tipo para ${escHtml(tx.memo)}"
+            onchange="aoAlterarTipoRevisaoImportacao(${idx}, this.value)">
+            <option value="despesa"${tipoLinhaAtual === 'despesa' ? ' selected' : ''}>Despesa</option>
+            <option value="receita"${tipoLinhaAtual === 'receita' ? ' selected' : ''}>Receita</option>
+            <option value="transferencia"${tipoLinhaAtual === 'transferencia' ? ' selected' : ''}>⇄ Transferência</option>
+          </select>
+        </div>
+        <div class="ofx-revisao-conta-wrap">
+          <select
+            class="ofx-revisao-conta-select"
+            data-ofx-conta-idx="${idx}"
+            aria-label="Conta ou Cartão para ${escHtml(tx.memo)}"
+            onchange="aoAlterarContaLinhaRevisaoImportacao(${idx}, this.value)">
+            ${optsContaLinha}
+          </select>
+        </div>
+        ${colunaDireitaHTML}
       </div>
     `;
   }).join('');
@@ -12562,117 +14425,836 @@ function recalcularSaldoContaOFX(contaDestino) {
   return saldoRecalculado;
 }
 
-async function confirmarESalvarRevisaoOFX() {
-  if (!_ofxRevisaoContexto || !Array.isArray(transacoesPendentes) || !transacoesPendentes.length) {
-    toast('Não há transações OFX pendentes para salvar.', 'err');
-    cancelarRevisaoOFX();
+function criarPontaTransferenciaImportada({
+  tipo, data, descricaoBase, seta, conta, contraparte, valor, origem, grupoId, uniqueId, rawTx, tags
+}) {
+  const temId = Boolean(uniqueId);
+  const orig = String(origem || 'pluggy').toLowerCase();
+  const descFinal = contraparte ? `${descricaoBase} ${seta} ${contraparte}` : descricaoBase;
+  return {
+    id: uid(),
+    tipo,
+    data,
+    descricao: descFinal,
+    categoria: 'Transferência',
+    conta,
+    valor,
+    origem: orig,
+    sincronizado: false,
+    pago: true,
+    status: 'Pago/Efetivado',
+    ehTransferencia: true,
+    transferenciaGrupo: grupoId,
+    transferenciaContraparte: contraparte || '',
+    conciliado: temId,
+    fitid: temId ? uniqueId : undefined,
+    ofxFitId: (temId && orig === 'ofx') ? uniqueId : undefined,
+    pluggyId: (temId && orig === 'pluggy') ? uniqueId : undefined,
+    externalId: temId ? uniqueId : undefined,
+    accountType: 'BANK',
+    accountName: (rawTx && rawTx.accountName) || undefined,
+    meioPagamento: 'conta',
+    tags: (Array.isArray(tags) && tags.length) ? tags : undefined
+  };
+}
+
+async function confirmarESalvarRevisaoImportacao() {
+  if (!_ofxRevisaoContexto || !Array.isArray(transacoesPendentes)) {
+    toast('Não há transações pendentes para salvar.', 'err');
+    cancelarRevisaoImportacao();
     return;
   }
 
-  const contaDestino = (STATE.contas || []).find(c => c && c.nome === _ofxRevisaoContexto.contaNome);
-  if (!contaDestino) {
-    toast('A conta vinculada não foi encontrada no painel.', 'err');
-    cancelarRevisaoOFX();
+  const contaPadrao = (STATE.contas || []).find(c => c && c.nome === _ofxRevisaoContexto.contaNome) || STATE.contas[0];
+  const origensParaSaldoPre = (_ofxRevisaoContexto.origem === 'PLUGGY')
+    ? coletarOrigensDistintasPluggy(transacoesPendentes, contaPadrao, _ofxRevisaoContexto.contasPluggy || [])
+    : [];
+  const temSaldoPluggyBancoParaAjustar = origensParaSaldoPre.some(o => o.hasBalance);
+
+  if (!transacoesPendentes.length && !temSaldoPluggyBancoParaAjustar) {
+    toast('Não há transações pendentes para salvar.', 'err');
+    cancelarRevisaoImportacao();
     return;
   }
 
-  // Recolhe os valores finais dos <select>s de categoria exibidos no modal de revisão
   if (typeof document.querySelectorAll === 'function') {
+    document.querySelectorAll('#ofx-revisao-lista .ofx-revisao-tipo-select[data-ofx-tipo-idx]').forEach((sel) => {
+      const idx = parseInt(sel.dataset ? sel.dataset.ofxTipoIdx : sel.getAttribute('data-ofx-tipo-idx'), 10);
+      if (Number.isInteger(idx) && transacoesPendentes[idx] && sel.value) {
+        const val = sel.value;
+        transacoesPendentes[idx].tipoRevisao = val;
+        if (val === 'transferencia') {
+          transacoesPendentes[idx].ehTransferencia = true;
+          transacoesPendentes[idx].categoria = 'Transferência';
+        } else if (val === 'despesa' || val === 'receita') {
+          transacoesPendentes[idx].ehTransferencia = false;
+          transacoesPendentes[idx].tipo = val;
+          transacoesPendentes[idx].direcaoOriginal = val;
+        }
+      }
+    });
+    document.querySelectorAll('#ofx-revisao-lista .ofx-revisao-contraparte-select[data-ofx-contraparte-idx]').forEach((sel) => {
+      const idx = parseInt(sel.dataset ? sel.dataset.ofxContraparteIdx : sel.getAttribute('data-ofx-contraparte-idx'), 10);
+      if (Number.isInteger(idx) && transacoesPendentes[idx]) {
+        transacoesPendentes[idx].contaContraparte = String(sel.value || '').trim();
+      }
+    });
     document.querySelectorAll('#ofx-revisao-lista .ofx-revisao-cat-select[data-ofx-idx]').forEach((sel) => {
       const idx = parseInt(sel.dataset ? sel.dataset.ofxIdx : sel.getAttribute('data-ofx-idx'), 10);
       if (Number.isInteger(idx) && transacoesPendentes[idx] && sel.value) {
         transacoesPendentes[idx].categoria = sel.value;
       }
     });
+    document.querySelectorAll('#ofx-revisao-lista .ofx-revisao-conta-select[data-ofx-conta-idx]').forEach((sel) => {
+      const idx = parseInt(sel.dataset ? sel.dataset.ofxContaIdx : sel.getAttribute('data-ofx-conta-idx'), 10);
+      if (Number.isInteger(idx) && transacoesPendentes[idx] && sel.value) {
+        transacoesPendentes[idx].contaDestino = sel.value;
+      }
+    });
+    document.querySelectorAll('#ofx-revisao-lista .ofx-revisao-chk[data-ofx-chk]').forEach((chk) => {
+      const idx = parseInt(chk.dataset ? chk.dataset.ofxChk : chk.getAttribute('data-ofx-chk'), 10);
+      if (Number.isInteger(idx) && transacoesPendentes[idx]) {
+        transacoesPendentes[idx].selecionada = Boolean(chk.checked);
+      }
+    });
+  }
+
+  const marcarFaturasAnteriores = obterFlagMarcarFaturasAnterioresRevisao();
+
+  // Validação prévia atômica: toda linha marcada como Transferência (sem par pré-existente)
+  // deve ter uma conta de contrapartida explicitamente selecionada e diferente da conta atual.
+  for (let idx = 0; idx < transacoesPendentes.length; idx += 1) {
+    const tx = transacoesPendentes[idx];
+    if (!tx || tx.ehDuplicada || tx.ehParTransferenciaConsolidado || tx.selecionada === false) continue;
+    const isTransf = tx.tipoRevisao === 'transferencia' || tx.ehTransferencia === true;
+    if (!isTransf) continue;
+
+    const contaOrigemAtualNome = extrairNomeLimpoDestinoImportacao(tx.contaDestino || (contaPadrao && contaPadrao.nome));
+    const ehCartaoAtual = normalizarTipoContaPluggy(tx.accountType, String(_ofxRevisaoContexto.origem || '').toUpperCase()) === 'CREDIT'
+      && (STATE.contas || []).some(c => c && c.tipo === 'cartao' && c.nome.toLowerCase() === contaOrigemAtualNome.toLowerCase());
+    if (ehCartaoAtual || tx.transferenciaConciliarLegId || tx.transferenciaExistenteId) continue;
+
+    const valContra = String(tx.contaContraparte || '').trim();
+    const contraLimpa = extrairNomeLimpoDestinoImportacao(valContra).toLowerCase();
+    if (!valContra || valContra === '__SEM_CONTRAPARTE__' || !contraLimpa || contraLimpa === contaOrigemAtualNome.toLowerCase()) {
+      if (typeof document.querySelector === 'function') {
+        const selContra = document.querySelector(`#ofx-revisao-lista .ofx-revisao-contraparte-select[data-ofx-contraparte-idx="${idx}"]`);
+        if (selContra && typeof selContra.focus === 'function') selContra.focus();
+      }
+      toast(`Selecione explicitamente a conta de contrapartida (diferente de ${contaOrigemAtualNome}) para a transferência "${tx.memo}".`, 'err');
+      return false;
+    }
   }
 
   if (!Array.isArray(STATE.lancamentos)) STATE.lancamentos = [];
-  const idsExistentes = coletarIdsExistentesContaOFX(contaDestino.nome);
-  const ehCartao = contaDestino.tipo === 'cartao';
+  const idsExistentesGlobal = coletarIdsExistentesImportacao();
+  const idsConsolidadosNesteLote = new Set();
+  const origemPadrao = String(_ofxRevisaoContexto.origem || 'ofx').toLowerCase();
+  const contasAfetadas = new Map();
+  const mapaContasResolvidas = new Map();
+  const pagamentosBancoImportados = [];
 
   let adicionados = 0;
   let ignoradosDuplicados = 0;
+  let ignoradosDesmarcados = 0;
 
   for (const tx of transacoesPendentes) {
-    const fitid = String((tx && tx.fitid) || '').trim();
-    if (!fitid || idsExistentes.has(fitid)) {
+    const uniqueId = String((tx && (tx.fitid || tx.id || tx.externalId)) || '').trim();
+    if (uniqueId && idsConsolidadosNesteLote.has(uniqueId)) {
+      continue;
+    }
+    if (!uniqueId || tx.ehDuplicada || idsExistentesGlobal.has(uniqueId)) {
       ignoradosDuplicados += 1;
       continue;
     }
 
-    const desc = String((tx.memo || tx.descricao || 'Transação OFX')).trim();
+    if (tx.selecionada === false) {
+      ignoradosDesmarcados += 1;
+      continue;
+    }
+
+    const contaDestinoTx = resolverOuCriarContaDestinoTransacao(
+      tx.contaDestino || (_ofxRevisaoContexto && _ofxRevisaoContexto.contaNome),
+      tx.accountType,
+      contaPadrao
+    );
+    if (!contaDestinoTx) continue;
+    contasAfetadas.set(contaDestinoTx.nome, contaDestinoTx);
+    mapaContasResolvidas.set(tx, contaDestinoTx);
+
+    const ehCartao = (contaDestinoTx.tipo === 'cartao') || (normalizarTipoContaPluggy(tx.accountType, origemPadrao.toUpperCase()) === 'CREDIT' && contaDestinoTx.tipo === 'cartao');
+    const desc = String((tx.memo || tx.descricao || 'Transação importada')).trim();
     const tagsInline = typeof extrairHashtagsDescricao === 'function' ? extrairHashtagsDescricao(desc) : [];
     const dataLanc = tx.data || hojeLocalISO();
-    const categoriaFinal = String(tx.categoria || '').trim() || autoCategorizar(desc, tx.tipo || 'despesa');
+    const origemTx = String(tx.origem || origemPadrao).toLowerCase();
+    const valorNorm = Math.round((Number(tx.valor) || 0) * 100) / 100;
+    const ehTransferenciaLinha = !ehCartao && (tx.tipoRevisao === 'transferencia' || tx.ehTransferencia === true);
+
+    if (ehTransferenciaLinha) {
+      const direcao = tx.direcaoOriginal || (tx.tipo === 'receita' ? 'receita' : 'despesa');
+
+      // 1) Conciliação de ponta manual já existente na mesma conta (evita duplicar saldo)
+      if (tx.transferenciaConciliarLegId) {
+        const legAlvo = STATE.lancamentos.find(l => l && l.id === tx.transferenciaConciliarLegId);
+        if (legAlvo) {
+          legAlvo.fitid = uniqueId;
+          if (origemTx === 'ofx') legAlvo.ofxFitId = uniqueId;
+          if (origemTx === 'pluggy') legAlvo.pluggyId = uniqueId;
+          legAlvo.externalId = uniqueId;
+          legAlvo.conciliado = true;
+          legAlvo.pago = true;
+          legAlvo.status = 'Pago/Efetivado';
+          legAlvo.sincronizado = false;
+          idsExistentesGlobal.add(uniqueId);
+          adicionados += 1;
+          continue;
+        }
+      }
+
+      // 2) Pareamento com lançamento já existente em outra conta de STATE.lancamentos
+      if (tx.transferenciaExistenteId) {
+        const existenteOp = STATE.lancamentos.find(l => l && l.id === tx.transferenciaExistenteId);
+        if (existenteOp && String(existenteOp.conta || '').toLowerCase() !== contaDestinoTx.nome.toLowerCase()) {
+          const grupoIdExist = existenteOp.transferenciaGrupo || uid();
+          const pontaMesmaContaExist = STATE.lancamentos.find(
+            l => l && l.id !== existenteOp.id && l.transferenciaGrupo === grupoIdExist && String(l.conta || '').toLowerCase() === contaDestinoTx.nome.toLowerCase() && l.tipo === direcao
+          );
+          existenteOp.ehTransferencia = true;
+          existenteOp.categoria = 'Transferência';
+          existenteOp.transferenciaGrupo = grupoIdExist;
+          existenteOp.transferenciaContraparte = contaDestinoTx.nome;
+          existenteOp.sincronizado = false;
+
+          const contaOpObj = (STATE.contas || []).find(c => c && c.nome === existenteOp.conta);
+          if (contaOpObj) contasAfetadas.set(contaOpObj.nome, contaOpObj);
+
+          if (pontaMesmaContaExist) {
+            pontaMesmaContaExist.fitid = uniqueId;
+            if (origemTx === 'ofx') pontaMesmaContaExist.ofxFitId = uniqueId;
+            if (origemTx === 'pluggy') pontaMesmaContaExist.pluggyId = uniqueId;
+            pontaMesmaContaExist.externalId = uniqueId;
+            pontaMesmaContaExist.conciliado = true;
+            pontaMesmaContaExist.pago = true;
+            pontaMesmaContaExist.status = 'Pago/Efetivado';
+            idsExistentesGlobal.add(uniqueId);
+            adicionados += 1;
+            continue;
+          }
+
+          const novaPontaPareada = criarPontaTransferenciaImportada({
+            tipo: direcao,
+            data: dataLanc,
+            descricaoBase: desc,
+            seta: direcao === 'despesa' ? '→' : '←',
+            conta: contaDestinoTx.nome,
+            contraparte: existenteOp.conta,
+            valor: valorNorm,
+            origem: origemTx,
+            grupoId: grupoIdExist,
+            uniqueId,
+            rawTx: tx,
+            tags: tagsInline
+          });
+          STATE.lancamentos.push(novaPontaPareada);
+          idsExistentesGlobal.add(uniqueId);
+          adicionados += 1;
+          continue;
+        }
+      }
+
+      // 3) Transferência completa em par (ponta origem + ponta destino no padrão do botão "Transferir") ou ponta única
+      const valContraparte = String(tx.contaContraparte || '').trim();
+      const contaContraparteObj = (valContraparte && valContraparte !== '__SEM_CONTRAPARTE__')
+        ? resolverOuCriarContaDestinoTransacao(valContraparte, 'BANK', null)
+        : null;
+
+      if (contaContraparteObj && contaContraparteObj.nome.toLowerCase() !== contaDestinoTx.nome.toLowerCase()) {
+        contasAfetadas.set(contaContraparteObj.nome, contaContraparteObj);
+        const grupoId = uid();
+        const rawPar = tx.transferenciaParId
+          ? transacoesPendentes.find(p => p && p !== tx && (p.fitid === tx.transferenciaParId || p.id === tx.transferenciaParId))
+          : null;
+        const contaOrigemObj = direcao === 'despesa' ? contaDestinoTx : contaContraparteObj;
+        const contaDestObj = direcao === 'despesa' ? contaContraparteObj : contaDestinoTx;
+        const txSaida = direcao === 'despesa' ? tx : rawPar;
+        const txEntrada = direcao === 'receita' ? tx : rawPar;
+        const idSaida = txSaida ? String(txSaida.fitid || txSaida.id || txSaida.externalId || '').trim() : '';
+        const idEntrada = txEntrada ? String(txEntrada.fitid || txEntrada.id || txEntrada.externalId || '').trim() : '';
+
+        const lancSaida = criarPontaTransferenciaImportada({
+          tipo: 'despesa',
+          data: (txSaida && txSaida.data) || dataLanc,
+          descricaoBase: (txSaida && String(txSaida.memo || txSaida.descricao || '').trim()) || desc,
+          seta: '→',
+          conta: contaOrigemObj.nome,
+          contraparte: contaDestObj.nome,
+          valor: valorNorm,
+          origem: (txSaida && txSaida.origem) || origemTx,
+          grupoId,
+          uniqueId: idSaida,
+          rawTx: txSaida || tx,
+          tags: tagsInline
+        });
+
+        const lancEntrada = criarPontaTransferenciaImportada({
+          tipo: 'receita',
+          data: (txEntrada && txEntrada.data) || dataLanc,
+          descricaoBase: (txEntrada && String(txEntrada.memo || txEntrada.descricao || '').trim()) || desc,
+          seta: '←',
+          conta: contaDestObj.nome,
+          contraparte: contaOrigemObj.nome,
+          valor: valorNorm,
+          origem: (txEntrada && txEntrada.origem) || origemTx,
+          grupoId,
+          uniqueId: idEntrada,
+          rawTx: txEntrada || tx,
+          tags: tagsInline
+        });
+
+        STATE.lancamentos.push(lancSaida);
+        STATE.lancamentos.push(lancEntrada);
+        idsExistentesGlobal.add(uniqueId);
+        if (rawPar) {
+          const parUid = String(rawPar.fitid || rawPar.id || rawPar.externalId || '').trim();
+          if (parUid) {
+            idsExistentesGlobal.add(parUid);
+            idsConsolidadosNesteLote.add(parUid);
+          }
+        }
+        adicionados += 2;
+        continue;
+      }
+
+      toast(`Transferência ignorada: conta de contrapartida inválida para "${tx.memo}".`, 'err');
+      return false;
+    }
+
+    const tipoFinal = (tx.tipoRevisao === 'receita' || tx.tipoRevisao === 'despesa') ? tx.tipoRevisao : (tx.tipo || 'despesa');
+    const categoriaFinal = String(tx.categoria || '').trim() || autoCategorizar(desc, tipoFinal);
+    const accountTypeFinal = ehCartao ? 'CREDIT' : 'BANK';
+    const pagoContaBase = tx.pago !== undefined ? Boolean(tx.pago) : true;
 
     const novoLanc = {
       id: uid(),
-      fitid,
-      ofxFitId: fitid,
-      trnType: tx.trnType || (tx.tipo === 'receita' ? 'CREDIT' : 'DEBIT'),
-      origem: 'ofx',
-      tipo: tx.tipo || 'despesa',
+      fitid: uniqueId,
+      ofxFitId: origemTx === 'ofx' ? uniqueId : undefined,
+      pluggyId: origemTx === 'pluggy' ? uniqueId : undefined,
+      externalId: uniqueId,
+      trnType: tx.trnType || (tipoFinal === 'receita' ? 'CREDIT' : 'DEBIT'),
+      accountType: accountTypeFinal,
+      accountName: tx.accountName || undefined,
+      meioPagamento: ehCartao ? 'cartao' : 'conta',
+      origem: origemTx,
+      tipo: tipoFinal,
       data: dataLanc,
-      dataCompra: ehCartao ? dataLanc : undefined,
+      dataCompra: ehCartao ? (tx.dataCompra || dataLanc) : undefined,
       descricao: desc,
       categoria: categoriaFinal,
-      conta: contaDestino.nome,
-      valor: Math.round((Number(tx.valor) || 0) * 100) / 100,
-      pago: ehCartao ? (tx.tipo === 'receita') : true,
+      conta: contaDestinoTx.nome,
+      cartaoId: ehCartao ? (contaDestinoTx.id || undefined) : undefined,
+      cartaoNome: ehCartao ? contaDestinoTx.nome : undefined,
+      valor: valorNorm,
+      pago: ehCartao ? (tipoFinal === 'receita') : pagoContaBase,
+      status: ehCartao ? (tipoFinal === 'receita' ? 'Liquidado' : 'Pendente') : (pagoContaBase ? 'Pago/Efetivado' : 'Pendente'),
       conciliado: true,
       sincronizado: false,
       tags: tagsInline.length ? tagsInline : undefined
     };
 
     if (ehCartao && novoLanc.tipo === 'despesa' && typeof competenciaFatura === 'function') {
-      const fechamento = parseInt(contaDestino.diaFechamento, 10) || 1;
-      const vencimento = parseInt(contaDestino.diaVencimento, 10) || 10;
+      const fechamento = parseInt(contaDestinoTx.diaFechamento, 10) || 1;
+      const vencimento = parseInt(contaDestinoTx.diaVencimento, 10) || 10;
       const comp = competenciaFatura(dataLanc, fechamento);
       novoLanc.faturaAno = comp.ano;
       novoLanc.faturaMes = comp.mes;
+      novoLanc.faturaCompetencia = `${String(comp.mes).padStart(2, '0')}/${comp.ano}`;
       novoLanc.dataVencimentoFatura = calcularVencimentoFatura(comp.ano, comp.mes, fechamento, vencimento);
       novoLanc.faturaPaga = false;
       novoLanc.pago = false;
-    } else if (ehCartao && novoLanc.tipo === 'receita' && /pagamento.*fatura|fatura paga|bill payment/i.test(desc)) {
+      novoLanc.status = 'Pendente';
+    } else if (ehCartao && ehTransacaoPagamentoFaturaPluggy(desc, tx.rawCategory || tx.categoria)) {
       novoLanc.ehTransferencia = true;
+      novoLanc.ehPagamentoFatura = true;
+      novoLanc.categoria = 'Transferência/Pagamento de Fatura';
+      novoLanc.status = 'Pago/Efetivado';
+    } else if (!ehCartao && novoLanc.tipo === 'despesa' && (tx.ehPagamentoFaturaDetectado || ehTransacaoPagamentoFaturaPluggy(desc, tx.rawCategory || tx.categoria))) {
+      novoLanc.ehPagamentoFatura = true;
+      novoLanc.ehTransferencia = true;
+      novoLanc.categoria = 'Transferência/Pagamento de Fatura';
+      novoLanc.pago = true;
+      novoLanc.status = 'Pago/Efetivado';
+      pagamentosBancoImportados.push({
+        _lancId: novoLanc.id,
+        _lancRef: novoLanc,
+        data: novoLanc.data,
+        valor: novoLanc.valor,
+        descricao: novoLanc.descricao,
+        conta: novoLanc.conta
+      });
     }
 
     STATE.lancamentos.push(novoLanc);
-    idsExistentes.add(fitid);
+    idsExistentesGlobal.add(uniqueId);
     adicionados += 1;
   }
 
-  recalcularSaldoContaOFX(contaDestino);
+  // Liquida automaticamente faturas de meses anteriores (quando marcado) e faturas com pagamento detectado
+  const planoQuitacao = calcularPlanoQuitacaoFaturasRevisao(transacoesPendentes, {
+    marcarFaturasAnterioresPagas: marcarFaturasAnteriores,
+    pagamentosBancoRecentes: pagamentosBancoImportados,
+    contasResolvidasPorTx: mapaContasResolvidas
+  });
+
+  let qtdFaturasQuitadas = 0;
+  planoQuitacao.faturasParaQuitar.forEach((itemPlano) => {
+    const infoCartao = resolverCartaoPorIdOuNome(itemPlano.cartaoNome);
+    if (!infoCartao) return;
+
+    const itensFatura = lancamentosDaFatura(infoCartao.nome, itemPlano.ano, itemPlano.mes);
+    if (!itensFatura.length) return;
+
+    const resQuitacao = quitarItensFaturaCartao(infoCartao, itemPlano.ano, itemPlano.mes, {
+      dataPagamento: itemPlano.dataPagamento,
+      contaOrigem: itemPlano.contaOrigem,
+      pagamentoFaturaId: itemPlano.pagamentoFaturaId,
+      quitacaoRetroativa: itemPlano.quitacaoRetroativa,
+      pagamentoDetectado: itemPlano.pagamentoDetectado,
+      origemQuitacao: itemPlano.origemQuitacao
+    });
+
+    if (itemPlano.lancBancoRef) {
+      const regFatura = STATE.config && STATE.config.faturasPagas && STATE.config.faturasPagas[resQuitacao.chaveFaturaPaga];
+      itemPlano.lancBancoRef.cartaoNome = infoCartao.nome;
+      itemPlano.lancBancoRef.cartaoId = infoCartao.id || infoCartao.nome;
+      itemPlano.lancBancoRef.faturaAno = itemPlano.ano;
+      itemPlano.lancBancoRef.faturaMes = itemPlano.mes;
+      itemPlano.lancBancoRef.faturaCompetencia = `${String(itemPlano.mes).padStart(2, '0')}/${itemPlano.ano}`;
+      if (regFatura && Array.isArray(regFatura.itensPagosIds)) {
+        itemPlano.lancBancoRef.itensPagosIds = [...regFatura.itensPagosIds];
+      }
+    }
+    qtdFaturasQuitadas += 1;
+  });
+
+  if (typeof sincronizarEstruturaCartoes === 'function') sincronizarEstruturaCartoes();
+  if (typeof normalizarLancamentosCartaoExistentes === 'function') normalizarLancamentosCartaoExistentes();
+  if (typeof recalcularLimitesCartoes === 'function') recalcularLimitesCartoes();
+
+  // Conciliação automática de Saldo Inicial para contas BANK Pluggy com saldo real informado pelo banco
+  let qtdSaldosAjustados = 0;
+  const ajustarSaldoInicial = (_ofxRevisaoContexto.origem === 'PLUGGY')
+    ? obterFlagAjustarSaldoInicialPluggy()
+    : false;
+  if (ajustarSaldoInicial) {
+    const origensFinais = coletarOrigensDistintasPluggy(
+      transacoesPendentes,
+      contaPadrao,
+      _ofxRevisaoContexto.contasPluggy || []
+    );
+    const alvosPorConta = new Map();
+    const origensVistas = new Set();
+
+    origensFinais.forEach((orig) => {
+      if (!orig || orig.accountType !== 'BANK' || !orig.hasBalance) return;
+      const chaveDedupe = orig.accountId || orig.chave;
+      if (origensVistas.has(chaveDedupe)) return;
+      origensVistas.add(chaveDedupe);
+
+      const destinoMapa = (_ofxRevisaoContexto.mapaOrigens && _ofxRevisaoContexto.mapaOrigens[orig.chave])
+        || orig.contaDestino
+        || _ofxRevisaoContexto.contaNome;
+      const contaAlvo = resolverOuCriarContaDestinoTransacao(destinoMapa, 'BANK', contaPadrao);
+      if (!contaAlvo || contaAlvo.tipo === 'cartao') return;
+
+      contasAfetadas.set(contaAlvo.nome, contaAlvo);
+      const acumulado = alvosPorConta.get(contaAlvo.nome) || { conta: contaAlvo, saldoReal: 0 };
+      acumulado.saldoReal = Math.round((acumulado.saldoReal + Number(orig.balance)) * 100) / 100;
+      if (orig.accountId && !contaAlvo.pluggyAccountId) {
+        contaAlvo.pluggyAccountId = orig.accountId;
+      }
+      alvosPorConta.set(contaAlvo.nome, acumulado);
+    });
+
+    if (alvosPorConta.size > 0) {
+      const movimentosSemInicial = calcularSomaLancamentosEfetivadosPorConta();
+      alvosPorConta.forEach(({ conta, saldoReal }) => {
+        const saldoCalculadoSemInicial = Math.round((Number(movimentosSemInicial[conta.nome]) || 0) * 100) / 100;
+        const novoSaldoInicial = Math.round((saldoReal - saldoCalculadoSemInicial) * 100) / 100;
+        conta.saldoInicial = novoSaldoInicial;
+        conta.pluggyBalanceReal = saldoReal;
+        conta.pluggyBalanceSyncAt = new Date().toISOString();
+        qtdSaldosAjustados += 1;
+      });
+    }
+  }
+
+  contasAfetadas.forEach((c) => recalcularSaldoContaOFX(c));
+  if (contaPadrao && !contasAfetadas.has(contaPadrao.nome)) {
+    recalcularSaldoContaOFX(contaPadrao);
+  }
+
   await salvarDados();
-  cancelarRevisaoOFX();
+  cancelarRevisaoImportacao();
   popularContasSelect();
   renderDashboard();
   renderPaginaAtiva();
+  if (document.getElementById('page-cartoes')) renderCartoes();
   if (typeof sincronizarEmSegundoPlano === 'function') sincronizarEmSegundoPlano();
 
-  if (adicionados > 0) {
-    const detalheDup = ignoradosDuplicados > 0
-      ? ` (${ignoradosDuplicados} duplicada(s) ignorada(s))`
-      : '';
-    toast(`Extrato importado com sucesso! ${adicionados} lançamento(s) salvo(s) em ${contaDestino.nome}${detalheDup}.`, 'ok');
+  const nomesContasSalvas = [...contasAfetadas.keys()].join(', ') || (contaPadrao ? contaPadrao.nome : 'COFIN');
+  if (adicionados > 0 || qtdFaturasQuitadas > 0 || qtdSaldosAjustados > 0) {
+    const detalhes = [];
+    if (qtdSaldosAjustados > 0) detalhes.push(`saldo inicial conciliado em ${qtdSaldosAjustados} conta(s)`);
+    if (qtdFaturasQuitadas > 0) detalhes.push(`${qtdFaturasQuitadas} fatura(s) marcada(s) como Paga(s)`);
+    if (ignoradosDuplicados > 0) detalhes.push(`${ignoradosDuplicados} duplicada(s)`);
+    if (ignoradosDesmarcados > 0) detalhes.push(`${ignoradosDesmarcados} desmarcada(s)`);
+    const sufixo = detalhes.length ? ` (${detalhes.join(' · ')})` : '';
+    const msgBase = adicionados > 0
+      ? `Importação concluída! ${adicionados} lançamento(s) salvo(s) em ${nomesContasSalvas}`
+      : (qtdSaldosAjustados > 0
+          ? `Conciliação de saldo concluída em ${nomesContasSalvas}`
+          : `Conciliação de faturas concluída`);
+    toast(`${msgBase}${sufixo}.`, 'ok');
   } else {
-    toast(`Nenhuma transação nova: todas as ${ignoradosDuplicados} transação(ões) já constavam em ${contaDestino.nome}.`, 'info');
+    toast(`Nenhuma transação nova importada (${ignoradosDuplicados} duplicada(s), ${ignoradosDesmarcados} desmarcada(s)).`, 'info');
   }
 }
+const confirmarESalvarRevisaoOFX = confirmarESalvarRevisaoImportacao;
 
-function cancelarRevisaoOFX(chamadoPorFechamento) {
+function cancelarRevisaoImportacao(chamadoPorFechamento) {
   transacoesPendentes = [];
   _ofxRevisaoContexto = null;
   const listaEl = document.getElementById('ofx-revisao-lista');
   if (listaEl) listaEl.innerHTML = '';
   if (!chamadoPorFechamento) {
-    fecharModal('modal-revisao-ofx');
+    fecharModal('modal-revisao-importacao');
   } else {
-    const el = document.getElementById('modal-revisao-ofx');
+    const el = document.getElementById('modal-revisao-importacao') || document.getElementById('modal-revisao-ofx');
     if (el) el.classList.remove('show');
     if (typeof atualizarEstadoModais === 'function') atualizarEstadoModais();
   }
 }
+const cancelarRevisaoOFX = cancelarRevisaoImportacao;
+
+/* ================= INTEGRAÇÃO OPEN FINANCE (PLUGGY CONNECT & CREDENCIAIS SEGURAS) ================= */
+let _pluggyContinuarConexaoAposSalvar = false;
+
+function atualizarStatusUIPluggy(mensagem, textoBadge) {
+  const msgEl = document.getElementById('pluggy-status-msg');
+  if (msgEl && mensagem) msgEl.textContent = mensagem;
+  const badgeEl = document.getElementById('pluggy-status-badge');
+  if (badgeEl && textoBadge) badgeEl.textContent = textoBadge;
+}
+
+function expurgarInputsCredenciaisPluggyDOM() {
+  const inputId = document.getElementById('pluggy-client-id');
+  const inputSecret = document.getElementById('pluggy-client-secret');
+  if (inputId) {
+    inputId.value = '';
+    inputId.removeAttribute('value');
+    if (inputId.dataset) delete inputId.dataset.initialValue;
+  }
+  if (inputSecret) {
+    inputSecret.value = '';
+    inputSecret.removeAttribute('value');
+    if (inputSecret.dataset) delete inputSecret.dataset.initialValue;
+  }
+}
+
+function abrirModalConfigPluggy(continuarConexao = false) {
+  _pluggyContinuarConexaoAposSalvar = Boolean(continuarConexao);
+  expurgarInputsCredenciaisPluggyDOM();
+  abrirModal('modal-config-pluggy');
+  const inputId = document.getElementById('pluggy-client-id');
+  if (inputId && typeof inputId.focus === 'function') inputId.focus();
+}
+
+function fecharModalConfigPluggy(chamadoPorFechamento) {
+  _pluggyContinuarConexaoAposSalvar = false;
+  expurgarInputsCredenciaisPluggyDOM();
+  if (!chamadoPorFechamento) {
+    fecharModal('modal-config-pluggy');
+  } else {
+    const el = document.getElementById('modal-config-pluggy');
+    if (el) el.classList.remove('show');
+    if (typeof atualizarEstadoModais === 'function') atualizarEstadoModais();
+  }
+}
+
+async function salvarConfiguracaoPluggy() {
+  const inputId = document.getElementById('pluggy-client-id');
+  const inputSecret = document.getElementById('pluggy-client-secret');
+
+  let clientId = inputId ? String(inputId.value || '').trim() : '';
+  let clientSecret = inputSecret ? String(inputSecret.value || '').trim() : '';
+
+  // Expurga imediatamente os inputs do DOM antes de qualquer operação assíncrona
+  expurgarInputsCredenciaisPluggyDOM();
+
+  if (!clientId || !clientSecret) {
+    clientId = '';
+    clientSecret = '';
+    toast('Preencha tanto o PLUGGY_CLIENT_ID quanto o PLUGGY_CLIENT_SECRET.', 'err');
+    return false;
+  }
+
+  if (!window.electronAPI || typeof window.electronAPI.salvarCredenciaisPluggy !== 'function') {
+    clientId = '';
+    clientSecret = '';
+    toast('A gravação segura no .env requer o ambiente Desktop (Electron).', 'err');
+    return false;
+  }
+
+  const deveContinuarConexao = _pluggyContinuarConexaoAposSalvar;
+
+  try {
+    const payload = { clientId, clientSecret };
+    // Limpa referências locais em memória no frontend imediatamente após empacotar para o IPC
+    clientId = '';
+    clientSecret = '';
+
+    const res = await window.electronAPI.salvarCredenciaisPluggy(payload);
+    payload.clientId = '';
+    payload.clientSecret = '';
+
+    if (!res || !res.ok) {
+      toast((res && res.erro) || 'Falha ao gravar credenciais no ficheiro .env.', 'err');
+      return false;
+    }
+
+    fecharModalConfigPluggy();
+    atualizarStatusUIPluggy('Credenciais Pluggy gravadas com segurança no .env.', 'Credenciais Ativas · .env');
+    toast('Credenciais Pluggy salvas com segurança no ficheiro .env!', 'ok');
+
+    if (deveContinuarConexao) {
+      await conectarBancoPluggy();
+    }
+    return true;
+  } catch (err) {
+    clientId = '';
+    clientSecret = '';
+    console.error('[Pluggy] Erro ao salvar credenciais via IPC:', err);
+    toast('Erro ao comunicar com o processo principal para gravar o .env.', 'err');
+    return false;
+  }
+}
+
+let _unsubscribePluggyItemConnected = null;
+
+function registrarItemIdPluggyNoState(itemId, listaAdicional = []) {
+  if (!STATE.config) STATE.config = {};
+  if (!Array.isArray(STATE.config.pluggyItemIds)) {
+    STATE.config.pluggyItemIds = [];
+  }
+
+  const todosNovos = [
+    itemId,
+    ...(Array.isArray(listaAdicional) ? listaAdicional : [])
+  ]
+    .map(id => String(id || '').trim())
+    .filter(Boolean);
+
+  for (const id of todosNovos) {
+    STATE.config.pluggyItemIds = [
+      id,
+      ...STATE.config.pluggyItemIds.filter(existente => existente !== id)
+    ];
+  }
+
+  if (todosNovos[0]) {
+    STATE.config.pluggyLastItemId = todosNovos[0];
+  }
+}
+
+function inicializarListenerPluggyConnect() {
+  if (!window.electronAPI || typeof window.electronAPI.onPluggyItemConnected !== 'function') {
+    return;
+  }
+  if (typeof _unsubscribePluggyItemConnected === 'function') {
+    try { _unsubscribePluggyItemConnected(); } catch (_e) {}
+    _unsubscribePluggyItemConnected = null;
+  }
+
+  _unsubscribePluggyItemConnected = window.electronAPI.onPluggyItemConnected(async (payload) => {
+    const itemId = typeof payload === 'string'
+      ? payload.trim()
+      : (payload && typeof payload.itemId === 'string' ? payload.itemId.trim() : '');
+    if (!itemId) return;
+
+    registrarItemIdPluggyNoState(itemId);
+    await salvarDados();
+
+    atualizarStatusUIPluggy(
+      `Conexão Pluggy recebida com sucesso (${itemId.slice(0, 8)}). Sincronizando lançamentos...`,
+      'Conectado'
+    );
+    toast('Banco conectado no navegador! Sincronizando lançamentos automaticamente...', 'ok');
+
+    await sincronizarItemPluggyPorId(itemId);
+  });
+}
+
+async function sincronizarItemPluggyPorId(itemId) {
+  const idLimpo = String(itemId || '').trim();
+  if (!window.electronAPI) {
+    toast('A sincronização Open Finance (Pluggy) requer o ambiente Desktop (Electron).', 'err');
+    return [];
+  }
+
+  try {
+    atualizarStatusUIPluggy(
+      idLimpo
+        ? `Sincronizando contas e transações do item ${idLimpo.slice(0, 8)}...`
+        : 'Buscando itens e contas conectadas via Open Finance (Pluggy)...',
+      'Sincronizando · Pluggy'
+    );
+    toast('Buscando contas e transações via Open Finance (Pluggy)...', 'ok');
+
+    let todasTransacoes = [];
+    let contasPluggy = [];
+    let nomeContaPrincipal = '';
+    let itemIdResolvido = idLimpo;
+    let itemIdsResolvidos = [];
+    const itemIdsLocais = (STATE.config && Array.isArray(STATE.config.pluggyItemIds))
+      ? STATE.config.pluggyItemIds
+      : [];
+
+    if (typeof window.electronAPI.sincronizarItemPluggy === 'function') {
+      const resSync = await window.electronAPI.sincronizarItemPluggy({
+        itemId: idLimpo || undefined,
+        itemIds: itemIdsLocais
+      });
+      if (!resSync || !resSync.ok) {
+        throw new Error((resSync && resSync.erro) || 'Falha ao sincronizar item no Pluggy.');
+      }
+      if (Array.isArray(resSync.itemIds)) {
+        itemIdsResolvidos = resSync.itemIds;
+      }
+      if (!itemIdResolvido && resSync.itemId) {
+        itemIdResolvido = String(resSync.itemId).trim();
+      }
+      contasPluggy = Array.isArray(resSync.accounts) ? resSync.accounts : [];
+      if (contasPluggy[0] && contasPluggy[0].name) nomeContaPrincipal = contasPluggy[0].name;
+      todasTransacoes = Array.isArray(resSync.transactions) ? resSync.transactions : [];
+    } else if (typeof window.electronAPI.buscarContasPluggy === 'function' && typeof window.electronAPI.buscarTransacoesPluggy === 'function') {
+      const resContas = await window.electronAPI.buscarContasPluggy({
+        itemId: idLimpo || undefined,
+        itemIds: itemIdsLocais
+      });
+      if (!resContas || !resContas.ok) {
+        throw new Error((resContas && resContas.erro) || 'Falha ao buscar contas no Pluggy.');
+      }
+      contasPluggy = Array.isArray(resContas.accounts) ? resContas.accounts : [];
+      if (Array.isArray(resContas.itemIds)) {
+        itemIdsResolvidos = resContas.itemIds;
+      }
+      if (!itemIdResolvido) {
+        itemIdResolvido = String(resContas.itemId || (contasPluggy[0] && contasPluggy[0].itemId) || '').trim();
+      }
+      if (contasPluggy[0] && contasPluggy[0].name) nomeContaPrincipal = contasPluggy[0].name;
+
+      for (const acc of contasPluggy) {
+        const resTx = await window.electronAPI.buscarTransacoesPluggy({
+          accountId: acc.id,
+          accountMeta: { id: acc.id, name: acc.name, type: acc.type, balance: acc.balance }
+        });
+        if (resTx && resTx.ok && Array.isArray(resTx.transactions)) {
+          resTx.transactions.forEach(tx => {
+            todasTransacoes.push({
+              ...tx,
+              accountId: tx.accountId || acc.id,
+              accountName: tx.accountName || acc.name || '',
+              accountType: tx.accountType || acc.type || ''
+            });
+          });
+        }
+      }
+    } else {
+      throw new Error('Canais IPC do Pluggy não disponíveis no preload.');
+    }
+
+    registrarItemIdPluggyNoState(itemIdResolvido, itemIdsResolvidos);
+    STATE.config.pluggyLastSyncAt = new Date().toISOString();
+    await salvarDados();
+
+    atualizarStatusUIPluggy(
+      `Sincronização Pluggy concluída (${todasTransacoes.length} transação(ões) obtida(s)).`,
+      'Conectado'
+    );
+
+    return processarNovasTransacoes(todasTransacoes, 'PLUGGY', {
+      nomeArquivo: nomeContaPrincipal ? `Pluggy · ${nomeContaPrincipal}` : 'Pluggy Open Finance',
+      accounts: contasPluggy
+    });
+  } catch (err) {
+    console.error('[Pluggy] Erro na sincronização Open Finance:', err);
+    const msg = (err && err.message) ? err.message : 'Erro ao sincronizar dados do banco via Pluggy.';
+    atualizarStatusUIPluggy(`Falha na sincronização: ${msg}`, 'Atenção · Pluggy');
+    toast(msg, 'err');
+    return [];
+  }
+}
+
+async function sincronizarUltimoItemPluggy() {
+  const ultimoItemId = (STATE.config && STATE.config.pluggyLastItemId) || '';
+  return await sincronizarItemPluggyPorId(ultimoItemId);
+}
+const sincronizarBancosPluggy = sincronizarUltimoItemPluggy;
+
+async function conectarBancoPluggy(itemIdParaAtualizar) {
+  if (!window.electronAPI || typeof window.electronAPI.verificarCredenciaisPluggy !== 'function') {
+    toast('A conexão Open Finance (Pluggy) requer o aplicativo Desktop (Electron).', 'err');
+    return;
+  }
+
+  try {
+    const check = await window.electronAPI.verificarCredenciaisPluggy();
+    const possuiCredenciais = Boolean(check && (check.configured || check.hasCredentials));
+
+    if (!possuiCredenciais) {
+      atualizarStatusUIPluggy('Configure o PLUGGY_CLIENT_ID e PLUGGY_CLIENT_SECRET para ativar o Open Finance.', 'Configuração Necessária');
+      abrirModalConfigPluggy(true);
+      return;
+    }
+
+    atualizarStatusUIPluggy('Solicitando Connect Token efêmero ao processo principal...', 'Autenticando · Pluggy');
+    const opcoesToken = (typeof itemIdParaAtualizar === 'string' && itemIdParaAtualizar.trim())
+      ? { itemId: itemIdParaAtualizar.trim() }
+      : {};
+    const resToken = await window.electronAPI.criarPluggyConnectToken(opcoesToken);
+
+    if (!resToken || !resToken.ok || !resToken.accessToken) {
+      if (resToken && resToken.code === 'MISSING_CREDENTIALS') {
+        abrirModalConfigPluggy(true);
+        return;
+      }
+      const msgErro = (resToken && resToken.erro) || 'Não foi possível gerar o Connect Token do Pluggy.';
+      atualizarStatusUIPluggy(msgErro, 'Erro de Autenticação');
+      toast(msgErro, 'err');
+      return;
+    }
+
+    const connectToken = resToken.accessToken;
+    const resBrowser = await window.electronAPI.abrirPluggyNoNavegador(connectToken);
+    if (!resBrowser || !resBrowser.ok) {
+      const msgErroBrowser = (resBrowser && resBrowser.erro) || 'Não foi possível abrir o Pluggy Connect no navegador padrão.';
+      atualizarStatusUIPluggy(msgErroBrowser, 'Erro · Pluggy');
+      toast(msgErroBrowser, 'err');
+      return;
+    }
+
+    const msgAviso = "Pluggy Connect aberto no seu navegador. Conclua a conexão por lá e depois clique em 'Sincronizar Bancos' aqui no COFIN.";
+    atualizarStatusUIPluggy(msgAviso, 'Aguardando Conexão · Navegador');
+    toast(msgAviso, 'ok');
+  } catch (err) {
+    console.error('[Pluggy] Falha ao iniciar Pluggy Connect:', err);
+    toast((err && err.message) || 'Erro inesperado ao abrir o Pluggy Connect.', 'err');
+  }
+}
+
+const iniciarPluggyConnect = conectarBancoPluggy;
+const abrirPluggyConnect = conectarBancoPluggy;
+inicializarListenerPluggyConnect();
 
 function inicializarDropzoneOFX() {
   const dropzone = document.getElementById('ofx-dropzone');

@@ -1,6 +1,6 @@
 {
   "name": "cofin",
-  "version": "1.4.0",
+  "version": "1.4.5",
   "description": "COFIN - Controle Financeiro",
   "main": "main.js",
   "scripts": {
@@ -48,8 +48,10 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
+    "dotenv": "^18.0.10",
     "electron-log": "^5.4.4",
-    "electron-updater": "^6.8.11"
+    "electron-updater": "^6.8.11",
+    "pluggy-sdk": "^0.93.0"
   },
   "devDependencies": {
     "electron": "^32.0.0",
