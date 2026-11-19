@@ -1,6 +1,6 @@
 /* ================= ESTADO E PERSISTÊNCIA ================= */
-const CURRENT_VERSION = '1.4.5';
-const APP_VERSAO = '1.4.5 · r14';
+const CURRENT_VERSION = '1.5.0';
+const APP_VERSAO = '1.5.0 · r15';
 const STORAGE_KEY = 'controle-financeiro-dados';
 
 const SUBCATEGORIAS_PADRAO_MAP = {
@@ -38,7 +38,8 @@ let STATE = {
   historicoPatrimonio: [],  // Máquina do Tempo: { id, mesAno, saldoLivre, totalCofres, dividasCartao, patrimonioLiquido, dataRegistro }
   recorrentes: [],
   receitasFixas: [],        // Motor de Receitas Inteligentes (Auto-Paycheck): { id, descricao, valor, conta, categoria, tipoRegra: 'dia_fixo'|'dia_util', diaRegra, ativo }
-  regras: [],               // Smart Rules: { id, palavraChave, categoriaDesejada, subcategoria, contaId }
+  regras: [],               // Legado: migrado automaticamente para regrasCategoria
+  regrasCategoria: [],      // Motor de Regras de Auto-Categorização (v2)
   antiMetas: [],            // Anti-Metas: { id, categoriaId, limiteMensal }
   metas: [],
   cofres: [],               // Cofres/Caixinhas (Vaults): { id, nome, icone, cor, objetivo, saldoAlocado }
@@ -86,9 +87,10 @@ function formatarCategoriaExibicao(catRaw) {
 function competenciaFatura(dataISO, diaFechamento) {
   if (!dataISO) return { ano: new Date().getFullYear(), mes: new Date().getMonth() + 1 };
   const [ano, mes, dia] = String(dataISO).slice(0, 10).split('-').map(Number);
-  const fechamento = parseInt(diaFechamento, 10) || 1;
-  // Regra de Negócio: Se o dia da transação >= diaFechamento, transborda para o mês seguinte (mês + 1)
-  if (dia >= fechamento) {
+  const fechamento = parseInt(diaFechamento, 10);
+  // Só aplica transbordo para o mês seguinte quando diaFechamento for válido entre 2 e 31
+  // (evita deslocar 100% das compras para o mês seguinte quando o cartão está sem diaFechamento ou com fallback 1)
+  if (Number.isInteger(fechamento) && fechamento >= 2 && fechamento <= 31 && dia >= fechamento) {
     let m = mes + 1;
     let a = ano;
     if (m > 12) {
@@ -102,21 +104,30 @@ function competenciaFatura(dataISO, diaFechamento) {
 
 function calcularCompetenciaLancamentoCartao(l, cartaoParam) {
   if (!l) return { ano: new Date().getFullYear(), mes: new Date().getMonth() + 1 };
+
+  // 1) Prioriza faturaAno e faturaMes quando já definidos explicitamente no lançamento
+  const fatAno = parseInt(l.faturaAno, 10);
+  const fatMes = parseInt(l.faturaMes, 10);
+  if (Number.isInteger(fatAno) && fatAno >= 1900 && Number.isInteger(fatMes) && fatMes >= 1 && fatMes <= 12) {
+    return { ano: fatAno, mes: fatMes };
+  }
+
   const cartao = cartaoParam
-    || (STATE.contas || []).find(c => c.nome === l.conta && c.tipo === 'cartao')
-    || (STATE.cartoes || []).find(c => c.nome === l.conta || c.id === l.cartaoId);
-  const diaFechamento = cartao ? (parseInt(cartao.diaFechamento, 10) || 1) : 1;
+    || (STATE.contas || []).find(c => c && c.nome === l.conta && c.tipo === 'cartao')
+    || (STATE.cartoes || []).find(c => c && (c.nome === l.conta || c.id === l.cartaoId));
+  const fechRaw = cartao ? parseInt(cartao.diaFechamento, 10) : NaN;
+  const diaFechamentoValido = (Number.isInteger(fechRaw) && fechRaw >= 2 && fechRaw <= 31) ? fechRaw : null;
 
   // Usa sempre a data real da transação (sem alterá-la no banco) para determinar a competência
   const dataTransacao = l.dataCompra || l.data;
   if (!dataTransacao) {
     return {
-      ano: l.faturaAno || new Date().getFullYear(),
-      mes: l.faturaMes || (new Date().getMonth() + 1)
+      ano: new Date().getFullYear(),
+      mes: new Date().getMonth() + 1
     };
   }
 
-  const compBase = competenciaFatura(dataTransacao, diaFechamento);
+  const compBase = competenciaFatura(dataTransacao, diaFechamentoValido);
   const numParcela = parseInt(l.parcelaAtual, 10) || 1;
   const totParcelas = parseInt(l.parcelaTotal || l.totalParcelas, 10) || 1;
 
@@ -160,25 +171,138 @@ function calcularVencimentoFatura(anoComp, mesComp, diaFechamento, diaVencimento
   return `${aVenc}-${String(mVenc).padStart(2, '0')}-${String(diaReal).padStart(2, '0')}`;
 }
 
+function ehContaDeCartaoLancamento(l) {
+  if (!l || typeof l !== 'object') return false;
+  if (l.faturaAno && l.faturaMes) return true;
+  if (l.dataVencimentoFatura) return true;
+  if (l.parcelaAtual || l.parcelaTotal) return true;
+  if (String(l.accountType || '').toUpperCase() === 'CREDIT' || l.meioPagamento === 'cartao') return true;
+  const c = (STATE.contas || []).find(x => x && x.nome === l.conta) || (STATE.cartoes || []).find(x => x && x.nome === l.conta);
+  return !!(c && (c.tipo === 'cartao' || (STATE.cartoes || []).some(k => k && k.nome === l.conta)));
+}
+
 function ehLancamentoPagamentoFatura(l) {
   if (!l || typeof l !== 'object') return false;
   if (l.ehPagamentoFatura === true) return true;
-  const cat = String(l.categoria || '').trim().toLowerCase();
-  if (cat === 'transferência/pagamento de fatura' || cat === 'transferencia/pagamento de fatura' || cat === 'pagamento de fatura') {
+  const catNorm = normalizarTextoSemAcento(l.categoria);
+  if (
+    catNorm === 'transferencia/pagamento de fatura' ||
+    catNorm === 'pagamento de fatura' ||
+    catNorm === 'pagamento fatura' ||
+    catNorm === 'pagamento de cartao' ||
+    catNorm === 'pagamento cartao'
+  ) {
     return true;
   }
-  const desc = String(l.descricao || '').trim();
-  if (/^pagamento\s+(?:de\s+)?fatura\b/i.test(desc)) return true;
+  const descNorm = normalizarTextoSemAcento(l.descricao);
+  if (!descNorm) return false;
+  if (/\b(?:pagamento(?:\s+de)?|pagto\.?)\s+fatura\b/.test(descNorm)) return true;
+  if (/\b(?:pagamento(?:\s+de)?|pagto\.?)\s+cartao\b/.test(descNorm)) return true;
+  const emCartao = ehContaDeCartaoLancamento(l);
+  if (/\bpagamento\s+recebido\b/.test(descNorm) && emCartao) return true;
+  if (/\bpagamento\s+efetuado\b/.test(descNorm) && (emCartao || /\b(fatura|cartao)\b/.test(descNorm))) return true;
   return false;
+}
+
+function normalizarTextoSemAcento(valor) {
+  return String(valor || '')
+    .trim()
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '');
+}
+
+function obterTransferenciaId(l) {
+  if (!l || typeof l !== 'object') return '';
+  return String(l.transferenciaId || l.transferenciaGrupo || '').trim();
+}
+
+function isLancamentoTransferencia(l) {
+  if (!l || typeof l !== 'object') return false;
+  if (l.isTransferencia === true || l.ehTransferencia === true) return true;
+  if (obterTransferenciaId(l)) return true;
+  const tipoNorm = normalizarTextoSemAcento(l.tipo);
+  if (tipoNorm === 'transferencia') return true;
+  const catNorm = normalizarTextoSemAcento(l.categoria);
+  if (catNorm === 'transferencia' || catNorm.startsWith('transferencia ->')) return true;
+  return false;
+}
+
+function correspondeFiltroTipoLancamento(l, tipoFiltro) {
+  if (!tipoFiltro) return true;
+  const ehTransf = isLancamentoTransferencia(l);
+  if (tipoFiltro === 'transferencia') return ehTransf;
+  return l.tipo === tipoFiltro && !ehTransf;
+}
+
+function normalizarIntegridadeTransferencias() {
+  if (!Array.isArray(STATE.lancamentos)) return false;
+  let alterou = false;
+  STATE.lancamentos.forEach(l => {
+    if (!l || typeof l !== 'object') return;
+    if (ehLancamentoPagamentoFatura(l)) return;
+    if (!isLancamentoTransferencia(l)) return;
+    if (l.ehTransferencia !== true) { l.ehTransferencia = true; alterou = true; }
+    if (l.isTransferencia !== true) { l.isTransferencia = true; alterou = true; }
+    const gid = obterTransferenciaId(l);
+    if (gid) {
+      if (l.transferenciaId !== gid) { l.transferenciaId = gid; alterou = true; }
+      if (l.transferenciaGrupo !== gid) { l.transferenciaGrupo = gid; alterou = true; }
+    }
+  });
+  return alterou;
+}
+
+function calcularDeltaTransferenciasOrfasNaoCalibradas(mesLimiteOpt, saldosContasOpt) {
+  const contasBancarias = (STATE.contas || []).filter(c => c && c.tipo !== 'cartao');
+  const mapaContas = new Map(contasBancarias.map(c => [c.nome, c]));
+  const saldosAtuais = saldosContasOpt || (typeof saldoPorConta === 'function' ? saldoPorConta() : {});
+  const grupos = new Map();
+
+  (STATE.lancamentos || []).forEach(l => {
+    if (!l || l.ehMovimentoCofre || ehLancamentoPagamentoFatura(l)) return;
+    if (!isLancamentoTransferencia(l)) return;
+    if (!estaPago(l)) return;
+    const contaObj = mapaContas.get(l.conta);
+    if (!contaObj) return;
+    if (mesLimiteOpt) {
+      const mesL = mesCompetenciaLancamento(l);
+      if (mesL && mesL > mesLimiteOpt) return;
+    }
+    const gid = obterTransferenciaId(l) || `__orfao_${l.id || uid()}`;
+    if (!grupos.has(gid)) grupos.set(gid, []);
+    grupos.get(gid).push({ lanc: l, contaObj });
+  });
+
+  let deltaOrfao = 0;
+  grupos.forEach(itens => {
+    const somaLiquidaGrupo = itens.reduce((acc, { lanc }) => {
+      const sinal = lanc.tipo === 'receita' ? 1 : -1;
+      return acc + sinal * (Number(lanc.valor) || 0);
+    }, 0);
+    // Par completo e balanceado (saída na origem + entrada no destino): efeito líquido = 0
+    if (Math.abs(somaLiquidaGrupo) < 0.01) return;
+
+    // Transferência incompleta/órfã: neutraliza o impacto líquido caso a conta não esteja
+    // calibrada exatamente no saldo real Pluggy (onde saldoInicial já absorveu essa ponta).
+    itens.forEach(({ lanc, contaObj }) => {
+      const saldoAtualConta = Number(saldosAtuais[contaObj.nome]);
+      const calibracaoPluggyExata = Boolean(contaObj.pluggyBalanceSyncAt)
+        && Number.isFinite(contaObj.pluggyBalanceReal)
+        && Number.isFinite(saldoAtualConta)
+        && Math.abs(saldoAtualConta - contaObj.pluggyBalanceReal) < 0.01;
+      if (calibracaoPluggyExata) return;
+      const sinal = lanc.tipo === 'receita' ? 1 : -1;
+      deltaOrfao += sinal * (Number(lanc.valor) || 0);
+    });
+  });
+
+  return Math.round(deltaOrfao * 100) / 100;
 }
 
 function ehLancamentoCartao(l) {
   if (!l || ehLancamentoPagamentoFatura(l)) return false;
-  if (l.faturaAno && l.faturaMes) return true;
-  if (l.dataVencimentoFatura) return true;
-  if (l.parcelaAtual || l.parcelaTotal) return true;
-  const c = (STATE.contas || []).find(x => x.nome === l.conta) || (STATE.cartoes || []).find(x => x.nome === l.conta);
-  return !!(c && (c.tipo === 'cartao' || (STATE.cartoes || []).some(k => k.nome === l.conta)));
+  return ehContaDeCartaoLancamento(l);
 }
 
 function construirOptionsCategoriasHTML(tipoFiltro, valorSelecionado) {
@@ -784,7 +908,7 @@ function atualizarAmbientGlow(resultadoMes, receitasMes, despesasMes, saldoDispo
     desp = 0;
     rec = 0;
     (STATE.lancamentos || []).forEach(l => {
-      if (!l || l.ehTransferencia || l.ehMovimentoCofre) return;
+      if (!l || isLancamentoTransferencia(l) || l.ehMovimentoCofre) return;
       const m = mesCompetenciaLancamento(l);
       if (m === mesAtual) {
         if (l.tipo === 'receita') rec += Number(l.valor) || 0;
@@ -1412,7 +1536,7 @@ function renderWidgetTop3Categorias() {
   const mesAtual = hojeLocalISO().slice(0, 7);
   const despesasDoMes = (STATE.lancamentos || []).filter(l =>
     l.tipo === 'despesa' &&
-    !l.ehTransferencia &&
+    !isLancamentoTransferencia(l) &&
     !l.ehMovimentoCofre &&
     !(l.ehReembolsavel && l.reembolsado) &&
     mesCompetenciaLancamento(l) === mesAtual
@@ -1494,7 +1618,7 @@ function renderAntiMetasWidget() {
   const lancsMesCat = [];
 
   (STATE.lancamentos || []).forEach(l => {
-    if (l.tipo !== 'despesa' || l.ehTransferencia || l.ehMovimentoCofre) return;
+    if (l.tipo !== 'despesa' || isLancamentoTransferencia(l) || l.ehMovimentoCofre) return;
     if (mesCompetenciaLancamento(l) !== mesAtual) return;
     const { macro, completo } = extrairMacroESubcategoria(l.categoria);
     if (macro.toLowerCase() === catAlvo.toLowerCase() || completo.toLowerCase() === catAlvo.toLowerCase()) {
@@ -1940,6 +2064,8 @@ async function carregarDados() {
     corrigirFaturasPresas();
     recalcularLimitesCartoes();
     normalizarConciliacaoLancamentos();
+    normalizarIntegridadeTransferencias();
+    normalizarRegrasCategoria();
     if (!STATE.regras) STATE.regras = [];
     if (!Array.isArray(STATE.antiMetas)) STATE.antiMetas = [];
     if (STATE.regras.length === 0) {
@@ -2729,7 +2855,7 @@ function calcularSimulacaoImpacto() {
   const mesAtual = hojeLocalISO().slice(0, 7);
   let receitasMes = 0, despesasMes = 0;
   STATE.lancamentos.forEach(l => {
-    if (l.data && l.data.slice(0, 7) === mesAtual && !l.ehTransferencia) {
+    if (l.data && l.data.slice(0, 7) === mesAtual && !isLancamentoTransferencia(l)) {
       if (l.tipo === 'receita') receitasMes += l.valor;
       else despesasMes += l.valor;
     }
@@ -2913,53 +3039,13 @@ function renderDashboard() {
   migrarCofresParaMetas();
   recalcularLimitesCartoes();
   const mesAtual = hojeLocalISO().slice(0, 7);
-  let receitasMes = 0, despesasMes = 0, totalReceitas = 0, totalDespesas = 0;
-  STATE.lancamentos.forEach(l => {
-    if (l.ehMovimentoCofre) return;
-    const ehPagFatura = ehLancamentoPagamentoFatura(l);
-    const ehCartao = !ehPagFatura && ehLancamentoCartao(l);
-    const mesLanc = mesCompetenciaLancamento(l);
-
-    // Proteção do Saldo Geral / Património:
-    // - Se for "Transferência/Pagamento de Fatura" (ehPagFatura), o dinheiro já saiu da conta corrente:
-    //   abate no saldo geral (totalDespesas) quando a despesa do cartão foi anulada pela flag faturaPaga.
-    // - Se for despesa de cartão com faturaPaga === true e houver a transação de Pagamento de Fatura,
-    //   a dívida do cartão está anulada (não soma novamente em totalDespesas).
-    // - Se for despesa de cartão sem faturaPaga === true, entra como Dívida de Cartão.
-    if (ehPagFatura) {
-      const dataMesPag = (l.data || '').slice(0, 7);
-      if (!dataMesPag || dataMesPag <= mesAtual) {
-        totalDespesas += (Number(l.valor) || 0);
-      }
-      return;
-    }
-
-    if (ehCartao && l.tipo === 'despesa') {
-      if (l.faturaPaga === true) {
-        if (!despesaCartaoAnuladaPorPagamentoFatura(l) && (!mesLanc || mesLanc <= mesAtual)) {
-          totalDespesas += (Number(l.valor) || 0);
-        }
-      } else {
-        const dataCompraMes = (l.data || '').slice(0, 7);
-        const ehParcelaFutura = (l.parcelaTotal > 1 && l.parcelaAtual > 1 && dataCompraMes > mesAtual);
-        if (!ehParcelaFutura && (!mesLanc || mesLanc <= mesAtual || dataCompraMes <= mesAtual)) {
-          totalDespesas += (Number(l.valor) || 0);
-        }
-      }
-    } else if (!mesLanc || mesLanc <= mesAtual) {
-      if (l.tipo === 'receita') totalReceitas += (Number(l.valor) || 0);
-      else totalDespesas += (Number(l.valor) || 0);
-    }
-
-    // Apenas transações da competência do mês atual (exclui transferências e pagamento de fatura para não duplicar categorias)
-    if (mesLanc === mesAtual && !l.ehTransferencia && !ehPagFatura) {
-      if (l.tipo === 'receita') receitasMes += (Number(l.valor) || 0);
-      else despesasMes += (Number(l.valor) || 0);
-    }
-  });
-  const totalGuardadoMetas = calcularTotalGuardadoMetas();
-  const patrimonioTotal = Math.round((obterSomaSaldosIniciaisContas() + totalReceitas - totalDespesas) * 100) / 100;
-  const saldoDisponivel = Math.round((patrimonioTotal - totalGuardadoMetas) * 100) / 100;
+  if (typeof atualizarContagemTriagem === 'function') atualizarContagemTriagem();
+  const resumoGlobal = calcularSaldoDisponivelGeral(mesAtual);
+  const receitasMes = resumoGlobal.receitasMes;
+  const despesasMes = resumoGlobal.despesasMes;
+  const totalGuardadoMetas = resumoGlobal.totalAlocado;
+  const patrimonioTotal = resumoGlobal.patrimonioTotal;
+  const saldoDisponivel = resumoGlobal.saldoDisponivel;
   const resultadoMes = Math.round((receitasMes - despesasMes) * 100) / 100;
   const mesesDoisUltimos = ultimosMeses(2);
   const taxaMesAtual = taxaPoupanca(mesesDoisUltimos[1]);
@@ -2991,7 +3077,7 @@ function renderDashboard() {
     <div class="metric m-info dash-draggable" id="kpi-patrimonio-total" draggable="true">
       <div class="metric-top"><div class="metric-label" title="Patrimônio Total">Patrimônio Total</div><div class="metric-icon mi-info"><i class="ti ti-pig-money"></i></div></div>
       <div class="metric-value valor-sensivel ${patrimonioTotal>=0?'mv-info':'mv-bad'} ${valPat.isLong?'metric-val-long':''}" id="kpi-patrimonio-valor" title="${valPat.str}">${valPat.str}</div>
-      <div class="metric-sub" title="${totalGuardadoMetas > 0 ? 'inclui ' + toBRL(totalGuardadoMetas) + ' retidos em Metas' : 'receitas − despesas (saldo global)'}">${totalGuardadoMetas > 0 ? 'inclui ' + toBRL(totalGuardadoMetas) + ' retidos em Metas' : 'receitas − despesas (saldo global)'}</div>
+      <div class="metric-sub" title="${totalGuardadoMetas > 0 ? 'inclui ' + toBRL(totalGuardadoMetas) + ' retidos em Metas' : 'saldo consolidado das contas'}">${totalGuardadoMetas > 0 ? 'inclui ' + toBRL(totalGuardadoMetas) + ' retidos em Metas' : 'saldo consolidado das contas'}</div>
     </div>
     <div class="metric m-ok dash-draggable" id="kpi-receitas-mes" draggable="true">
       <div class="metric-top"><div class="metric-label" title="Receitas no mês">Receitas no mês</div><div class="metric-icon mi-ok"><i class="ti ti-trending-up"></i></div></div>
@@ -3082,7 +3168,7 @@ function renderDashboard() {
   } else if (!(STATE.config && STATE.config.modoViagem && STATE.config.modoViagem.ativo) && despesasMes > 0) {
     const mesPassadoKey = mesesDoisUltimos[0];
     const despMesPassado = STATE.lancamentos
-      .filter(l => !l.ehTransferencia && l.tipo === 'despesa' && (l.data || '').slice(0, 7) === mesPassadoKey)
+      .filter(l => !isLancamentoTransferencia(l) && l.tipo === 'despesa' && (l.data || '').slice(0, 7) === mesPassadoKey)
       .reduce((s, l) => s + l.valor, 0);
     if (despMesPassado > 0 && despesasMes > despMesPassado * 1.15) {
       const altaPct = (((despesasMes - despMesPassado) / despMesPassado) * 100).toFixed(0);
@@ -3111,7 +3197,7 @@ function renderDashboard() {
   const somaPorMes = {};
   meses.forEach(m => somaPorMes[m] = { receita: 0, despesa: 0 });
   STATE.lancamentos.forEach(l => {
-    if (l.ehTransferencia) return;
+    if (isLancamentoTransferencia(l)) return;
     const m = mesCompetenciaLancamento(l);
     if (somaPorMes[m]) somaPorMes[m][l.tipo] += l.valor;
   });
@@ -3197,10 +3283,13 @@ function renderDashboard() {
     cardPendentes.style.display = 'none';
   }
 
-  const saldos = saldoPorConta();
-  const contasBancarias = (STATE.contas || []).filter(c => c.tipo !== 'cartao');
-  const nomesContas = [...new Set([...contasBancarias.map(c => c.nome), ...Object.keys(saldos)])];
-  const cartoesDash = (STATE.contas || []).filter(c => c.tipo === 'cartao');
+  const {
+    saldos,
+    contasBancarias,
+    nomesContas,
+    totalContasBancarias: totalSaldosBancos
+  } = calcularResumoSaldosContasBancarias();
+  const cartoesDash = (STATE.contas || []).filter(c => c && c.tipo === 'cartao');
 
   const cardContasTopo = document.getElementById('dash-contas-resumo-topo');
   if (cardContasTopo) {
@@ -3224,7 +3313,6 @@ function renderDashboard() {
     } else {
       let html = '';
 
-      const totalSaldosBancos = nomesContas.reduce((acc, nome) => acc + (saldos[nome] || 0), 0);
       const hojeDashISO = hojeLocalISO();
 
       if (nomesContas.length) {
@@ -3351,7 +3439,9 @@ function popularFiltros() {
   const fCat = document.getElementById('f-categoria');
   const catAtual = fCat.value;
   normalizarHierarquiaCategorias();
-  fCat.innerHTML = '<option value="">Todas as categorias</option>' + construirOptionsCategoriasHTML('', catAtual);
+  const temAClassificar = (STATE.lancamentos || []).some(l => l && !ehLancamentoProtegidoAutoCat(l) && normalizarTextoSemAcento(l.categoria) === 'a classificar');
+  const optAClassificar = temAClassificar ? `<option value="${CATEGORIA_A_CLASSIFICAR}"${catAtual === CATEGORIA_A_CLASSIFICAR ? ' selected' : ''}>📥 A Classificar</option>` : '';
+  fCat.innerHTML = '<option value="">Todas as categorias</option>' + optAClassificar + construirOptionsCategoriasHTML('', catAtual);
   fCat.value = [...fCat.options].some(o => o.value === catAtual) ? catAtual : '';
   const fTag = document.getElementById('f-tag');
   const tagAtual = fTag.value;
@@ -3413,7 +3503,7 @@ function badgeParcelaHTML(l) {
   return `<span class="badge badge-parcela">${l.parcelaAtual}/${l.parcelaTotal}</span>`;
 }
 function badgeValorHTML(l) {
-  if (l.ehTransferencia) return `<span class="badge badge-transfer"><i class="ti ti-transfer" style="font-size:10px"></i> ${toBRL(l.valor)}</span>`;
+  if (isLancamentoTransferencia(l)) return `<span class="badge badge-transfer"><i class="ti ti-transfer" style="font-size:10px"></i> ${toBRL(l.valor)}</span>`;
   return `<span class="badge ${l.tipo==='receita'?'badge-receita':'badge-despesa'}">${l.tipo==='receita'?'+':'-'} ${toBRL(l.valor)}</span>`;
 }
 function comprovanteIconHTML(l) {
@@ -3493,7 +3583,7 @@ function renderCalendarioFinanceiro(listaFiltrada) {
   const contaFiltro = fContaCal ? fContaCal.value : '';
   const doMes = STATE.lancamentos.filter(l =>
     (l.data || '').slice(0, 7) === calendarioMesRef &&
-    (!tipo || l.tipo === tipo) &&
+    correspondeFiltroTipoLancamento(l, tipo) &&
     (!contaFiltro || l.conta === contaFiltro) &&
     categoriaCorrespondeFiltro(l.categoria, cat) &&
     (!status || (status === 'pago' ? estaPago(l) : !estaPago(l))) &&
@@ -3522,7 +3612,7 @@ function renderCalendarioFinanceiro(listaFiltrada) {
     const pillsHTML = visiveis.map(l => {
       const classe = l.tipo === 'receita' ? 'rec' : 'desp';
       const sinal = l.tipo === 'receita' ? '+' : '-';
-      const acao = l.ehTransferencia ? '' : `onclick="abrirModalLancamento('${l.id}')"`;
+      const acao = isLancamentoTransferencia(l) ? '' : `onclick="abrirModalLancamento('${l.id}')"`;
       return `<div class="cal-pill ${classe}" ${acao} title="${escHtml(l.descricao || '')} (${toBRL(l.valor)})">
         <span style="overflow:hidden;text-overflow:ellipsis">${escHtml(l.descricao || '-')}</span>
         <span>${sinal}${toBRL(l.valor)}</span>
@@ -3596,6 +3686,7 @@ function renderLancamentos(opcoes) {
   const pularFiltros = Boolean(opcoes && opcoes.pularFiltros);
   if (!pularFiltros) popularFiltros();
   atualizarContagemLixeira();
+  if (typeof atualizarContagemTriagem === 'function') atualizarContagemTriagem();
   aplicarEstiloTabela(); // Aplica o estilo (Tabela/Cards) baseado na escolha salva
   const mes = document.getElementById('f-mes').value;
   const tipo = document.getElementById('f-tipo').value;
@@ -3607,18 +3698,18 @@ function renderLancamentos(opcoes) {
   const contaFiltro = fContaEl ? fContaEl.value : '';
   let lista = STATE.lancamentos.filter(l =>
     (!mes || mesCompetenciaLancamento(l) === mes) &&
-    (!tipo || l.tipo === tipo) &&
+    correspondeFiltroTipoLancamento(l, tipo) &&
     (!contaFiltro || l.conta === contaFiltro) &&
     categoriaCorrespondeFiltro(l.categoria, cat) &&
     (!status || (status === 'pago' ? estaPago(l) : !estaPago(l))) &&
     (!tagFiltro || lancamentoTemHashtag(l, tagFiltro)) &&
-    (!busca || (l.descricao||'').toLowerCase().includes(busca))
+    (!busca || (l.descricao || '').toLowerCase().includes(busca) || (l.descricaoOriginal || '').toLowerCase().includes(busca))
   ).sort((a,b) => (b.data||'').localeCompare(a.data||''));
 
   const resumoTag = document.getElementById('tag-resumo');
   if (tagFiltro) {
-    const gastos = lista.filter(l => l.tipo === 'despesa' && !l.ehTransferencia).reduce((s,l) => s + l.valor, 0);
-    const entradas = lista.filter(l => l.tipo === 'receita' && !l.ehTransferencia).reduce((s,l) => s + l.valor, 0);
+    const gastos = lista.filter(l => l.tipo === 'despesa' && !isLancamentoTransferencia(l)).reduce((s,l) => s + l.valor, 0);
+    const entradas = lista.filter(l => l.tipo === 'receita' && !isLancamentoTransferencia(l)).reduce((s,l) => s + l.valor, 0);
     const cats = gastosPorCategoria(lista).slice(0, 4).map(([c, v]) => `${escHtml(c)}: ${toBRL(v)}`).join(' · ');
     resumoTag.style.display = '';
     resumoTag.innerHTML = `<i class="ti ti-tag" style="flex-shrink:0"></i><div><strong>#${escHtml(tagFiltro)}</strong> — gasto total ${toBRL(gastos)}${entradas ? ` · entradas ${toBRL(entradas)}` : ''} · ${lista.length} lançamento(s)${cats ? `<br><span style="font-weight:400">Por categoria: ${cats}</span>` : ''}</div>`;
@@ -3639,8 +3730,10 @@ function renderLancamentos(opcoes) {
   tbody.innerHTML = lista.map(l => {
     const [a,m,d] = (l.data||'').split('-');
     const dataFmt = a ? `${d}/${m}/${a}` : '-';
-    const acoes = (l.ehTransferencia && l.transferenciaGrupo)
-      ? `<button class="icon-btn danger" onclick="excluirTransferencia('${l.transferenciaGrupo}')" title="Excluir transferência"><i class="ti ti-trash"></i></button>`
+    const ehTransfItem = isLancamentoTransferencia(l);
+    const grupoTransfId = obterTransferenciaId(l);
+    const acoes = (ehTransfItem && grupoTransfId)
+      ? `<button class="icon-btn danger" onclick="excluirTransferencia('${grupoTransfId}')" title="Excluir transferência"><i class="ti ti-trash"></i></button>`
       : `<button class="icon-btn" onclick="abrirModalLancamento('${l.id}')" title="Editar"><i class="ti ti-pencil"></i></button>
          <button class="icon-btn danger" onclick="excluirLancamento('${l.id}')" title="Excluir"><i class="ti ti-trash"></i></button>`;
     const selecionado = modoConciliacaoAtivo && conciliacaoSelecionados.has(l.id);
@@ -3658,12 +3751,16 @@ function renderLancamentos(opcoes) {
     const subCatsBadge = (l.subTransacoes && l.subTransacoes.length)
       ? ` <span class="badge badge-cat" title="${escHtml(l.subTransacoes.map(s => s.categoria + ': ' + toBRL(s.valor)).join(' | '))}"><i class="ti ti-arrows-split-2"></i> ${l.subTransacoes.length} cats</span>`
       : '';
+    const ehAClassificar = normalizarTextoSemAcento(l.categoria) === 'a classificar';
+    const badgeDescOrig = (l.descricaoOriginal && l.descricaoOriginal !== l.descricao)
+      ? ` <i class="ti ti-info-circle" style="font-size:12px;color:var(--text3);vertical-align:-1px" title="Descrição original do banco: ${escHtml(l.descricaoOriginal)}"></i>`
+      : '';
     return `<tr data-id="${l.id}"${classesTr ? ` class="${classesTr}"` : ''}${attrCliqueTr}>
       <td>${chkConcil}${dataFmt}</td>
-      <td>${formatarDescricaoComHashtags(l.descricao)}${badgeParcelaHTML(l)}${subCatsBadge}${badgesTagsHTML(l)}${comprovanteIconHTML(l)}</td>
-      <td><span class="badge badge-cat">${escHtml(formatarCategoriaExibicao(l.categoria))}</span></td>
+      <td>${formatarDescricaoComHashtags(l.descricao)}${badgeDescOrig}${badgeParcelaHTML(l)}${subCatsBadge}${badgesTagsHTML(l)}${comprovanteIconHTML(l)}</td>
+      <td><span class="badge badge-cat${ehAClassificar ? ' badge-a-classificar' : ''}">${escHtml(formatarCategoriaExibicao(l.categoria))}</span></td>
       <td>${escHtml(l.conta || '-')}</td>
-      <td>${badgeStatusHTML(l, !l.ehTransferencia && !modoConciliacaoAtivo)}</td>
+      <td>${badgeStatusHTML(l, !ehTransfItem && !modoConciliacaoAtivo)}</td>
       <td style="text-align:right">${badgeValorHTML(l)}</td>
       <td class="concil-acoes" style="text-align:right;white-space:nowrap">${acoes}</td>
     </tr>`;
@@ -3828,8 +3925,9 @@ async function excluirSelecionadosEmLote() {
 
   // 2. Trata transferências: se uma ponta foi selecionada, inclui a outra para manter integridade
   itensParaExcluir.forEach(l => {
-    if (l.transferenciaGrupo) {
-      STATE.lancamentos.filter(x => x.transferenciaGrupo === l.transferenciaGrupo).forEach(par => {
+    const gid = obterTransferenciaId(l);
+    if (gid) {
+      STATE.lancamentos.filter(x => obterTransferenciaId(x) === gid).forEach(par => {
         itensParaExcluirSet.add(par);
         if (par.ehMovimentoCofre && par.metaId) {
           const meta = (STATE.metas || []).find(m => m.id === par.metaId);
@@ -4820,9 +4918,13 @@ async function salvarLancamento() {
         dataCompra = data;
       }
 
+      const descOriginalPreservada = anterior.descricaoOriginal
+        || (anterior.descricao && anterior.descricao !== descricao ? anterior.descricao : undefined);
       const editado = {
         ...anterior,
-        tipo, data: dataLancamento, dataCompra, descricao, categoria, conta, valor: valorTotal,
+        tipo, data: dataLancamento, dataCompra, descricao,
+        descricaoOriginal: descOriginalPreservada,
+        categoria, conta, valor: valorTotal,
         pago: cartaoConta ? (anterior.faturaPaga === true) : pago,
         faturaPaga: cartaoConta ? (anterior.faturaPaga === true ? true : undefined) : anterior.faturaPaga,
         faturaAno, faturaMes, dataVencimentoFatura,
@@ -4836,6 +4938,13 @@ async function salvarLancamento() {
         sincronizado: false
       };
       if (idx >= 0) STATE.lancamentos[idx] = editado; else STATE.lancamentos.push(editado);
+      if (anterior && (anterior.categoria !== categoria || anterior.descricao !== descricao)) {
+        window.__pendenteAprendizadoSalvar = {
+          lanc: editado,
+          categoria,
+          apelidoSugerido: (descOriginalPreservada && descOriginalPreservada !== descricao) ? descricao : ''
+        };
+      }
     }
   } else if (parcelas > 1) {
     // Novo lançamento parcelado: divide o valor total em N parcelas mensais
@@ -4948,6 +5057,13 @@ async function salvarLancamento() {
   } else if (parcelas <= 1) {
     toast('Lançamento salvo.', 'ok');
   }
+  if (window.__pendenteAprendizadoSalvar) {
+    const infoApr = window.__pendenteAprendizadoSalvar;
+    window.__pendenteAprendizadoSalvar = null;
+    if (typeof oferecerAprendizadoRegra === 'function') {
+      oferecerAprendizadoRegra(infoApr.lanc, infoApr.categoria, { apelidoSugerido: infoApr.apelidoSugerido });
+    }
+  }
 }
 /* ================= LIXEIRA / EXCLUSÕES ================= */
 const LIXEIRA_DIAS = 30;
@@ -5054,6 +5170,11 @@ function esvaziarLixeira() {
 async function excluirLancamento(id) {
   const l = STATE.lancamentos.find(x => x.id === id);
   if (!l) return;
+  const grupoTransfId = obterTransferenciaId(l);
+  if (isLancamentoTransferencia(l) && grupoTransfId) {
+    await excluirTransferencia(grupoTransfId);
+    return;
+  }
   const itensGrupo = obterItensGrupoParcelas(l);
   if (itensGrupo.length > 1) {
     abrirConfirmacaoExclusaoParcelas(l, itensGrupo);
@@ -5358,14 +5479,16 @@ async function salvarTransferencia() {
   STATE.lancamentos.push({
     id: uid(), tipo: 'despesa', data, descricao: `${descricao} → ${destino}`,
     categoria: 'Transferência', conta: origem, valor,
-    origem: 'manual', sincronizado: false, pago: true,
-    ehTransferencia: true, transferenciaGrupo: grupoId, transferenciaContraparte: destino
+    origem: 'manual', sincronizado: false, pago: true, status: 'Pago/Efetivado',
+    ehTransferencia: true, isTransferencia: true,
+    transferenciaId: grupoId, transferenciaGrupo: grupoId, transferenciaContraparte: destino
   });
   STATE.lancamentos.push({
     id: uid(), tipo: 'receita', data, descricao: `${descricao} ← ${origem}`,
     categoria: 'Transferência', conta: destino, valor,
-    origem: 'manual', sincronizado: false, pago: true,
-    ehTransferencia: true, transferenciaGrupo: grupoId, transferenciaContraparte: origem
+    origem: 'manual', sincronizado: false, pago: true, status: 'Pago/Efetivado',
+    ehTransferencia: true, isTransferencia: true,
+    transferenciaId: grupoId, transferenciaGrupo: grupoId, transferenciaContraparte: origem
   });
 
   if (btnSalvar) {
@@ -5391,7 +5514,7 @@ async function salvarTransferencia() {
   toast(`${toBRL(valor)} transferido de ${origem} para ${destino}.`, 'ok');
 }
 async function excluirTransferencia(grupoId) {
-  const itens = STATE.lancamentos.filter(l => l.transferenciaGrupo === grupoId);
+  const itens = STATE.lancamentos.filter(l => obterTransferenciaId(l) === grupoId);
   if (!itens.length) return;
   const movCofre = itens.find(l => l.ehMovimentoCofre && l.metaId);
   if (movCofre) {
@@ -5401,7 +5524,7 @@ async function excluirTransferencia(grupoId) {
       meta.valorAtual = Math.max(0, Math.round(((Number(meta.valorAtual) || 0) + delta) * 100) / 100);
     }
   }
-  STATE.lancamentos = STATE.lancamentos.filter(l => l.transferenciaGrupo !== grupoId);
+  STATE.lancamentos = STATE.lancamentos.filter(l => obterTransferenciaId(l) !== grupoId);
   const entradaId = registrarExclusao(itens, itens[0].descricao || 'Transferência');
   if (typeof SoundScape !== 'undefined' && SoundScape.playDelete) SoundScape.playDelete();
   await salvarDados();
@@ -5516,6 +5639,7 @@ function renderConfig() {
       return `<span class="tag">"${escHtml(r.palavraChave)}" → ${catFmt}${subFmt}${contaFmt}<button onclick="removerRegra(${i})"><i class="ti ti-x"></i></button></span>`;
     }).join('') || '<span class="help-text">Nenhuma regra cadastrada.</span>';
   }
+  if (typeof renderRegrasCategoriaConfig === 'function') renderRegrasCategoriaConfig();
   atualizarSegurancaUI();
   atualizarUIModoViagem();
   atualizarUIBackup();
@@ -5716,8 +5840,22 @@ async function removerRegra(idx) {
   await salvarDados();
   renderConfig();
 }
-function buscarRegraCategorizacao(descricao) {
+function buscarRegraCategorizacao(descricao, tipoOpt) {
   if (!descricao) return null;
+  if (typeof normalizarRegrasCategoria === 'function') {
+    normalizarRegrasCategoria();
+    const ativas = ordenarRegrasCategoriaParaAvaliacao((STATE.regrasCategoria || []).filter(r => r && r.ativa));
+    const draft = { descricao, tipo: tipoOpt || 'despesa', valor: 0 };
+    const found = ativas.find(r => avaliarRegraNoLancamento(r, draft));
+    if (found) {
+      return {
+        ...found,
+        palavraChave: found.padrao,
+        categoriaDesejada: found.categoria,
+        categoria: montarCategoriaCompletaAutoCat(found.categoria, found.subcategoria)
+      };
+    }
+  }
   const desc = String(descricao).toLowerCase();
   const regra = (STATE.regras || []).find(r => {
     if (!r.palavraChave) return false;
@@ -6605,7 +6743,7 @@ function ultimosMeses(n) {
 function receitasDespesasDoMes(mesKey) {
   let receitas = 0, despesas = 0;
   STATE.lancamentos.forEach(l => {
-    if (l.ehTransferencia || mesCompetenciaLancamento(l) !== mesKey) return;
+    if (isLancamentoTransferencia(l) || ehLancamentoPagamentoFatura(l) || mesCompetenciaLancamento(l) !== mesKey) return;
     if (l.tipo === 'receita') receitas += l.valor; else despesas += l.valor;
   });
   return { receitas, despesas };
@@ -6629,7 +6767,7 @@ function obterSomaSaldosIniciaisContas(nomeContaFiltro = null) {
       .reduce((acc, c) => acc + (Number(c.saldoInicial) || 0), 0) * 100
   ) / 100;
 }
-function calcularSomaLancamentosEfetivadosPorConta() {
+function calcularSomaLancamentosEfetivadosPorConta(mesLimiteOpt = null) {
   const movimentos = {};
   (STATE.contas || []).filter(c => c && c.tipo !== 'cartao').forEach(c => {
     movimentos[c.nome] = 0;
@@ -6638,19 +6776,32 @@ function calcularSomaLancamentosEfetivadosPorConta() {
     if (!l || l.ehMovimentoCofre) return; // retenção em Metas/Cofres já é isolada no Saldo Disponível
     if (!estaPago(l)) return; // só o que já efetivamente entrou/saiu da conta
     if (!(l.conta in movimentos)) return; // conta apagada ou é cartão — não entra no saldo
+    if (mesLimiteOpt) {
+      const mesL = mesCompetenciaLancamento(l);
+      if (mesL && mesL > mesLimiteOpt) return;
+    }
     const delta = (l.tipo === 'receita' ? 1 : -1) * (Number(l.valor) || 0);
     movimentos[l.conta] = Math.round((movimentos[l.conta] + delta) * 100) / 100;
   });
   return movimentos;
 }
-function saldoPorConta() {
-  const movimentos = calcularSomaLancamentosEfetivadosPorConta();
+function saldoPorConta(mesLimiteOpt = null) {
+  const movimentos = calcularSomaLancamentosEfetivadosPorConta(mesLimiteOpt);
   const saldos = {};
   (STATE.contas || []).filter(c => c && c.tipo !== 'cartao').forEach(c => {
     const inicial = Number(c.saldoInicial) || 0;
     saldos[c.nome] = Math.round((inicial + (movimentos[c.nome] || 0)) * 100) / 100;
   });
   return saldos;
+}
+function calcularResumoSaldosContasBancarias(mesLimiteOpt = null) {
+  const saldos = saldoPorConta(mesLimiteOpt);
+  const contasBancarias = (STATE.contas || []).filter(c => c && c.tipo !== 'cartao');
+  const nomesContas = [...new Set([...contasBancarias.map(c => c.nome), ...Object.keys(saldos)])];
+  const totalContasBancarias = Math.round(
+    nomesContas.reduce((acc, nome) => acc + (Number(saldos[nome]) || 0), 0) * 100
+  ) / 100;
+  return { saldos, contasBancarias, nomesContas, totalContasBancarias };
 }
 function lancamentosDaFatura(nomeCartao, ano, mes) {
   const nomeLower = String(nomeCartao || '').trim().toLowerCase();
@@ -6722,7 +6873,7 @@ function obterCompetenciaFaturaDashboard(nomeCartao, diaFechamento, dataRefISO) 
 function gastosPorMacroESubcategoria(lista) {
   const somaMacro = {};
   const subMap = {};
-  lista.filter(l => l.tipo === 'despesa' && !l.ehTransferencia && !(l.ehReembolsavel && l.reembolsado)).forEach(l => {
+  lista.filter(l => l.tipo === 'despesa' && !isLancamentoTransferencia(l) && !ehLancamentoPagamentoFatura(l) && !(l.ehReembolsavel && l.reembolsado)).forEach(l => {
     const { macro, sub } = extrairMacroESubcategoria(l.categoria);
     somaMacro[macro] = (somaMacro[macro] || 0) + l.valor;
     if (!subMap[macro]) subMap[macro] = {};
@@ -6743,7 +6894,7 @@ function patrimonioAcumulado(numMeses, hashtagFiltro) {
   }
   const primeiroMes = meses[0];
   const baseLancs = (hashtagFiltro ? STATE.lancamentos.filter(l => lancamentoTemHashtag(l, hashtagFiltro)) : STATE.lancamentos)
-    .filter(l => !l.ehMovimentoCofre && !l.ehPagamentoFatura);
+    .filter(l => !l.ehMovimentoCofre && !ehLancamentoPagamentoFatura(l) && !isLancamentoTransferencia(l));
   let acumulado = obterSomaSaldosIniciaisContas() + baseLancs
     .filter(l => estaPago(l) && mesCompetenciaLancamento(l) < primeiroMes)
     .reduce((s,l) => s + (l.tipo === 'receita' ? 1 : -1) * l.valor, 0);
@@ -7436,50 +7587,55 @@ function calcularTotalGuardadoMetas() {
 }
 function calcularSaldoDisponivelGeral(mesAnoLimite) {
   recalcularLimitesCartoes();
-  const mesLimite = mesAnoLimite || hojeLocalISO().slice(0, 7);
+  const mesAtual = hojeLocalISO().slice(0, 7);
+  const mesLimite = mesAnoLimite || mesAtual;
+  const isHistoricoPassado = Boolean(mesAnoLimite && mesAnoLimite < mesAtual);
+
+  // Fonte única de verdade: exatamente o mesmo total consolidado exibido em "CONTAS BANCÁRIAS"
+  // (saldoInicial + entradas efetivadas - saídas efetivadas de cada conta bancária, sem misturar faturas de cartão)
+  const resumoBancos = calcularResumoSaldosContasBancarias(isHistoricoPassado ? mesLimite : null);
+  const saldoTotal = resumoBancos.totalContasBancarias;
+
+  // KPIs mensais calculados apenas sobre os lançamentos do mês selecionado
+  // (excluindo transferências internas, pagamentos de fatura e movimentos de cofre; sem saldoInicial)
   let totalReceitas = 0, totalDespesas = 0;
-  STATE.lancamentos.forEach(l => {
-    if (l.ehMovimentoCofre) return;
+  let receitasMes = 0, despesasMes = 0;
+
+  (STATE.lancamentos || []).forEach(l => {
+    if (!l || l.ehMovimentoCofre) return;
+    if (l.ehReembolsavel && l.reembolsado) return;
     const ehPagFatura = ehLancamentoPagamentoFatura(l);
-    const ehCartao = !ehPagFatura && ehLancamentoCartao(l);
+    const ehTransf = !ehPagFatura && isLancamentoTransferencia(l);
+    if (ehPagFatura || ehTransf) return;
+
     const mesLanc = mesCompetenciaLancamento(l);
-
-    if (ehPagFatura) {
-      const dataMesPag = (l.data || '').slice(0, 7);
-      if (!dataMesPag || dataMesPag <= mesLimite) {
-        totalDespesas += (Number(l.valor) || 0);
-      }
-      return;
+    const valor = Number(l.valor) || 0;
+    if (!mesLanc || mesLanc <= mesLimite) {
+      if (l.tipo === 'receita') totalReceitas += valor;
+      else if (l.tipo === 'despesa') totalDespesas += valor;
     }
-
-    if (ehCartao && l.tipo === 'despesa') {
-      if (l.faturaPaga === true) {
-        if (!despesaCartaoAnuladaPorPagamentoFatura(l) && (!mesLanc || mesLanc <= mesLimite)) {
-          totalDespesas += (Number(l.valor) || 0);
-        }
-      } else {
-        const dataCompraMes = (l.data || '').slice(0, 7);
-        const ehParcelaFutura = (l.parcelaTotal > 1 && l.parcelaAtual > 1 && dataCompraMes > mesLimite);
-        if (!ehParcelaFutura && (!mesLanc || mesLanc <= mesLimite || dataCompraMes <= mesLimite)) {
-          totalDespesas += (Number(l.valor) || 0);
-        }
-      }
-      return;
+    if (mesLanc === mesLimite) {
+      if (l.tipo === 'receita') receitasMes += valor;
+      else if (l.tipo === 'despesa') despesasMes += valor;
     }
-
-    if (mesLanc && mesLanc > mesLimite) return; // Ignora lançamentos de meses futuros
-    if (l.tipo === 'receita') totalReceitas += (Number(l.valor) || 0);
-    else totalDespesas += (Number(l.valor) || 0);
   });
-  const saldoTotal = Math.round((obterSomaSaldosIniciaisContas() + totalReceitas - totalDespesas) * 100) / 100;
+
+  // Metas/Cofres já estão contidos no saldo das contas bancárias; apenas o Saldo Disponível desconta essas reservas
   const totalAlocado = calcularTotalGuardadoMetas();
+  const saldoDisponivel = Math.round((saldoTotal - totalAlocado) * 100) / 100;
+
   return {
     totalReceitas: Math.round(totalReceitas * 100) / 100,
     totalDespesas: Math.round(totalDespesas * 100) / 100,
+    receitasMes: Math.round(receitasMes * 100) / 100,
+    despesasMes: Math.round(despesasMes * 100) / 100,
+    saldosContas: resumoBancos.saldos,
+    nomesContasBancarias: resumoBancos.nomesContas,
+    totalContasBancarias: saldoTotal,
     saldoTotal,
     patrimonioTotal: saldoTotal,
     totalAlocado,
-    saldoDisponivel: Math.round((saldoTotal - totalAlocado) * 100) / 100
+    saldoDisponivel
   };
 }
 function atualizarSaldos() {
@@ -7996,8 +8152,8 @@ function renderRelatorios() {
     (!hashtagFiltro || lancamentoTemHashtag(l, hashtagFiltro))
   );
 
-  const receitas = doPeriodo.filter(l => l.tipo==='receita' && !l.ehTransferencia).reduce((s,l)=>s+l.valor,0);
-  const despesas = doPeriodo.filter(l => l.tipo==='despesa' && !l.ehTransferencia).reduce((s,l)=>s+l.valor,0);
+  const receitas = doPeriodo.filter(l => l.tipo==='receita' && !isLancamentoTransferencia(l)).reduce((s,l)=>s+l.valor,0);
+  const despesas = doPeriodo.filter(l => l.tipo==='despesa' && !isLancamentoTransferencia(l)).reduce((s,l)=>s+l.valor,0);
   const subPeriodo = `últimos ${numMeses} meses${hashtagFiltro ? ' · #' + hashtagFiltro : ''}`;
   document.getElementById('rel-kpis').innerHTML = `
     <div class="metric"><div class="metric-label">Receitas no período</div><div class="metric-value mv-ok">${toBRL(receitas)}</div><div class="metric-sub">${subPeriodo}</div></div>
@@ -8015,7 +8171,7 @@ function renderRelatorios() {
     if (!hashtagFiltro) return receitasDespesasDoMes(mesKey);
     let rec = 0, desp = 0;
     STATE.lancamentos.forEach(l => {
-      if (l.ehTransferencia || !lancamentoTemHashtag(l, hashtagFiltro)) return;
+      if (isLancamentoTransferencia(l) || !lancamentoTemHashtag(l, hashtagFiltro)) return;
       if (mesCompetenciaLancamento(l) !== mesKey) return;
       if (l.tipo === 'receita') rec += l.valor; else desp += l.valor;
     });
@@ -8141,7 +8297,7 @@ function renderRelatorios() {
   const gastosMesAnterior = {};
   const subGastosMesAtual = {};
   STATE.lancamentos.forEach(l => {
-    if (l.tipo !== 'despesa' || l.ehTransferencia) return;
+    if (l.tipo !== 'despesa' || isLancamentoTransferencia(l)) return;
     if (hashtagFiltro && !lancamentoTemHashtag(l, hashtagFiltro)) return;
     const m = mesCompetenciaLancamento(l);
     const { macro: cat, sub } = extrairMacroESubcategoria(l.categoria);
@@ -8221,7 +8377,7 @@ function renderRelatorios() {
     </div>${dicaSubs}`;
   }).join('') : `<p class="help-text">Nenhuma categoria com orçamento definido ainda — configure em Categorias &amp; Contas.</p>`;
 
-  const ranking = [...doPeriodo].filter(l => l.tipo==='despesa' && !l.ehTransferencia).sort((a,b) => b.valor - a.valor).slice(0, 10);
+  const ranking = [...doPeriodo].filter(l => l.tipo==='despesa' && !isLancamentoTransferencia(l)).sort((a,b) => b.valor - a.valor).slice(0, 10);
   document.getElementById('rel-ranking').innerHTML = ranking.length ? ranking.map(l => {
     const [a,m,d] = (l.data||'').split('-');
     return `<tr><td>${d}/${m}/${a}</td><td>${formatarDescricaoComHashtags(l.descricao)}${badgesTagsHTML(l)}</td><td><span class="badge badge-cat">${escHtml(formatarCategoriaExibicao(l.categoria))}</span></td><td style="text-align:right">${toBRL(l.valor)}</td></tr>`;
@@ -9653,6 +9809,7 @@ async function processarRestauracaoBackup(textoJson) {
           const pastaBackupAtual = STATE.config?.pastaBackup;
           STATE = Object.assign(STATE, dados);
           if (!Array.isArray(STATE.receitasFixas)) STATE.receitasFixas = [];
+          normalizarRegrasCategoria();
           if (pastaBackupAtual && !STATE.config.pastaBackup) {
             STATE.config.pastaBackup = pastaBackupAtual;
           }
@@ -10015,11 +10172,23 @@ function mesclarLinhasNaBase(linhas, mapa, modoSincronizacaoTotal) {
   const locaisExistentes = new Map();
   STATE.lancamentos.forEach(l => { if (l && l.id) locaisExistentes.set(l.id, l); });
   const locaisPorChave = new Map();
-  STATE.lancamentos.forEach(l => { if (l && l.data && l.descricao) locaisPorChave.set(`${l.data}|${l.descricao}|${Math.abs(l.valor)}`, l); });
+  STATE.lancamentos.forEach(l => {
+    if (!l || !l.data) return;
+    if (l.descricao) locaisPorChave.set(`${l.data}|${l.descricao}|${Math.abs(l.valor)}`, l);
+    if (l.descricaoOriginal) locaisPorChave.set(`${l.data}|${l.descricaoOriginal}|${Math.abs(l.valor)}`, l);
+  });
 
   const idsExistentes = new Set(baseAnterior.map(l => l.id));
   const apagadosAqui = new Set(STATE.excluidosPendentes || []);
-  const chavesExistentes = new Set(baseAnterior.map(l => `${l.data}|${l.descricao}|${l.valor}`));
+  const chavesExistentes = new Set();
+  baseAnterior.forEach(l => {
+    if (!l) return;
+    chavesExistentes.add(`${l.data}|${l.descricao}|${l.valor}`);
+    if (l.descricaoOriginal) chavesExistentes.add(`${l.data}|${l.descricaoOriginal}|${l.valor}`);
+  });
+  const indiceMemoriaPlanilha = typeof construirIndiceMemoriaHistorica === 'function'
+    ? construirIndiceMemoriaHistorica(STATE.lancamentos)
+    : null;
   const novosDaPlanilha = [];
   let novos = 0, ignorados = 0;
 
@@ -10063,8 +10232,32 @@ function mesclarLinhasNaBase(linhas, mapa, modoSincronizacaoTotal) {
     const antigo = (idPlanilha ? locaisExistentes.get(idPlanilha) : null) || locaisPorChave.get(chave);
     const grupoTransf = lerCampoRow(['TransferenciaGrupo']) || (antigo && antigo.transferenciaGrupo) || '';
 
-    const categoriaFinal = (mapa.categoria && row[mapa.categoria]) ? String(row[mapa.categoria]).trim() : ((antigo && antigo.categoria) || aplicarRegraCategorizacao(descricao) || 'Importado');
+    const catBrutaPlanilha = (mapa.categoria && row[mapa.categoria]) ? String(row[mapa.categoria]).trim() : ((antigo && antigo.categoria) || '');
     const contaFinal = (mapa.conta && row[mapa.conta]) ? String(row[mapa.conta]).trim() : ((antigo && antigo.conta) || '');
+    let categoriaFinal = catBrutaPlanilha;
+    let descricaoFinalPlanilha = (antigo && antigo.descricao) || descricao;
+    let descricaoOriginalPlanilha = (antigo && antigo.descricaoOriginal) || undefined;
+    let tagAutoPlanilha = '';
+    const ehTransfOuPagPlanilha = Boolean(grupoTransf) || ehLancamentoPagamentoFatura({ descricao, categoria: catBrutaPlanilha }) || isLancamentoTransferencia({ descricao, categoria: catBrutaPlanilha, ehTransferencia: antigo && antigo.ehTransferencia });
+    if (!ehTransfOuPagPlanilha && (!categoriaFinal || ehCategoriaGenericaOuPendente(categoriaFinal)) && typeof autoClassificarLancamento === 'function') {
+      const resAutoPlan = autoClassificarLancamento(
+        { tipo, data, descricao, descricaoOriginal: descricaoOriginalPlanilha || descricao, conta: contaFinal, valor: valorNum },
+        { indiceMemoria: indiceMemoriaPlanilha }
+      );
+      if (resAutoPlan) {
+        categoriaFinal = resAutoPlan.categoriaCompleta || CATEGORIA_A_CLASSIFICAR;
+        if (resAutoPlan.tag) tagAutoPlanilha = resAutoPlan.tag;
+        if (resAutoPlan.apelidoDescricao) {
+          descricaoOriginalPlanilha = descricaoOriginalPlanilha || descricao;
+          descricaoFinalPlanilha = resAutoPlan.apelidoDescricao;
+        }
+        if (resAutoPlan.regraId) {
+          const rMatch = (STATE.regrasCategoria || []).find(r => r && r.id === resAutoPlan.regraId);
+          if (rMatch) rMatch.usos = (parseInt(rMatch.usos, 10) || 0) + 1;
+        }
+      }
+    }
+    if (!categoriaFinal) categoriaFinal = CATEGORIA_A_CLASSIFICAR;
 
     const rawFaturaPaga = lerCampoRow(['FaturaPaga', 'Fatura Paga', 'faturaPaga']).toLowerCase();
     const rawEhPagFatura = lerCampoRow(['EhPagamentoFatura', 'Eh Pagamento Fatura', 'ehPagamentoFatura']).toLowerCase();
@@ -10114,8 +10307,14 @@ function mesclarLinhasNaBase(linhas, mapa, modoSincronizacaoTotal) {
       ? (faturaPagaDetectada === true)
       : ((faturaPagaDetectada || ehPagFaturaDetectado) ? true : pago);
 
+    const tagsPlanilhaBase = lerCampoRow(['Tags']) ? parseTags(lerCampoRow(['Tags'])) : ((antigo && Array.isArray(antigo.tags)) ? [...antigo.tags] : []);
+    if (tagAutoPlanilha && !tagsPlanilhaBase.some(t => String(t).toLowerCase() === tagAutoPlanilha.toLowerCase())) {
+      tagsPlanilhaBase.push(tagAutoPlanilha);
+    }
     novosDaPlanilha.push({
-      id: idPlanilha || uid(), tipo, data, descricao,
+      id: idPlanilha || uid(), tipo, data,
+      descricao: descricaoFinalPlanilha,
+      descricaoOriginal: descricaoOriginalPlanilha,
       categoria: categoriaFinal,
       conta: contaFinal,
       valor: valorNum, origem: 'onedrive',
@@ -10142,7 +10341,7 @@ function mesclarLinhasNaBase(linhas, mapa, modoSincronizacaoTotal) {
       parcelaAtual: lerCampoRow(['ParcelaAtual']) ? parseInt(lerCampoRow(['ParcelaAtual']), 10) : ((antigo && antigo.parcelaAtual) || undefined),
       parcelaTotal: lerCampoRow(['ParcelaTotal']) ? parseInt(lerCampoRow(['ParcelaTotal']), 10) : ((antigo && antigo.parcelaTotal) || undefined),
       recorrenteId: lerCampoRow(['RecorrenteID']) || (antigo && antigo.recorrenteId) || undefined,
-      tags: lerCampoRow(['Tags']) ? parseTags(lerCampoRow(['Tags'])) : ((antigo && antigo.tags) || undefined),
+      tags: tagsPlanilhaBase.length ? tagsPlanilhaBase : undefined,
       garantiaFim,
       garantiaMeses,
       anexoNome,
@@ -10226,7 +10425,7 @@ function formatarMesExtenso(mesKey) {
 
 function obterPendenciasMesWizard(mesKey) {
   return (STATE.lancamentos || []).filter(l =>
-    !l.ehTransferencia &&
+    !isLancamentoTransferencia(l) &&
     !estaPago(l) &&
     mesCompetenciaLancamento(l) === mesKey
   ).sort((a, b) => (a.data || '').localeCompare(b.data || ''));
@@ -10236,7 +10435,7 @@ function calcularBalancoRealMesWizard(mesKey) {
   let receitasEfetivadas = 0;
   let despesasEfetivadas = 0;
   (STATE.lancamentos || []).forEach(l => {
-    if (l.ehTransferencia || l.ehMovimentoCofre) return;
+    if (isLancamentoTransferencia(l) || l.ehMovimentoCofre) return;
     if (mesCompetenciaLancamento(l) !== mesKey) return;
     if (!estaPago(l)) return;
     if (l.tipo === 'receita') receitasEfetivadas += (Number(l.valor) || 0);
@@ -11490,6 +11689,25 @@ async function mesclarEstadoP2P(dadosExternos, silencioso = false) {
       });
     }
 
+    // 4. Merge Inteligente de Regras de Auto-Categorização (STATE.regrasCategoria)
+    normalizarRegrasCategoria();
+    if (Array.isArray(externo.regrasCategoria)) {
+      const idsRegrasLocais = new Set(STATE.regrasCategoria.map(r => r && r.id).filter(Boolean));
+      const assinsLocais = new Set(STATE.regrasCategoria.map(r =>
+        `${normalizarTextoSemAcento(r.padrao)}|${r.modoMatch}|${r.tipo}|${r.contaId}|${r.categoria}|${r.subcategoria}`
+      ));
+      externo.regrasCategoria.forEach(rExt => {
+        if (!rExt || typeof rExt !== 'object' || !rExt.padrao || !rExt.categoria) return;
+        const rid = typeof rExt.id === 'string' && rExt.id.trim() ? rExt.id.trim() : uid();
+        const assin = `${normalizarTextoSemAcento(rExt.padrao)}|${rExt.modoMatch || 'contem'}|${rExt.tipo || 'todos'}|${rExt.contaId || ''}|${rExt.categoria}|${rExt.subcategoria || ''}`;
+        if (idsRegrasLocais.has(rid) || assinsLocais.has(assin)) return;
+        STATE.regrasCategoria.push({ ...rExt, id: rid });
+        idsRegrasLocais.add(rid);
+        assinsLocais.add(assin);
+      });
+      normalizarRegrasCategoria();
+    }
+
     migrarCofresParaMetas();
     sincronizarEstruturaCartoes();
     recalcularLimitesCartoes();
@@ -12150,35 +12368,25 @@ function resolverNomeCategoriaNoStateOFX(nomeRegra, tipo) {
   return nomeRegra;
 }
 
-function autoCategorizar(memo, tipo) {
+function autoCategorizar(memo, tipo, extrasOpt) {
   const textoLimpo = String(memo || '').trim();
-  if (!textoLimpo) return 'Outros';
+  if (!textoLimpo) return CATEGORIA_A_CLASSIFICAR;
 
-  if (typeof aplicarRegraCategorizacao === 'function') {
-    const porRegraUsuario = aplicarRegraCategorizacao(textoLimpo);
-    if (porRegraUsuario) return porRegraUsuario;
+  if (typeof autoClassificarLancamento === 'function') {
+    const res = autoClassificarLancamento(
+      {
+        descricao: textoLimpo,
+        descricaoOriginal: textoLimpo,
+        tipo: tipo || 'despesa',
+        valor: (extrasOpt && extrasOpt.valor) || 0,
+        conta: (extrasOpt && extrasOpt.conta) || '',
+        rawCategory: (extrasOpt && extrasOpt.rawCategory) || ''
+      },
+      extrasOpt || {}
+    );
+    if (res && res.categoriaCompleta) return res.categoriaCompleta;
   }
-
-  const textoNorm = normalizarTextoBuscaOFX(textoLimpo);
-  const todasEntradas = Object.entries(REGRAS_CATEGORIAS);
-  const entradasOrdenadas = tipo
-    ? [
-        ...todasEntradas.filter(([cat]) => (tipo === 'receita' ? CATEGORIAS_OFX_RECEITA.has(cat) : !CATEGORIAS_OFX_RECEITA.has(cat))),
-        ...todasEntradas.filter(([cat]) => (tipo === 'receita' ? !CATEGORIAS_OFX_RECEITA.has(cat) : CATEGORIAS_OFX_RECEITA.has(cat)))
-      ]
-    : todasEntradas;
-
-  for (const [categoria, palavras] of entradasOrdenadas) {
-    for (const palavra of (palavras || [])) {
-      const kw = normalizarTextoBuscaOFX(palavra);
-      if (!kw) continue;
-      if (textoNorm.includes(kw)) {
-        return resolverNomeCategoriaNoStateOFX(categoria, tipo);
-      }
-    }
-  }
-
-  return 'Outros';
+  return CATEGORIA_A_CLASSIFICAR;
 }
 
 const TIPOS_OFX_DEBITO = new Set([
@@ -13343,6 +13551,7 @@ function detectarTransferenciasNoLoteImportacao(itensRevisao) {
 
     txSaida.direcaoOriginal = 'despesa';
     txSaida.ehTransferencia = true;
+    txSaida.isTransferencia = true;
     txSaida.tipoRevisao = 'transferencia';
     txSaida.categoria = 'Transferência';
     txSaida.contaContraparte = destinoFinal;
@@ -13352,11 +13561,13 @@ function detectarTransferenciasNoLoteImportacao(itensRevisao) {
 
     txEntrada.direcaoOriginal = 'receita';
     txEntrada.ehTransferencia = true;
+    txEntrada.isTransferencia = true;
     txEntrada.ehParTransferenciaConsolidado = true;
     txEntrada.tipoRevisao = 'transferencia';
     txEntrada.categoria = 'Transferência';
     txEntrada.contaContraparte = origemFinal;
     txEntrada.transferenciaPrincipalId = txSaida.fitid || txSaida.id;
+    txEntrada.transferenciaParId = txSaida.fitid || txSaida.id;
     txEntrada.transferenciaMotivo = `Consolidada com saída em ${nomeOrigemExib}`;
     txEntrada.selecionada = false;
   });
@@ -13432,7 +13643,17 @@ function detectarTransferenciasNoLoteImportacao(itensRevisao) {
   itensRevisao.forEach((tx) => {
     if (tx) {
       if (!tx.direcaoOriginal) tx.direcaoOriginal = tx.tipo === 'receita' ? 'receita' : 'despesa';
-      if (!tx.tipoRevisao) tx.tipoRevisao = tx.ehTransferencia ? 'transferencia' : tx.direcaoOriginal;
+      const ehTransfPrevia = !tx.ehPagamentoFaturaDetectado
+        && !ehLancamentoPagamentoFatura(tx)
+        && (tx.tipoRevisao === 'transferencia' || isLancamentoTransferencia(tx));
+      if (ehTransfPrevia) {
+        tx.ehTransferencia = true;
+        tx.isTransferencia = true;
+        tx.tipoRevisao = 'transferencia';
+        tx.categoria = 'Transferência';
+      } else if (!tx.tipoRevisao) {
+        tx.tipoRevisao = tx.direcaoOriginal;
+      }
       tx._transferenciaAvaliada = true;
     }
   });
@@ -13550,6 +13771,9 @@ function processarNovasTransacoes(transacoesBrutas, origem = 'OFX', opcoesExtras
 
   const mapaFallbackFitid = new Map();
   const normalizadas = [];
+  const indiceMemoriaLote = typeof construirIndiceMemoriaHistorica === 'function'
+    ? construirIndiceMemoriaHistorica(STATE.lancamentos)
+    : null;
 
   listaEntrada.forEach((raw) => {
     if (!raw || typeof raw !== 'object') return;
@@ -13607,11 +13831,20 @@ function processarNovasTransacoes(transacoesBrutas, origem = 'OFX', opcoesExtras
       }
 
       const catFonte = raw.category || (raw.merchant && raw.merchant.category) || '';
-      const categoria = mapearCategoriaPluggy(catFonte, memo, tipo);
       const statusPluggy = String(raw.status || 'POSTED').toUpperCase();
       const ehPagamentoFaturaDetectado = ehTransacaoPagamentoFaturaPluggy(memo, catFonte);
       const ehPagamentoFaturaNoCartao = ehCartaoCredito && ehPagamentoFaturaDetectado;
       const isCashMovement = ehMovimentacaoDinheiroFisicoImportacao(memo, catFonte);
+
+      const resClassPluggy = (!ehPagamentoFaturaDetectado && typeof autoClassificarLancamento === 'function')
+        ? autoClassificarLancamento(
+            { tipo, data: dataISO, descricao: memo, descricaoOriginal: memo, valor, conta: accountName, accountId, rawCategory: String(catFonte || '') },
+            { indiceMemoria: indiceMemoriaLote, rawCategory: String(catFonte || '') }
+          )
+        : null;
+      const categoria = ehPagamentoFaturaDetectado
+        ? 'Transferência/Pagamento de Fatura'
+        : ((resClassPluggy && resClassPluggy.categoriaCompleta) || CATEGORIA_A_CLASSIFICAR);
 
       normalizadas.push({
         id: uniqueId,
@@ -13627,7 +13860,12 @@ function processarNovasTransacoes(transacoesBrutas, origem = 'OFX', opcoesExtras
         direcaoOriginal: tipo,
         memo,
         descricao: memo,
+        descricaoOriginal: memo,
         categoria,
+        classificacaoOrigem: ehPagamentoFaturaDetectado ? 'pluggy' : ((resClassPluggy && resClassPluggy.origem) || 'pendente'),
+        classificacaoRegraId: (resClassPluggy && resClassPluggy.regraId) || null,
+        tagSugerida: (resClassPluggy && resClassPluggy.tag) || '',
+        apelidoSugerido: (resClassPluggy && resClassPluggy.apelidoDescricao) || '',
         rawCategory: String(catFonte || ''),
         accountId,
         accountName,
@@ -13652,6 +13890,15 @@ function processarNovasTransacoes(transacoesBrutas, origem = 'OFX', opcoesExtras
       const accName = String(raw.accountName || raw.conta || '').trim();
       const ehPagFaturaDetect = ehTransacaoPagamentoFaturaPluggy(memo, raw.categoria || '');
       const isCashOfx = ehMovimentacaoDinheiroFisicoImportacao(memo, raw.categoria || '');
+      const resClassOfx = (!ehPagFaturaDetect && typeof autoClassificarLancamento === 'function')
+        ? autoClassificarLancamento(
+            { tipo: raw.tipo, data: raw.data, descricao: memo, descricaoOriginal: memo, valor: raw.valor, conta: accName },
+            { indiceMemoria: indiceMemoriaLote }
+          )
+        : null;
+      const catOfx = ehPagFaturaDetect
+        ? 'Transferência/Pagamento de Fatura'
+        : ((resClassOfx && resClassOfx.categoriaCompleta) || raw.categoria || CATEGORIA_A_CLASSIFICAR);
       normalizadas.push({
         ...raw,
         id: fitid,
@@ -13660,6 +13907,7 @@ function processarNovasTransacoes(transacoesBrutas, origem = 'OFX', opcoesExtras
         direcaoOriginal: raw.tipo,
         memo,
         descricao: memo,
+        descricaoOriginal: memo,
         accountName: accName,
         accountType: accType,
         meioPagamento: accType === 'CREDIT' ? 'cartao' : 'conta',
@@ -13668,7 +13916,11 @@ function processarNovasTransacoes(transacoesBrutas, origem = 'OFX', opcoesExtras
         ehPagamentoFaturaNoCartao: accType === 'CREDIT' && ehPagFaturaDetect,
         isCashMovement: isCashOfx,
         ehTransferencia: false,
-        categoria: raw.categoria || autoCategorizar(memo, raw.tipo),
+        categoria: catOfx,
+        classificacaoOrigem: ehPagFaturaDetect ? 'pluggy' : ((resClassOfx && resClassOfx.origem) || 'pendente'),
+        classificacaoRegraId: (resClassOfx && resClassOfx.regraId) || null,
+        tagSugerida: (resClassOfx && resClassOfx.tag) || '',
+        apelidoSugerido: (resClassOfx && resClassOfx.apelidoDescricao) || '',
         origem: 'ofx'
       });
       return;
@@ -13687,18 +13939,29 @@ function processarNovasTransacoes(transacoesBrutas, origem = 'OFX', opcoesExtras
       const accName = String(raw.accountName || raw.conta || '').trim();
       const ehPagFaturaRaw = ehTransacaoPagamentoFaturaPluggy(txOfx.memo, raw.categoria || '');
       const isCashRaw = ehMovimentacaoDinheiroFisicoImportacao(txOfx.memo, raw.categoria || '');
+      const resClassRaw = (!ehPagFaturaRaw && typeof autoClassificarLancamento === 'function')
+        ? autoClassificarLancamento(
+            { tipo: txOfx.tipo, data: txOfx.data, descricao: txOfx.memo, descricaoOriginal: txOfx.memo, valor: txOfx.valor, conta: accName },
+            { indiceMemoria: indiceMemoriaLote }
+          )
+        : null;
       normalizadas.push({
         ...txOfx,
         id: txOfx.fitid,
         externalId: txOfx.fitid,
         direcaoOriginal: txOfx.tipo,
+        descricaoOriginal: txOfx.memo,
         accountName: accName,
         accountType: 'BANK',
         meioPagamento: 'conta',
         ehCartaoCredito: false,
         ehPagamentoFaturaDetectado: ehPagFaturaRaw,
         isCashMovement: isCashRaw,
-        categoria: txOfx.categoria,
+        categoria: ehPagFaturaRaw ? 'Transferência/Pagamento de Fatura' : ((resClassRaw && resClassRaw.categoriaCompleta) || txOfx.categoria || CATEGORIA_A_CLASSIFICAR),
+        classificacaoOrigem: ehPagFaturaRaw ? 'pluggy' : ((resClassRaw && resClassRaw.origem) || 'pendente'),
+        classificacaoRegraId: (resClassRaw && resClassRaw.regraId) || null,
+        tagSugerida: (resClassRaw && resClassRaw.tag) || '',
+        apelidoSugerido: (resClassRaw && resClassRaw.apelidoDescricao) || '',
         conta: accName,
         origem: 'ofx'
       });
@@ -14124,11 +14387,12 @@ function aoAlternarAjustarSaldoInicialPluggy(marcado) {
 function sincronizarContraparteAposMudancaConta(tx, novoDestino) {
   if (!tx || !novoDestino) return;
   const novoLimpo = extrairNomeLimpoDestinoImportacao(novoDestino).toLowerCase();
-  if (tx.transferenciaPrincipalId) {
-    const principal = transacoesPendentes.find(p => p && (p.fitid === tx.transferenciaPrincipalId || p.id === tx.transferenciaPrincipalId));
-    if (principal) principal.contaContraparte = novoDestino;
-  }
-  if (tx.ehTransferencia && extrairNomeLimpoDestinoImportacao(tx.contaContraparte).toLowerCase() === novoLimpo) {
+  const idsPar = [tx.transferenciaPrincipalId, tx.transferenciaParId].filter(Boolean);
+  idsPar.forEach((idRef) => {
+    const par = transacoesPendentes.find(p => p && p !== tx && (p.fitid === idRef || p.id === idRef));
+    if (par) par.contaContraparte = novoDestino;
+  });
+  if ((tx.ehTransferencia || tx.isTransferencia) && extrairNomeLimpoDestinoImportacao(tx.contaContraparte).toLowerCase() === novoLimpo) {
     tx.contaContraparte = '';
   }
 }
@@ -14261,8 +14525,17 @@ function abrirModalRevisaoOFX(contaDestino, transacoes, nomeArquivo, metadados) 
 }
 
 function aoAlterarCategoriaRevisaoOFX(idx, novaCategoria) {
-  if (transacoesPendentes[idx]) {
-    transacoesPendentes[idx].categoria = novaCategoria || 'Outros';
+  const tx = transacoesPendentes[idx];
+  if (!tx) return;
+  tx.categoria = novaCategoria || CATEGORIA_A_CLASSIFICAR;
+  tx.classificacaoOrigem = 'manual';
+  tx.classificacaoRegraId = null;
+  const badgeWrap = document.querySelector(`[data-ofx-origem-idx="${idx}"]`);
+  if (badgeWrap && typeof badgeOrigemClassificacaoHTML === 'function') {
+    badgeWrap.innerHTML = badgeOrigemClassificacaoHTML('manual');
+  }
+  if (typeof oferecerAprendizadoRegra === 'function') {
+    oferecerAprendizadoRegra(tx, tx.categoria, { contexto: 'revisao' });
   }
 }
 
@@ -14350,10 +14623,15 @@ function renderListaRevisaoOFX() {
             onchange="aoAlterarCategoriaRevisaoOFX(${idx}, this.value)">
             ${optsCat}
           </select>
+          <span data-ofx-origem-idx="${idx}">${typeof badgeOrigemClassificacaoHTML === 'function' ? badgeOrigemClassificacaoHTML(tx.classificacaoOrigem || 'pendente') : ''}</span>
         </div>
       `;
 
     const estaSelecionada = !tx.ehDuplicada && tx.selecionada !== false;
+    const descOrigRevisao = tx.descricaoOriginal || tx.memo || '';
+    const descExibRevisaoHTML = (tx.apelidoSugerido && !ehTransf)
+      ? `<span title="Original do banco: ${escHtml(descOrigRevisao)}">${escHtml(tx.apelidoSugerido)}</span><span class="ofx-revisao-apelido-pill" title="Original do banco: ${escHtml(descOrigRevisao)}"><i class="ti ti-tag"></i> Apelido</span>`
+      : escHtml(tx.memo);
 
     return `
       <div class="ofx-revisao-row${tx.ehDuplicada ? ' ofx-dup' : ''}${!estaSelecionada ? ' ofx-desmarcado' : ''}" data-ofx-row="${idx}">
@@ -14369,7 +14647,7 @@ function renderListaRevisaoOFX() {
         </div>
         <div class="ofx-revisao-data">${escHtml(dataFmt)}</div>
         <div class="ofx-revisao-info">
-          <div class="ofx-revisao-desc">${escHtml(tx.memo)}</div>
+          <div class="ofx-revisao-desc">${descExibRevisaoHTML}</div>
           <div class="ofx-revisao-badges">
             ${badgeMeioPagamento}
             ${badgeTransferencia}
@@ -14444,6 +14722,8 @@ function criarPontaTransferenciaImportada({
     pago: true,
     status: 'Pago/Efetivado',
     ehTransferencia: true,
+    isTransferencia: true,
+    transferenciaId: grupoId,
     transferenciaGrupo: grupoId,
     transferenciaContraparte: contraparte || '',
     conciliado: temId,
@@ -14485,9 +14765,11 @@ async function confirmarESalvarRevisaoImportacao() {
         transacoesPendentes[idx].tipoRevisao = val;
         if (val === 'transferencia') {
           transacoesPendentes[idx].ehTransferencia = true;
+          transacoesPendentes[idx].isTransferencia = true;
           transacoesPendentes[idx].categoria = 'Transferência';
         } else if (val === 'despesa' || val === 'receita') {
           transacoesPendentes[idx].ehTransferencia = false;
+          transacoesPendentes[idx].isTransferencia = false;
           transacoesPendentes[idx].tipo = val;
           transacoesPendentes[idx].direcaoOriginal = val;
         }
@@ -14503,6 +14785,11 @@ async function confirmarESalvarRevisaoImportacao() {
       const idx = parseInt(sel.dataset ? sel.dataset.ofxIdx : sel.getAttribute('data-ofx-idx'), 10);
       if (Number.isInteger(idx) && transacoesPendentes[idx] && sel.value) {
         transacoesPendentes[idx].categoria = sel.value;
+        if (normalizarTextoSemAcento(sel.value) === 'transferencia' && !transacoesPendentes[idx].ehPagamentoFaturaDetectado) {
+          transacoesPendentes[idx].tipoRevisao = 'transferencia';
+          transacoesPendentes[idx].ehTransferencia = true;
+          transacoesPendentes[idx].isTransferencia = true;
+        }
       }
     });
     document.querySelectorAll('#ofx-revisao-lista .ofx-revisao-conta-select[data-ofx-conta-idx]').forEach((sel) => {
@@ -14521,18 +14808,28 @@ async function confirmarESalvarRevisaoImportacao() {
 
   const marcarFaturasAnteriores = obterFlagMarcarFaturasAnterioresRevisao();
 
-  // Validação prévia atômica: toda linha marcada como Transferência (sem par pré-existente)
-  // deve ter uma conta de contrapartida explicitamente selecionada e diferente da conta atual.
+  // Validação prévia atômica: toda linha marcada como Transferência deve possuir
+  // par completo válido (ou conta de contrapartida distinta) ANTES de gravar qualquer lançamento.
   for (let idx = 0; idx < transacoesPendentes.length; idx += 1) {
     const tx = transacoesPendentes[idx];
     if (!tx || tx.ehDuplicada || tx.ehParTransferenciaConsolidado || tx.selecionada === false) continue;
-    const isTransf = tx.tipoRevisao === 'transferencia' || tx.ehTransferencia === true;
+    if (tx.ehPagamentoFaturaDetectado || ehLancamentoPagamentoFatura(tx)) continue;
+    const isTransf = tx.tipoRevisao === 'transferencia' || isLancamentoTransferencia(tx);
     if (!isTransf) continue;
 
     const contaOrigemAtualNome = extrairNomeLimpoDestinoImportacao(tx.contaDestino || (contaPadrao && contaPadrao.nome));
     const ehCartaoAtual = normalizarTipoContaPluggy(tx.accountType, String(_ofxRevisaoContexto.origem || '').toUpperCase()) === 'CREDIT'
       && (STATE.contas || []).some(c => c && c.tipo === 'cartao' && c.nome.toLowerCase() === contaOrigemAtualNome.toLowerCase());
-    if (ehCartaoAtual || tx.transferenciaConciliarLegId || tx.transferenciaExistenteId) continue;
+    if (ehCartaoAtual) continue;
+
+    const direcaoPre = tx.direcaoOriginal || (tx.tipo === 'receita' ? 'receita' : 'despesa');
+    const temConciliarValido = Boolean(tx.transferenciaConciliarLegId && (STATE.lancamentos || []).some(l => l && l.id === tx.transferenciaConciliarLegId));
+    const temExistenteValido = Boolean(tx.transferenciaExistenteId && (STATE.lancamentos || []).some(
+      l => l && l.id === tx.transferenciaExistenteId
+        && String(l.conta || '').toLowerCase() !== contaOrigemAtualNome.toLowerCase()
+        && l.tipo !== direcaoPre
+    ));
+    if (temConciliarValido || temExistenteValido) continue;
 
     const valContra = String(tx.contaContraparte || '').trim();
     const contraLimpa = extrairNomeLimpoDestinoImportacao(valContra).toLowerCase();
@@ -14588,15 +14885,24 @@ async function confirmarESalvarRevisaoImportacao() {
     const dataLanc = tx.data || hojeLocalISO();
     const origemTx = String(tx.origem || origemPadrao).toLowerCase();
     const valorNorm = Math.round((Number(tx.valor) || 0) * 100) / 100;
-    const ehTransferenciaLinha = !ehCartao && (tx.tipoRevisao === 'transferencia' || tx.ehTransferencia === true);
+    const ehTransferenciaLinha = !ehCartao
+      && !tx.ehPagamentoFaturaDetectado
+      && !ehLancamentoPagamentoFatura(tx)
+      && (tx.tipoRevisao === 'transferencia' || isLancamentoTransferencia(tx));
 
     if (ehTransferenciaLinha) {
       const direcao = tx.direcaoOriginal || (tx.tipo === 'receita' ? 'receita' : 'despesa');
 
-      // 1) Conciliação de ponta manual já existente na mesma conta (evita duplicar saldo)
+      // 1) Conciliação de ponta manual já existente na mesma conta (evita duplicar saldo e garante par completo)
       if (tx.transferenciaConciliarLegId) {
         const legAlvo = STATE.lancamentos.find(l => l && l.id === tx.transferenciaConciliarLegId);
         if (legAlvo) {
+          const grupoIdConcil = obterTransferenciaId(legAlvo) || uid();
+          legAlvo.ehTransferencia = true;
+          legAlvo.isTransferencia = true;
+          legAlvo.categoria = 'Transferência';
+          legAlvo.transferenciaId = grupoIdConcil;
+          legAlvo.transferenciaGrupo = grupoIdConcil;
           legAlvo.fitid = uniqueId;
           if (origemTx === 'ofx') legAlvo.ofxFitId = uniqueId;
           if (origemTx === 'pluggy') legAlvo.pluggyId = uniqueId;
@@ -14605,6 +14911,44 @@ async function confirmarESalvarRevisaoImportacao() {
           legAlvo.pago = true;
           legAlvo.status = 'Pago/Efetivado';
           legAlvo.sincronizado = false;
+
+          // Garante que a ponta oposta exista em STATE.lancamentos para manter efeito líquido ZERO no saldo global
+          const pontaOpostaExist = STATE.lancamentos.find(
+            l => l && l.id !== legAlvo.id && obterTransferenciaId(l) === grupoIdConcil && l.tipo !== legAlvo.tipo
+          );
+          if (!pontaOpostaExist) {
+            const valContraConcil = String(legAlvo.transferenciaContraparte || tx.contaContraparte || '').trim();
+            const contaContraConcil = (valContraConcil && valContraConcil !== '__SEM_CONTRAPARTE__')
+              ? resolverOuCriarContaDestinoTransacao(valContraConcil, 'BANK', null)
+              : null;
+            if (contaContraConcil && contaContraConcil.nome.toLowerCase() !== String(legAlvo.conta || '').toLowerCase()) {
+              contasAfetadas.set(contaContraConcil.nome, contaContraConcil);
+              legAlvo.transferenciaContraparte = contaContraConcil.nome;
+              const tipoOposto = legAlvo.tipo === 'despesa' ? 'receita' : 'despesa';
+              const pontaComplementar = criarPontaTransferenciaImportada({
+                tipo: tipoOposto,
+                data: legAlvo.data || dataLanc,
+                descricaoBase: desc,
+                seta: tipoOposto === 'despesa' ? '→' : '←',
+                conta: contaContraConcil.nome,
+                contraparte: legAlvo.conta,
+                valor: Number(legAlvo.valor) || valorNorm,
+                origem: origemTx,
+                grupoId: grupoIdConcil,
+                uniqueId: '',
+                rawTx: tx,
+                tags: tagsInline
+              });
+              STATE.lancamentos.push(pontaComplementar);
+              adicionados += 1;
+            }
+          } else {
+            pontaOpostaExist.ehTransferencia = true;
+            pontaOpostaExist.isTransferencia = true;
+            pontaOpostaExist.transferenciaId = grupoIdConcil;
+            pontaOpostaExist.transferenciaGrupo = grupoIdConcil;
+          }
+
           idsExistentesGlobal.add(uniqueId);
           adicionados += 1;
           continue;
@@ -14614,21 +14958,29 @@ async function confirmarESalvarRevisaoImportacao() {
       // 2) Pareamento com lançamento já existente em outra conta de STATE.lancamentos
       if (tx.transferenciaExistenteId) {
         const existenteOp = STATE.lancamentos.find(l => l && l.id === tx.transferenciaExistenteId);
-        if (existenteOp && String(existenteOp.conta || '').toLowerCase() !== contaDestinoTx.nome.toLowerCase()) {
-          const grupoIdExist = existenteOp.transferenciaGrupo || uid();
+        if (existenteOp && existenteOp.tipo !== direcao && String(existenteOp.conta || '').toLowerCase() !== contaDestinoTx.nome.toLowerCase()) {
+          const grupoIdExist = obterTransferenciaId(existenteOp) || uid();
           const pontaMesmaContaExist = STATE.lancamentos.find(
-            l => l && l.id !== existenteOp.id && l.transferenciaGrupo === grupoIdExist && String(l.conta || '').toLowerCase() === contaDestinoTx.nome.toLowerCase() && l.tipo === direcao
+            l => l && l.id !== existenteOp.id && obterTransferenciaId(l) === grupoIdExist && String(l.conta || '').toLowerCase() === contaDestinoTx.nome.toLowerCase() && l.tipo === direcao
           );
           existenteOp.ehTransferencia = true;
+          existenteOp.isTransferencia = true;
           existenteOp.categoria = 'Transferência';
+          existenteOp.transferenciaId = grupoIdExist;
           existenteOp.transferenciaGrupo = grupoIdExist;
           existenteOp.transferenciaContraparte = contaDestinoTx.nome;
+          existenteOp.pago = true;
+          existenteOp.status = 'Pago/Efetivado';
           existenteOp.sincronizado = false;
 
           const contaOpObj = (STATE.contas || []).find(c => c && c.nome === existenteOp.conta);
           if (contaOpObj) contasAfetadas.set(contaOpObj.nome, contaOpObj);
 
           if (pontaMesmaContaExist) {
+            pontaMesmaContaExist.ehTransferencia = true;
+            pontaMesmaContaExist.isTransferencia = true;
+            pontaMesmaContaExist.transferenciaId = grupoIdExist;
+            pontaMesmaContaExist.transferenciaGrupo = grupoIdExist;
             pontaMesmaContaExist.fitid = uniqueId;
             if (origemTx === 'ofx') pontaMesmaContaExist.ofxFitId = uniqueId;
             if (origemTx === 'pluggy') pontaMesmaContaExist.pluggyId = uniqueId;
@@ -14662,7 +15014,7 @@ async function confirmarESalvarRevisaoImportacao() {
         }
       }
 
-      // 3) Transferência completa em par (ponta origem + ponta destino no padrão do botão "Transferir") ou ponta única
+      // 3) Transferência completa em par (ponta origem + ponta destino sincronizadas com o mesmo transferenciaId)
       const valContraparte = String(tx.contaContraparte || '').trim();
       const contaContraparteObj = (valContraparte && valContraparte !== '__SEM_CONTRAPARTE__')
         ? resolverOuCriarContaDestinoTransacao(valContraparte, 'BANK', null)
@@ -14671,8 +15023,9 @@ async function confirmarESalvarRevisaoImportacao() {
       if (contaContraparteObj && contaContraparteObj.nome.toLowerCase() !== contaDestinoTx.nome.toLowerCase()) {
         contasAfetadas.set(contaContraparteObj.nome, contaContraparteObj);
         const grupoId = uid();
-        const rawPar = tx.transferenciaParId
-          ? transacoesPendentes.find(p => p && p !== tx && (p.fitid === tx.transferenciaParId || p.id === tx.transferenciaParId))
+        const idParRef = tx.transferenciaParId || tx.transferenciaPrincipalId || '';
+        const rawPar = idParRef
+          ? transacoesPendentes.find(p => p && p !== tx && (p.fitid === idParRef || p.id === idParRef))
           : null;
         const contaOrigemObj = direcao === 'despesa' ? contaDestinoTx : contaContraparteObj;
         const contaDestObj = direcao === 'despesa' ? contaContraparteObj : contaDestinoTx;
@@ -14730,9 +15083,22 @@ async function confirmarESalvarRevisaoImportacao() {
     }
 
     const tipoFinal = (tx.tipoRevisao === 'receita' || tx.tipoRevisao === 'despesa') ? tx.tipoRevisao : (tx.tipo || 'despesa');
-    const categoriaFinal = String(tx.categoria || '').trim() || autoCategorizar(desc, tipoFinal);
+    const categoriaBruta = String(tx.categoria || '').trim() || autoCategorizar(desc, tipoFinal);
+    const categoriaFinal = (!ehCartao && !tx.ehPagamentoFaturaDetectado && normalizarTextoSemAcento(categoriaBruta) === 'transferencia')
+      ? 'Outros'
+      : categoriaBruta;
     const accountTypeFinal = ehCartao ? 'CREDIT' : 'BANK';
     const pagoContaBase = tx.pago !== undefined ? Boolean(tx.pago) : true;
+
+    const tagsCombinadas = Array.isArray(tagsInline) ? [...tagsInline] : [];
+    const tagRegraLimpa = String(tx.tagSugerida || '').trim().replace(/^#+/, '');
+    if (tagRegraLimpa && !tagsCombinadas.some(t => String(t).toLowerCase() === tagRegraLimpa.toLowerCase())) {
+      tagsCombinadas.push(tagRegraLimpa);
+    }
+    const apelidoFinal = String(tx.apelidoSugerido || '').trim();
+    const descBrutaOrig = String(tx.descricaoOriginal || desc).trim();
+    const descFinalLanc = apelidoFinal || desc;
+    const descOrigSalvar = apelidoFinal ? descBrutaOrig : (tx.descricaoOriginal && tx.descricaoOriginal !== desc ? tx.descricaoOriginal : undefined);
 
     const novoLanc = {
       id: uid(),
@@ -14748,7 +15114,8 @@ async function confirmarESalvarRevisaoImportacao() {
       tipo: tipoFinal,
       data: dataLanc,
       dataCompra: ehCartao ? (tx.dataCompra || dataLanc) : undefined,
-      descricao: desc,
+      descricao: descFinalLanc,
+      descricaoOriginal: descOrigSalvar,
       categoria: categoriaFinal,
       conta: contaDestinoTx.nome,
       cartaoId: ehCartao ? (contaDestinoTx.id || undefined) : undefined,
@@ -14758,8 +15125,12 @@ async function confirmarESalvarRevisaoImportacao() {
       status: ehCartao ? (tipoFinal === 'receita' ? 'Liquidado' : 'Pendente') : (pagoContaBase ? 'Pago/Efetivado' : 'Pendente'),
       conciliado: true,
       sincronizado: false,
-      tags: tagsInline.length ? tagsInline : undefined
+      tags: tagsCombinadas.length ? tagsCombinadas : undefined
     };
+    if (tx.classificacaoOrigem === 'regra' && tx.classificacaoRegraId && !ehLancamentoProtegidoAutoCat(novoLanc)) {
+      const rUsada = (STATE.regrasCategoria || []).find(r => r && r.id === tx.classificacaoRegraId);
+      if (rUsada) rUsada.usos = (parseInt(rUsada.usos, 10) || 0) + 1;
+    }
 
     if (ehCartao && novoLanc.tipo === 'despesa' && typeof competenciaFatura === 'function') {
       const fechamento = parseInt(contaDestinoTx.diaFechamento, 10) || 1;
@@ -15981,4 +16352,1233 @@ function iniciarDropzoneUniversal() {
 
   window.addEventListener('blur', ocultarOverlaysArrastoGlobais);
   window.addEventListener('dragend', ocultarOverlaysArrastoGlobais);
+}
+
+
+/* ============================================================================
+ * MOTOR DE AUTO-CATEGORIZAÇÃO COM APRENDIZADO (4 CAMADAS + REGRAS + TRIAGEM)
+ * ============================================================================ */
+
+const CATEGORIA_A_CLASSIFICAR = 'A Classificar';
+
+const DICIONARIO_PALAVRAS_CHAVE_BR = [
+  { re: /\b(uber|99app|99pop|99\s*taxi|cabify)\b/i, categoria: 'Transporte', subcategoria: 'Uber / 99 / Táxi', tipo: 'despesa' },
+  { re: /\b(ifood|rappi|zedelivery|ze\s*delivery|aiqfome)\b/i, categoria: 'Alimentação', subcategoria: 'Delivery / Lanche', tipo: 'despesa' },
+  { re: /\b(drogaria|farmacia|raia|drogasil|pacheco|ultrafarma|pague\s*menos|panvel)\b/i, categoria: 'Saúde', subcategoria: 'Farmácia', tipo: 'despesa' },
+  { re: /\b(posto|shell|ipiranga|petrobras|br\s*mania|combustivel|gasolina|etanol|ale\s*combust)\b/i, categoria: 'Transporte', subcategoria: 'Combustível', tipo: 'despesa' },
+  { re: /\b(mercado|supermercado|atacadao|assai|carrefour|pao\s*de\s*acucar|sonda|hortifruti|sacolao|extra\s*mercado|hipermercado|dia\s*supermercado)\b/i, categoria: 'Alimentação', subcategoria: 'Supermercado', tipo: 'despesa' },
+  { re: /\b(netflix|spotify|amazon\s*prime|prime\s*video|youtube|icloud|disney|hbo\s*max|max\s*stream|apple\s*com\s*bill|chatgpt|openai|globoplay|deezer)\b/i, categoria: 'Assinaturas', subcategoria: 'Streaming (Vídeo/Música)', tipo: 'despesa' },
+  { re: /\b(liquido\s*de\s*vencimento|salario|pagto\s*salario|folha\s*de\s*pagamento|decimo\s*terceiro|pro\s*labore|ferias)\b/i, categoria: 'Salário', subcategoria: 'Salário Mensal', tipo: 'receita' },
+  { re: /\b(remuneracao\s*aplicacao|rendimento|dividendo|dividendos|jcp|juros\s*sobre\s*capital|resgate\s*cdb|tesouro\s*direto)\b/i, categoria: 'Investimentos', subcategoria: 'Rendimentos Renda Fixa', tipo: 'receita' }
+];
+
+const MAPA_CATEGORIAS_PLUGGY_SEMANTICO = [
+  { re: /grocer|supermarket|supermercado|mercado/i, categoria: 'Alimentação', subcategoria: 'Supermercado' },
+  { re: /eating\s*out|restaurant|food|delivery|coffee|bakery|fast\s*food|alimenta|restaurante|padaria|lanche/i, categoria: 'Alimentação', subcategoria: 'Restaurante' },
+  { re: /transport|taxi|ride|uber|fuel|gas|parking|auto|toll|combust|pedagio/i, categoria: 'Transporte', subcategoria: '' },
+  { re: /subscript|streaming|software|digital|cloud|saas|assinatura/i, categoria: 'Assinaturas', subcategoria: '' },
+  { re: /health|pharmac|medical|doctor|dentist|hospital|gym|fitness|saude|farmacia|academia/i, categoria: 'Saúde', subcategoria: '' },
+  { re: /shopping|retail|clothing|electronics|store|compras|loja/i, categoria: 'Lazer', subcategoria: '' },
+  { re: /utilit|hous|rent|electric|water|internet|phone|telecom|moradia|aluguel|condominio|energia/i, categoria: 'Moradia', subcategoria: '' },
+  { re: /salary|payroll|wage|income|salario|remuneracao/i, categoria: 'Salário', subcategoria: '' },
+  { re: /invest|dividend|interest|yield|rendimento|fii|broker/i, categoria: 'Investimentos', subcategoria: '' },
+  { re: /educat|school|college|university|book|course|educacao|curso|livro|faculdade/i, categoria: 'Educação', subcategoria: '' },
+  { re: /entertain|leisure|movie|music|game|travel|hotel|lazer|viagem|passeio|cinema/i, categoria: 'Lazer', subcategoria: '' },
+  { re: /freelanc|service|consulting|consultoria/i, categoria: 'Freelance', subcategoria: '' }
+];
+
+function ehLancamentoProtegidoAutoCat(l) {
+  if (!l || typeof l !== 'object') return true;
+  if (l.ehMovimentoCofre === true) return true;
+  if (typeof ehLancamentoPagamentoFatura === 'function' && ehLancamentoPagamentoFatura(l)) return true;
+  if (l.ehPagamentoFatura === true || l.ehPagamentoFaturaDetectado === true) return true;
+  if (typeof isLancamentoTransferencia === 'function' && isLancamentoTransferencia(l)) return true;
+  if (l.tipoRevisao === 'transferencia') return true;
+  return false;
+}
+
+function ehCategoriaGenericaOuPendente(cat) {
+  const norm = normalizarTextoSemAcento(cat);
+  return !norm || norm === 'outros' || norm === 'a classificar' || norm === 'importado' || norm === 'sem categoria';
+}
+
+function ehCategoriaValidaParaAprendizado(cat) {
+  const norm = normalizarTextoSemAcento(cat);
+  if (!norm) return false;
+  if (norm === 'a classificar' || norm === 'outros' || norm === 'importado' || norm === 'sem categoria') return false;
+  if (norm === 'transferencia' || norm.startsWith('transferencia ->') || norm.includes('pagamento de fatura')) return false;
+  return true;
+}
+
+function obterDescricaoBaseAutoCat(l) {
+  if (!l || typeof l !== 'object') return '';
+  return String(l.descricaoOriginal || l.descricao || l.memo || '').trim();
+}
+
+function montarCategoriaCompletaAutoCat(categoria, subcategoria) {
+  const cat = String(categoria || '').trim();
+  const sub = String(subcategoria || '').trim();
+  if (!cat) return CATEGORIA_A_CLASSIFICAR;
+  if (cat.includes(' -> ')) return cat;
+  return sub ? `${cat} -> ${sub}` : cat;
+}
+
+function resolverCategoriaExistenteNoState(nomeMacro, subcategoriaDesejada, tipo) {
+  normalizarHierarquiaCategorias();
+  const cats = Array.isArray(STATE.categorias) ? STATE.categorias : [];
+  const alvoNorm = normalizarTextoSemAcento(nomeMacro);
+  if (!alvoNorm) return { categoria: CATEGORIA_A_CLASSIFICAR, subcategoria: '', categoriaCompleta: CATEGORIA_A_CLASSIFICAR };
+
+  let encontrada = cats.find(c => c && c.nome && (!tipo || c.tipo === tipo) && normalizarTextoSemAcento(c.nome) === alvoNorm)
+    || cats.find(c => c && c.nome && (!tipo || c.tipo === tipo) && (normalizarTextoSemAcento(c.nome).includes(alvoNorm) || alvoNorm.includes(normalizarTextoSemAcento(c.nome))))
+    || cats.find(c => c && c.nome && normalizarTextoSemAcento(c.nome) === alvoNorm);
+
+  const macroFinal = encontrada ? encontrada.nome : nomeMacro;
+  let subFinal = '';
+  if (subcategoriaDesejada && encontrada && Array.isArray(encontrada.subcategorias)) {
+    const subAlvo = normalizarTextoSemAcento(subcategoriaDesejada);
+    const subMatch = encontrada.subcategorias.find(s => normalizarTextoSemAcento(s) === subAlvo)
+      || encontrada.subcategorias.find(s => normalizarTextoSemAcento(s).includes(subAlvo) || subAlvo.includes(normalizarTextoSemAcento(s)));
+    if (subMatch) subFinal = subMatch;
+  }
+  return {
+    categoria: macroFinal,
+    subcategoria: subFinal,
+    categoriaCompleta: montarCategoriaCompletaAutoCat(macroFinal, subFinal)
+  };
+}
+
+function normalizarDescricaoBancaria(texto) {
+  let s = normalizarTextoSemAcento(texto);
+  if (!s) return '';
+
+  // Remove CNPJ / CPF formatados
+  s = s.replace(/\b\d{2}\.\d{3}\.\d{3}\/\d{4}-\d{2}\b/g, ' ');
+  s = s.replace(/\b\d{3}\.\d{3}\.\d{3}-\d{2}\b/g, ' ');
+
+  // Remove prefixos de adquirentes e intermediadores bancários (pag*, ifd*, mp*, ec*, dl*, int*, etc.)
+  s = s.replace(/(^|[\s|])(?:pag|ifd|mp|ec|dl|int|pg|mercpago|sumup|stone|cielo|rede|getnet)\s*\*\s*/gi, ' ');
+
+  // Remove prefixos/ruídos bancários comuns no Brasil
+  const prefixosRuido = [
+    /\btransferencia\s+enviada\s*\|?/gi,
+    /\btransferencia\s+recebida\s*\|?/gi,
+    /\btransf\.?\s+(?:enviada|recebida)\s*\|?/gi,
+    /\bpix\s+recebido(?:\s+de)?\b/gi,
+    /\bpix\s+enviado(?:\s+para)?\b/gi,
+    /\bpagamento\s+pix\b/gi,
+    /\bpagto\.?\s+pix\b/gi,
+    /\bcompra\s+(?:no\s+)?cartao(?:\s+de\s+(?:debito|credito))?\b/gi,
+    /\bcompra\s+(?:no\s+)?debito\b/gi,
+    /\bcompra\s+(?:no\s+)?credito\b/gi,
+    /\bdebito\s+automatico\b/gi,
+    /\bpagamento\s+de\s+boleto\b/gi
+  ];
+  prefixosRuido.forEach(re => { s = s.replace(re, ' '); });
+
+  // Remove indicadores de parcela (parc 1/3, parcela 01/12, 01/12) e datas soltas (dd/mm, dd/mm/aaaa)
+  s = s.replace(/\bparc(?:ela)?\.?\s*\d{1,2}\s*[/\\-]\s*\d{1,2}\b/gi, ' ');
+  s = s.replace(/\b\d{1,2}\/\d{1,2}(?:\/\d{2,4})?\b/g, ' ');
+  s = s.replace(/\b\d{2}-\d{2}(?:-\d{2,4})?\b/g, ' ');
+
+  // Remove sequências numéricas longas / códigos de autorização / CNPJ soltos sem pontuação
+  s = s.replace(/\b\d{5,}\b/g, ' ');
+
+  // Limpa separadores e pontuação residual mantendo letras, números e espaços
+  s = s.replace(/[|*_\/:;.,()\[\]{}#@!?"'~^+=<>-]+/g, ' ');
+  s = s.replace(/\s+/g, ' ').trim();
+
+  // Remove ruídos soltos no início (ex: "pix ", "ted ", "doc ") se restar conteúdo útil depois
+  const semSiglaInicial = s.replace(/^(?:pix|ted|doc|compra|pagto|pagamento|debito|credito)\s+/i, '').trim();
+  if (semSiglaInicial.length >= 2) s = semSiglaInicial;
+
+  return s;
+}
+
+function normalizarRegrasCategoria() {
+  if (!Array.isArray(STATE.regrasCategoria)) STATE.regrasCategoria = [];
+  if (!STATE.config || typeof STATE.config !== 'object') STATE.config = {};
+
+  // Migração única e retrocompatível das regras legadas (STATE.regras -> STATE.regrasCategoria)
+  if (STATE.regrasCategoria.length === 0 && !STATE.config.regrasCategoriaMigradas && Array.isArray(STATE.regras) && STATE.regras.length > 0) {
+    STATE.regras.forEach((r, idx) => {
+      if (!r || !r.palavraChave) return;
+      const parsed = extrairMacroESubcategoria(r.categoria || r.categoriaDesejada || '');
+      const macro = r.categoriaDesejada || parsed.macro || '';
+      const sub = r.subcategoria || (parsed.temSub ? parsed.sub : '');
+      if (!macro || ehCategoriaGenericaOuPendente(macro)) return;
+      STATE.regrasCategoria.push({
+        id: r.id || uid(),
+        ativa: true,
+        prioridade: 100 + idx,
+        padrao: String(r.palavraChave).trim(),
+        modoMatch: 'contem',
+        tipo: 'todos',
+        contaId: String(r.contaId || r.conta || '').trim(),
+        valorMin: null,
+        valorMax: null,
+        categoria: macro,
+        subcategoria: sub,
+        tag: '',
+        apelidoDescricao: '',
+        criadaEm: new Date().toISOString(),
+        usos: 0
+      });
+    });
+    STATE.config.regrasCategoriaMigradas = true;
+  }
+
+  STATE.regrasCategoria = STATE.regrasCategoria
+    .filter(r => r && typeof r === 'object' && String(r.padrao || '').trim() && String(r.categoria || '').trim())
+    .map(r => {
+      const parsed = extrairMacroESubcategoria(r.categoria);
+      const macro = r.subcategoria ? (parsed.temSub ? parsed.macro : String(r.categoria).trim()) : parsed.macro;
+      const sub = r.subcategoria ? String(r.subcategoria).trim() : (parsed.temSub ? parsed.sub : '');
+      const modo = (r.modoMatch === 'exato' || r.modoMatch === 'comeca_com' || r.modoMatch === 'contem') ? r.modoMatch : 'contem';
+      const tipo = (r.tipo === 'despesa' || r.tipo === 'receita' || r.tipo === 'todos') ? r.tipo : 'todos';
+      const vMin = (r.valorMin !== null && r.valorMin !== undefined && r.valorMin !== '' && Number.isFinite(Number(r.valorMin))) ? Number(r.valorMin) : null;
+      const vMax = (r.valorMax !== null && r.valorMax !== undefined && r.valorMax !== '' && Number.isFinite(Number(r.valorMax))) ? Number(r.valorMax) : null;
+      const prio = Number.isFinite(Number(r.prioridade)) ? Number(r.prioridade) : 100;
+      const tagLimpa = String(r.tag || '').trim().replace(/^#+/, '');
+      return {
+        id: String(r.id || uid()),
+        ativa: r.ativa !== false,
+        prioridade: prio,
+        padrao: String(r.padrao).trim(),
+        modoMatch: modo,
+        tipo,
+        contaId: String(r.contaId || '').trim(),
+        valorMin: vMin,
+        valorMax: vMax,
+        categoria: macro,
+        subcategoria: sub,
+        tag: tagLimpa,
+        apelidoDescricao: String(r.apelidoDescricao || '').trim(),
+        criadaEm: String(r.criadaEm || new Date().toISOString()),
+        usos: Math.max(0, parseInt(r.usos, 10) || 0)
+      };
+    });
+
+  return STATE.regrasCategoria;
+}
+
+function especificidadeModoMatch(modo) {
+  if (modo === 'exato') return 3;
+  if (modo === 'comeca_com') return 2;
+  return 1;
+}
+
+function ordenarRegrasCategoriaParaAvaliacao(regras) {
+  return [...(regras || [])].sort((a, b) => {
+    const pDiff = (Number(a.prioridade) || 100) - (Number(b.prioridade) || 100);
+    if (pDiff !== 0) return pDiff;
+    const espDiff = especificidadeModoMatch(b.modoMatch) - especificidadeModoMatch(a.modoMatch);
+    if (espDiff !== 0) return espDiff;
+    return String(b.padrao || '').length - String(a.padrao || '').length;
+  });
+}
+
+function contaCorrespondeRegraAutoCat(regraContaId, lanc) {
+  const alvo = String(regraContaId || '').trim();
+  if (!alvo) return true;
+  const alvoLow = alvo.toLowerCase();
+  const candidatos = [
+    lanc.contaId,
+    lanc.accountId,
+    lanc.conta,
+    lanc.contaDestino,
+    lanc.accountName
+  ].filter(Boolean).map(x => String(x).replace(/^__CRIAR_CONTA__:/, '').trim().toLowerCase());
+  if (candidatos.includes(alvoLow)) return true;
+
+  const contaObj = (STATE.contas || []).find(c => c && (String(c.id || '').toLowerCase() === alvoLow || String(c.nome || '').toLowerCase() === alvoLow));
+  if (contaObj) {
+    const nomeObj = String(contaObj.nome || '').toLowerCase();
+    const idObj = String(contaObj.id || '').toLowerCase();
+    if (candidatos.includes(nomeObj) || (idObj && candidatos.includes(idObj))) return true;
+  }
+  return false;
+}
+
+function avaliarRegraNoLancamento(regra, lanc, descBrutaNormOpt, nucleoOpt) {
+  if (!regra || !lanc || ehLancamentoProtegidoAutoCat(lanc)) return false;
+  const tipoLanc = lanc.tipo === 'receita' ? 'receita' : 'despesa';
+  if (regra.tipo && regra.tipo !== 'todos' && regra.tipo !== tipoLanc) return false;
+  if (!contaCorrespondeRegraAutoCat(regra.contaId, lanc)) return false;
+
+  const valor = Math.abs(Number(lanc.valor) || 0);
+  if (regra.valorMin !== null && regra.valorMin !== undefined && valor < Number(regra.valorMin)) return false;
+  if (regra.valorMax !== null && regra.valorMax !== undefined && valor > Number(regra.valorMax)) return false;
+
+  const padraoNorm = normalizarTextoSemAcento(regra.padrao);
+  if (!padraoNorm) return false;
+  const padraoNucleo = normalizarDescricaoBancaria(regra.padrao);
+
+  const descBruta = obterDescricaoBaseAutoCat(lanc);
+  const descBrutaNorm = descBrutaNormOpt !== undefined ? descBrutaNormOpt : normalizarTextoSemAcento(descBruta);
+  const nucleo = nucleoOpt !== undefined ? nucleoOpt : normalizarDescricaoBancaria(descBruta);
+
+  const modo = regra.modoMatch || 'contem';
+  if (modo === 'exato') {
+    return descBrutaNorm === padraoNorm || nucleo === padraoNorm || (Boolean(padraoNucleo) && nucleo === padraoNucleo);
+  }
+  if (modo === 'comeca_com') {
+    return descBrutaNorm.startsWith(padraoNorm) || nucleo.startsWith(padraoNorm) || (Boolean(padraoNucleo) && nucleo.startsWith(padraoNucleo));
+  }
+  return descBrutaNorm.includes(padraoNorm) || nucleo.includes(padraoNorm) || (Boolean(padraoNucleo) && nucleo.includes(padraoNucleo));
+}
+
+function construirIndiceMemoriaHistorica(lancamentos) {
+  const lista = Array.isArray(lancamentos) ? lancamentos : (STATE.lancamentos || []);
+  const contagemPorChave = new Map();
+
+  for (let i = 0; i < lista.length; i += 1) {
+    const l = lista[i];
+    if (!l || ehLancamentoProtegidoAutoCat(l)) continue;
+    if (ehCategoriaGenericaOuPendente(l.categoria)) continue;
+    const nucleo = normalizarDescricaoBancaria(obterDescricaoBaseAutoCat(l));
+    if (!nucleo || nucleo.length < 3) continue;
+    const tipo = l.tipo === 'receita' ? 'receita' : 'despesa';
+    const chave = `${tipo}|${nucleo}`;
+    const parsed = extrairMacroESubcategoria(l.categoria);
+    const catKey = montarCategoriaCompletaAutoCat(parsed.macro, parsed.temSub ? parsed.sub : '');
+    const dataStr = String(l.data || '');
+
+    let bucket = contagemPorChave.get(chave);
+    if (!bucket) {
+      bucket = new Map();
+      contagemPorChave.set(chave, bucket);
+    }
+    const prev = bucket.get(catKey);
+    if (prev) {
+      prev.count += 1;
+      if (dataStr > prev.lastDate) prev.lastDate = dataStr;
+    } else {
+      bucket.set(catKey, {
+        categoria: parsed.macro,
+        subcategoria: parsed.temSub ? parsed.sub : '',
+        categoriaCompleta: catKey,
+        count: 1,
+        lastDate: dataStr
+      });
+    }
+  }
+
+  const indice = new Map();
+  contagemPorChave.forEach((bucket, chave) => {
+    let melhor = null;
+    bucket.forEach((entry) => {
+      if (!melhor || entry.count > melhor.count || (entry.count === melhor.count && entry.lastDate > melhor.lastDate)) {
+        melhor = entry;
+      }
+    });
+    if (melhor) indice.set(chave, melhor);
+  });
+  return indice;
+}
+
+function mapearCategoriaPluggyFlexivel(rawCategory, tipo) {
+  const catRaw = String(rawCategory || '').trim();
+  if (!catRaw) return null;
+  const catNorm = normalizarTextoSemAcento(catRaw);
+  if (!catNorm || catNorm.includes('transfer') || catNorm === 'other' || catNorm === 'outros') return null;
+
+  // Correspondência direta com categorias reais do STATE
+  const exata = (STATE.categorias || []).find(
+    c => c && c.nome && (!tipo || c.tipo === tipo) && normalizarTextoSemAcento(c.nome) === catNorm
+  );
+  if (exata) {
+    return { categoria: exata.nome, subcategoria: '', categoriaCompleta: exata.nome };
+  }
+
+  for (const item of MAPA_CATEGORIAS_PLUGGY_SEMANTICO) {
+    if (item.re.test(catNorm)) {
+      return resolverCategoriaExistenteNoState(item.categoria, item.subcategoria, tipo);
+    }
+  }
+  return null;
+}
+
+function autoClassificarLancamento(lanc, opcoes = {}) {
+  if (!lanc || typeof lanc !== 'object') return null;
+  if (ehLancamentoProtegidoAutoCat(lanc)) return null;
+
+  normalizarRegrasCategoria();
+  const descBruta = obterDescricaoBaseAutoCat(lanc);
+  const descBrutaNorm = normalizarTextoSemAcento(descBruta);
+  const nucleo = normalizarDescricaoBancaria(descBruta);
+  const tipo = lanc.tipo === 'receita' ? 'receita' : 'despesa';
+
+  // CAMADA 1 — Regras do Usuário (STATE.regrasCategoria)
+  const regrasAtivas = ordenarRegrasCategoriaParaAvaliacao(
+    (opcoes.regras || STATE.regrasCategoria || []).filter(r => r && r.ativa === true)
+  );
+  for (let i = 0; i < regrasAtivas.length; i += 1) {
+    const r = regrasAtivas[i];
+    if (avaliarRegraNoLancamento(r, lanc, descBrutaNorm, nucleo)) {
+      const catCompleta = montarCategoriaCompletaAutoCat(r.categoria, r.subcategoria);
+      return {
+        categoria: r.categoria,
+        subcategoria: r.subcategoria || '',
+        categoriaCompleta: catCompleta,
+        tag: r.tag || '',
+        apelidoDescricao: r.apelidoDescricao || '',
+        origem: 'regra',
+        regraId: r.id
+      };
+    }
+  }
+
+  // CAMADA 2 — Memória Histórica Automática (mesmo núcleo >= 3 chars e mesmo tipo)
+  if (!opcoes.pularMemoria && nucleo.length >= 3) {
+    const indice = opcoes.indiceMemoria || construirIndiceMemoriaHistorica();
+    const matchMem = indice.get(`${tipo}|${nucleo}`);
+    if (matchMem) {
+      return {
+        categoria: matchMem.categoria,
+        subcategoria: matchMem.subcategoria || '',
+        categoriaCompleta: matchMem.categoriaCompleta,
+        tag: '',
+        apelidoDescricao: '',
+        origem: 'memoria',
+        regraId: null
+      };
+    }
+  }
+
+  // CAMADA 3 — Dicionário Pluggy + Palavras-Chave BR
+  const rawCategory = opcoes.rawCategory !== undefined ? opcoes.rawCategory : (lanc.rawCategory || '');
+  if (rawCategory) {
+    const matchPluggy = mapearCategoriaPluggyFlexivel(rawCategory, tipo);
+    if (matchPluggy) {
+      return {
+        categoria: matchPluggy.categoria,
+        subcategoria: matchPluggy.subcategoria || '',
+        categoriaCompleta: matchPluggy.categoriaCompleta,
+        tag: '',
+        apelidoDescricao: '',
+        origem: 'pluggy',
+        regraId: null
+      };
+    }
+  }
+
+  for (let i = 0; i < DICIONARIO_PALAVRAS_CHAVE_BR.length; i += 1) {
+    const item = DICIONARIO_PALAVRAS_CHAVE_BR[i];
+    if (item.tipo && item.tipo !== tipo) continue;
+    if (item.re.test(descBrutaNorm) || (nucleo && item.re.test(nucleo))) {
+      const resolvido = resolverCategoriaExistenteNoState(item.categoria, item.subcategoria, tipo);
+      return {
+        categoria: resolvido.categoria,
+        subcategoria: resolvido.subcategoria || '',
+        categoriaCompleta: resolvido.categoriaCompleta,
+        tag: '',
+        apelidoDescricao: '',
+        origem: 'dicionario',
+        regraId: null
+      };
+    }
+  }
+
+  // Fallback complementar no dicionário estendido REGRAS_CATEGORIAS
+  if (typeof REGRAS_CATEGORIAS === 'object' && REGRAS_CATEGORIAS) {
+    const textoUpper = normalizarTextoBuscaOFX(descBruta);
+    const entradas = Object.entries(REGRAS_CATEGORIAS).filter(([cat]) => (
+      tipo === 'receita' ? CATEGORIAS_OFX_RECEITA.has(cat) : !CATEGORIAS_OFX_RECEITA.has(cat)
+    ));
+    for (const [cat, palavras] of entradas) {
+      for (const kwRaw of (palavras || [])) {
+        const kw = normalizarTextoBuscaOFX(kwRaw);
+        if (kw && textoUpper.includes(kw)) {
+          const resolvido = resolverCategoriaExistenteNoState(cat, '', tipo);
+          return {
+            categoria: resolvido.categoria,
+            subcategoria: resolvido.subcategoria || '',
+            categoriaCompleta: resolvido.categoriaCompleta,
+            tag: '',
+            apelidoDescricao: '',
+            origem: 'dicionario',
+            regraId: null
+          };
+        }
+      }
+    }
+  }
+
+  // CAMADA 4 — Fila "A Classificar"
+  return {
+    categoria: CATEGORIA_A_CLASSIFICAR,
+    subcategoria: '',
+    categoriaCompleta: CATEGORIA_A_CLASSIFICAR,
+    tag: '',
+    apelidoDescricao: '',
+    origem: 'pendente',
+    regraId: null
+  };
+}
+
+function mesclarTagNoLancamento(l, novaTag) {
+  const limpa = String(novaTag || '').trim().replace(/^#+/, '');
+  if (!limpa) return false;
+  const atuais = Array.isArray(l.tags) ? [...l.tags] : [];
+  if (atuais.some(t => String(t).toLowerCase() === limpa.toLowerCase())) return false;
+  atuais.push(limpa);
+  l.tags = atuais;
+  return true;
+}
+
+function aplicarResultadoAutoCatNoLancamento(l, res, opcoes = {}) {
+  if (!l || !res || ehLancamentoProtegidoAutoCat(l)) return false;
+  let mudou = false;
+  const novaCat = res.categoriaCompleta || montarCategoriaCompletaAutoCat(res.categoria, res.subcategoria);
+  if (novaCat && l.categoria !== novaCat) {
+    l.categoria = novaCat;
+    mudou = true;
+  }
+  if (res.tag && mesclarTagNoLancamento(l, res.tag)) {
+    mudou = true;
+  }
+  if (res.apelidoDescricao) {
+    const apelido = String(res.apelidoDescricao).trim();
+    if (apelido && l.descricao !== apelido) {
+      if (!l.descricaoOriginal) l.descricaoOriginal = l.descricao;
+      l.descricao = apelido;
+      mudou = true;
+    }
+  }
+  if (mudou) l.sincronizado = false;
+  if (mudou && res.regraId && opcoes.incrementarUso !== false) {
+    const regra = (STATE.regrasCategoria || []).find(r => r && r.id === res.regraId);
+    if (regra) regra.usos = (parseInt(regra.usos, 10) || 0) + 1;
+  }
+  return mudou;
+}
+
+function badgeOrigemClassificacaoHTML(origem) {
+  const mapa = {
+    regra: { cls: 'badge-origem-regra', icone: 'ti-sparkles', label: 'Regra' },
+    memoria: { cls: 'badge-origem-memoria', icone: 'ti-brain', label: 'Memória' },
+    pluggy: { cls: 'badge-origem-pluggy', icone: 'ti-plug-connected', label: 'Pluggy' },
+    dicionario: { cls: 'badge-origem-dicionario', icone: 'ti-book-2', label: 'Pluggy' },
+    pendente: { cls: 'badge-origem-pendente', icone: 'ti-inbox', label: 'A Classificar' },
+    manual: { cls: 'badge-origem-manual', icone: 'ti-hand-click', label: 'Manual' }
+  };
+  const info = mapa[origem] || mapa.pendente;
+  return `<span class="badge-origem-cat ${info.cls}"><i class="ti ${info.icone}" style="font-size:10px"></i> ${info.label}</span>`;
+}
+
+/* ---- 4.1 APRENDIZADO COM 1 CLIQUE (TOAST INTELIGENTE) ---- */
+let _aprendizadoRegraContexto = null;
+let _aprendizadoRegraTimer = null;
+
+function criarOuAtualizarRegraAutomatica({ padrao, modoMatch = 'contem', tipo = 'todos', contaId = '', valorMin = null, valorMax = null, categoria, subcategoria = '', tag = '', apelidoDescricao = '', prioridade = 100 }) {
+  normalizarRegrasCategoria();
+  const padraoLimpo = String(padrao || '').trim();
+  const parsed = extrairMacroESubcategoria(categoria);
+  const macro = subcategoria ? (parsed.temSub ? parsed.macro : String(categoria || '').trim()) : parsed.macro;
+  const sub = subcategoria ? String(subcategoria).trim() : (parsed.temSub ? parsed.sub : '');
+  if (!padraoLimpo || !macro) return null;
+
+  const padraoNorm = normalizarTextoSemAcento(padraoLimpo);
+  const existente = STATE.regrasCategoria.find(r =>
+    r &&
+    normalizarTextoSemAcento(r.padrao) === padraoNorm &&
+    (r.modoMatch || 'contem') === modoMatch &&
+    (r.tipo || 'todos') === tipo &&
+    String(r.contaId || '') === String(contaId || '') &&
+    r.valorMin === valorMin &&
+    r.valorMax === valorMax
+  );
+
+  if (existente) {
+    existente.ativa = true;
+    existente.categoria = macro;
+    existente.subcategoria = sub;
+    if (tag) existente.tag = String(tag).trim().replace(/^#+/, '');
+    if (apelidoDescricao) existente.apelidoDescricao = String(apelidoDescricao).trim();
+    return { regra: existente, criada: false };
+  }
+
+  const nova = {
+    id: uid(),
+    ativa: true,
+    prioridade: Number.isFinite(Number(prioridade)) ? Number(prioridade) : 100,
+    padrao: padraoLimpo,
+    modoMatch,
+    tipo,
+    contaId: String(contaId || '').trim(),
+    valorMin,
+    valorMax,
+    categoria: macro,
+    subcategoria: sub,
+    tag: String(tag || '').trim().replace(/^#+/, ''),
+    apelidoDescricao: String(apelidoDescricao || '').trim(),
+    criadaEm: new Date().toISOString(),
+    usos: 0
+  };
+  STATE.regrasCategoria.push(nova);
+  return { regra: nova, criada: true };
+}
+
+function fecharToastAprendizadoRegra() {
+  clearTimeout(_aprendizadoRegraTimer);
+  _aprendizadoRegraTimer = null;
+  _aprendizadoRegraContexto = null;
+  const el = document.getElementById('toast-aprendizado-regra');
+  if (el) el.classList.add('oculto');
+}
+
+function oferecerAprendizadoRegra(lanc, novaCategoriaCompleta, opcoes = {}) {
+  if (!lanc || ehLancamentoProtegidoAutoCat(lanc)) return;
+  if (!ehCategoriaValidaParaAprendizado(novaCategoriaCompleta)) return;
+
+  const descBase = obterDescricaoBaseAutoCat(lanc);
+  const nucleo = normalizarDescricaoBancaria(descBase);
+  if (!nucleo || nucleo.length < 2) return;
+
+  const tipo = lanc.tipo === 'receita' ? 'receita' : 'despesa';
+  const parsed = extrairMacroESubcategoria(novaCategoriaCompleta);
+  const catCompleta = montarCategoriaCompletaAutoCat(parsed.macro, parsed.temSub ? parsed.sub : '');
+  const apelido = String(opcoes.apelidoSugerido || '').trim();
+
+  // Conta outros lançamentos similares já salvos em STATE.lancamentos
+  const similaresIds = (STATE.lancamentos || [])
+    .filter(x => {
+      if (!x || x.id === lanc.id || ehLancamentoProtegidoAutoCat(x)) return false;
+      if ((x.tipo === 'receita' ? 'receita' : 'despesa') !== tipo) return false;
+      const nucX = normalizarDescricaoBancaria(obterDescricaoBaseAutoCat(x));
+      if (nucX !== nucleo) return false;
+      return x.categoria !== catCompleta || (apelido && x.descricao !== apelido);
+    })
+    .map(x => x.id);
+
+  // Evita sugerir se já existe regra idêntica ativa e não há similares pendentes
+  normalizarRegrasCategoria();
+  const jaTemRegraIdentica = STATE.regrasCategoria.some(r =>
+    r.ativa &&
+    normalizarTextoSemAcento(r.padrao) === normalizarTextoSemAcento(nucleo) &&
+    (r.tipo === tipo || r.tipo === 'todos') &&
+    montarCategoriaCompletaAutoCat(r.categoria, r.subcategoria) === catCompleta &&
+    (!apelido || r.apelidoDescricao === apelido)
+  );
+  if (jaTemRegraIdentica && similaresIds.length === 0) return;
+
+  _aprendizadoRegraContexto = {
+    nucleo,
+    tipo,
+    categoria: parsed.macro,
+    subcategoria: parsed.temSub ? parsed.sub : '',
+    categoriaCompleta: catCompleta,
+    apelidoDescricao: apelido,
+    similaresIds
+  };
+
+  const el = document.getElementById('toast-aprendizado-regra');
+  const msgEl = document.getElementById('toast-aprendizado-msg');
+  const actEl = document.getElementById('toast-aprendizado-actions');
+  if (!el || !msgEl || !actEl) return;
+
+  const catExib = formatarCategoriaExibicao(catCompleta);
+  msgEl.innerHTML = `Sempre classificar <strong>"${escHtml(nucleo)}"</strong> como <strong>"${escHtml(catExib)}"</strong>?`;
+
+  const qtd = similaresIds.length;
+  actEl.innerHTML = `
+    <button type="button" class="btn btn-sm btn-primary" onclick="confirmarAprendizadoRegra(false)">
+      <i class="ti ti-sparkles"></i> Criar regra
+    </button>
+    ${qtd > 0 ? `
+      <button type="button" class="btn btn-sm" style="border-color:var(--accent);color:var(--accent-text)" onclick="confirmarAprendizadoRegra(true)">
+        <i class="ti ti-bolt"></i> Criar e aplicar em +${qtd} antigos
+      </button>
+    ` : ''}
+  `;
+
+  el.classList.remove('oculto');
+  clearTimeout(_aprendizadoRegraTimer);
+  _aprendizadoRegraTimer = setTimeout(() => fecharToastAprendizadoRegra(), 12000);
+}
+
+async function confirmarAprendizadoRegra(aplicarAntigos) {
+  const ctx = _aprendizadoRegraContexto;
+  if (!ctx) return;
+
+  const resRegra = criarOuAtualizarRegraAutomatica({
+    padrao: ctx.nucleo,
+    modoMatch: 'contem',
+    tipo: ctx.tipo,
+    categoria: ctx.categoria,
+    subcategoria: ctx.subcategoria,
+    apelidoDescricao: ctx.apelidoDescricao
+  });
+
+  let atualizados = 0;
+  if (aplicarAntigos && ctx.similaresIds.length > 0 && resRegra && resRegra.regra) {
+    const idsSet = new Set(ctx.similaresIds);
+    (STATE.lancamentos || []).forEach(l => {
+      if (!l || !idsSet.has(l.id) || ehLancamentoProtegidoAutoCat(l)) return;
+      const ok = aplicarResultadoAutoCatNoLancamento(l, {
+        categoria: ctx.categoria,
+        subcategoria: ctx.subcategoria,
+        categoriaCompleta: ctx.categoriaCompleta,
+        apelidoDescricao: ctx.apelidoDescricao,
+        regraId: resRegra.regra.id
+      }, { incrementarUso: true });
+      if (ok) atualizados += 1;
+    });
+  }
+
+  // Também atualiza eventuais linhas similares ainda abertas no Modal de Revisão
+  if (Array.isArray(transacoesPendentes) && transacoesPendentes.length > 0 && resRegra && resRegra.regra) {
+    let mudouRevisao = false;
+    transacoesPendentes.forEach(tx => {
+      if (!tx || ehLancamentoProtegidoAutoCat(tx)) return;
+      if ((tx.tipo === 'receita' ? 'receita' : 'despesa') !== ctx.tipo) return;
+      if (normalizarDescricaoBancaria(obterDescricaoBaseAutoCat(tx)) === ctx.nucleo) {
+        tx.categoria = ctx.categoriaCompleta;
+        tx.classificacaoOrigem = 'regra';
+        tx.classificacaoRegraId = resRegra.regra.id;
+        if (ctx.apelidoDescricao) tx.apelidoSugerido = ctx.apelidoDescricao;
+        mudouRevisao = true;
+      }
+    });
+    if (mudouRevisao && typeof renderListaRevisaoOFX === 'function') renderListaRevisaoOFX();
+  }
+
+  fecharToastAprendizadoRegra();
+  await salvarDados();
+  if (typeof renderRegrasCategoriaConfig === 'function') renderRegrasCategoriaConfig();
+  renderPaginaAtiva();
+  atualizarContagemTriagem();
+  sincronizarEmSegundoPlano();
+
+  if (aplicarAntigos && atualizados > 0) {
+    toast(`Regra salva e aplicada em +${atualizados} lançamento(s) antigo(s)!`, 'ok');
+  } else {
+    toast(`Regra automática salva para "${ctx.nucleo}" → ${formatarCategoriaExibicao(ctx.categoriaCompleta)}.`, 'ok');
+  }
+}
+
+/* ---- 4.2 TRIAGEM AGRUPADA ("CAIXA DE ENTRADA") ---- */
+let _gruposTriagemAtuais = [];
+
+function obterLancamentosPendentesTriagem() {
+  return (STATE.lancamentos || []).filter(l => {
+    if (!l || ehLancamentoProtegidoAutoCat(l)) return false;
+    return ehCategoriaGenericaOuPendente(l.categoria);
+  });
+}
+
+function atualizarContagemTriagem() {
+  const qtd = obterLancamentosPendentesTriagem().length;
+  const badge = document.getElementById('triagem-contagem');
+  const btn = document.getElementById('btn-abrir-triagem');
+  if (badge) badge.textContent = String(qtd);
+  if (btn) btn.classList.toggle('tem-pendencias', qtd > 0);
+  return qtd;
+}
+
+function agruparLancamentosParaTriagem() {
+  const pendentes = obterLancamentosPendentesTriagem();
+  const mapa = new Map();
+
+  pendentes.forEach(l => {
+    const descBase = obterDescricaoBaseAutoCat(l);
+    const nucleo = normalizarDescricaoBancaria(descBase) || normalizarTextoSemAcento(descBase) || 'sem descricao';
+    const tipo = l.tipo === 'receita' ? 'receita' : 'despesa';
+    const chave = `${tipo}|${nucleo}`;
+    let grupo = mapa.get(chave);
+    if (!grupo) {
+      grupo = {
+        chave,
+        nucleo,
+        tipo,
+        exemploDescricao: descBase || l.descricao || '-',
+        ids: [],
+        totalValor: 0
+      };
+      mapa.set(chave, grupo);
+    }
+    grupo.ids.push(l.id);
+    grupo.totalValor = Math.round((grupo.totalValor + (Number(l.valor) || 0)) * 100) / 100;
+  });
+
+  return [...mapa.values()].sort((a, b) => (b.ids.length - a.ids.length) || (b.totalValor - a.totalValor));
+}
+
+function abrirModalTriagemCategorias() {
+  renderModalTriagemCategorias();
+  abrirModal('modal-triagem-categorias');
+}
+
+function renderModalTriagemCategorias() {
+  _gruposTriagemAtuais = agruparLancamentosParaTriagem();
+  const totalLancs = _gruposTriagemAtuais.reduce((s, g) => s + g.ids.length, 0);
+  const badgeModal = document.getElementById('triagem-modal-badge');
+  const listaEl = document.getElementById('triagem-grupos-lista');
+  const infoEl = document.getElementById('triagem-footer-info');
+  const btnTodos = document.getElementById('btn-triagem-aplicar-todos');
+
+  if (badgeModal) badgeModal.textContent = `${totalLancs} pendente(s) · ${_gruposTriagemAtuais.length} grupo(s)`;
+  if (infoEl) infoEl.textContent = _gruposTriagemAtuais.length
+    ? `Mostrando ${_gruposTriagemAtuais.length} grupo(s) ordenados por maior frequência.`
+    : 'Tudo classificado! Nenhum lançamento pendente na Caixa de Entrada.';
+  if (btnTodos) btnTodos.disabled = _gruposTriagemAtuais.length === 0;
+  if (!listaEl) return;
+
+  if (!_gruposTriagemAtuais.length) {
+    listaEl.innerHTML = `
+      <div class="empty" style="padding:2rem 1rem">
+        <i class="ti ti-circle-check" style="font-size:32px;color:var(--good)"></i>
+        <p style="margin-top:.5rem">Caixa de Entrada zerada!</p>
+        <span class="help-text">Não há lançamentos em "A Classificar" ou "Outros".</span>
+      </div>`;
+    return;
+  }
+
+  listaEl.innerHTML = _gruposTriagemAtuais.map((g, idx) => {
+    const optsCat = '<option value="">-- Escolher categoria --</option>' + construirOptionsCategoriasHTML(g.tipo, '');
+    const badgeTipo = g.tipo === 'receita'
+      ? '<span class="badge badge-receita">Receita</span>'
+      : '<span class="badge badge-despesa">Despesa</span>';
+    return `
+      <div class="triagem-grupo-card" data-triagem-idx="${idx}">
+        <div class="triagem-grupo-topo">
+          <div class="triagem-grupo-titulo-wrap">
+            <div class="triagem-grupo-nucleo">
+              <span>${escHtml(g.nucleo)}</span>
+              ${badgeTipo}
+              <span class="badge badge-cat">${g.ids.length} lançamento(s)</span>
+            </div>
+            <div class="triagem-grupo-exemplo" title="${escHtml(g.exemploDescricao)}">
+              Exemplo: ${escHtml(g.exemploDescricao)}
+            </div>
+          </div>
+          <div class="triagem-grupo-meta">
+            <strong class="valor-sensivel ${g.tipo === 'receita' ? 'mv-ok' : 'mv-bad'}">${toBRL(g.totalValor)}</strong>
+          </div>
+        </div>
+        <div class="triagem-grupo-controles">
+          <select class="triagem-cat-select" data-triagem-cat="${idx}">
+            ${optsCat}
+          </select>
+          <input type="text" class="triagem-tag-input" data-triagem-tag="${idx}" placeholder="Tag (opcional)">
+          <input type="text" class="triagem-apelido-input" data-triagem-apelido="${idx}" placeholder="Apelido descrição (opcional)">
+          <button type="button" class="btn btn-sm btn-primary" onclick="aplicarGrupoTriagem(${idx})">
+            <i class="ti ti-check"></i> Aplicar
+          </button>
+        </div>
+        <div class="triagem-grupo-rodape">
+          <label class="triagem-chk-regra">
+            <input type="checkbox" class="triagem-regra-chk" data-triagem-regra="${idx}" checked>
+            <span>Salvar regra automática para <strong>"${escHtml(g.nucleo)}"</strong></span>
+          </label>
+        </div>
+      </div>`;
+  }).join('');
+}
+
+function executarAplicacaoGrupoTriagemInterno(idx) {
+  const grupo = _gruposTriagemAtuais[idx];
+  if (!grupo) return { aplicado: false, qtd: 0 };
+  const selCat = document.querySelector(`[data-triagem-cat="${idx}"]`);
+  const inpTag = document.querySelector(`[data-triagem-tag="${idx}"]`);
+  const inpApelido = document.querySelector(`[data-triagem-apelido="${idx}"]`);
+  const chkRegra = document.querySelector(`[data-triagem-regra="${idx}"]`);
+
+  const catVal = selCat ? String(selCat.value || '').trim() : '';
+  if (!catVal) return { aplicado: false, qtd: 0 };
+
+  const parsed = extrairMacroESubcategoria(catVal);
+  const catCompleta = montarCategoriaCompletaAutoCat(parsed.macro, parsed.temSub ? parsed.sub : '');
+  const tagVal = inpTag ? String(inpTag.value || '').trim().replace(/^#+/, '') : '';
+  const apelidoVal = inpApelido ? String(inpApelido.value || '').trim() : '';
+  const salvarRegra = chkRegra ? Boolean(chkRegra.checked) : true;
+
+  let regraCriadaId = null;
+  if (salvarRegra && ehCategoriaValidaParaAprendizado(catCompleta)) {
+    const rObj = criarOuAtualizarRegraAutomatica({
+      padrao: grupo.nucleo,
+      modoMatch: 'contem',
+      tipo: grupo.tipo,
+      categoria: parsed.macro,
+      subcategoria: parsed.temSub ? parsed.sub : '',
+      tag: tagVal,
+      apelidoDescricao: apelidoVal
+    });
+    if (rObj && rObj.regra) regraCriadaId = rObj.regra.id;
+  }
+
+  const idsSet = new Set(grupo.ids);
+  let atualizados = 0;
+  (STATE.lancamentos || []).forEach(l => {
+    if (!l || !idsSet.has(l.id) || ehLancamentoProtegidoAutoCat(l)) return;
+    const ok = aplicarResultadoAutoCatNoLancamento(l, {
+      categoria: parsed.macro,
+      subcategoria: parsed.temSub ? parsed.sub : '',
+      categoriaCompleta: catCompleta,
+      tag: tagVal,
+      apelidoDescricao: apelidoVal,
+      regraId: regraCriadaId
+    }, { incrementarUso: Boolean(regraCriadaId) });
+    if (ok) atualizados += 1;
+  });
+
+  return { aplicado: true, qtd: atualizados, regraCriada: Boolean(regraCriadaId) };
+}
+
+async function aplicarGrupoTriagem(idx) {
+  const res = executarAplicacaoGrupoTriagemInterno(idx);
+  if (!res.aplicado) {
+    toast('Selecione uma categoria para este grupo antes de aplicar.', 'err');
+    return;
+  }
+  await salvarDados();
+  renderModalTriagemCategorias();
+  renderPaginaAtiva();
+  if (typeof renderRegrasCategoriaConfig === 'function') renderRegrasCategoriaConfig();
+  atualizarContagemTriagem();
+  sincronizarEmSegundoPlano();
+  toast(`${res.qtd} lançamento(s) classificado(s)${res.regraCriada ? ' e regra automática salva' : ''}!`, 'ok');
+}
+
+async function aplicarTodosGruposTriagem() {
+  let gruposAplicados = 0;
+  let totalLancs = 0;
+  let regrasSalvas = 0;
+
+  for (let i = 0; i < _gruposTriagemAtuais.length; i += 1) {
+    const res = executarAplicacaoGrupoTriagemInterno(i);
+    if (res.aplicado) {
+      gruposAplicados += 1;
+      totalLancs += res.qtd;
+      if (res.regraCriada) regrasSalvas += 1;
+    }
+  }
+
+  if (gruposAplicados === 0) {
+    toast('Selecione a categoria em pelo menos um grupo para aplicar.', 'err');
+    return;
+  }
+
+  await salvarDados();
+  renderModalTriagemCategorias();
+  renderPaginaAtiva();
+  if (typeof renderRegrasCategoriaConfig === 'function') renderRegrasCategoriaConfig();
+  atualizarContagemTriagem();
+  sincronizarEmSegundoPlano();
+  toast(`${totalLancs} lançamento(s) classificado(s) em ${gruposAplicados} grupo(s)${regrasSalvas ? ` (${regrasSalvas} regra(s) salva(s))` : ''}!`, 'ok');
+}
+
+/* ---- 4.3 GERENCIADOR DE REGRAS + LIVE PREVIEW + REPROCESSAMENTO ---- */
+function renderRegrasCategoriaConfig() {
+  normalizarRegrasCategoria();
+  const listaEl = document.getElementById('regras-autocat-lista');
+  const totalEl = document.getElementById('regras-autocat-total');
+  const ordenadas = ordenarRegrasCategoriaParaAvaliacao(STATE.regrasCategoria);
+  if (totalEl) totalEl.textContent = `${ordenadas.length} regra(s)`;
+  if (!listaEl) return;
+
+  if (!ordenadas.length) {
+    listaEl.innerHTML = '<div class="help-text" style="padding:.5rem 0">Nenhuma regra cadastrada ainda. Clique em <strong>+ Nova Regra</strong> ou edite um lançamento para aprender automaticamente.</div>';
+    return;
+  }
+
+  const labelModo = { contem: 'Contém', comeca_com: 'Começa com', exato: 'Exato' };
+  const labelTipo = { todos: 'Todos', despesa: 'Despesa', receita: 'Receita' };
+
+  listaEl.innerHTML = ordenadas.map(r => {
+    const catExib = formatarCategoriaExibicao(montarCategoriaCompletaAutoCat(r.categoria, r.subcategoria));
+    const extrasCond = [];
+    if (r.tipo && r.tipo !== 'todos') extrasCond.push(labelTipo[r.tipo] || r.tipo);
+    if (r.contaId) extrasCond.push(`Conta: ${r.contaId}`);
+    if (r.valorMin !== null || r.valorMax !== null) {
+      const minS = r.valorMin !== null ? toBRL(r.valorMin) : 'R$ 0,00';
+      const maxS = r.valorMax !== null ? toBRL(r.valorMax) : '∞';
+      extrasCond.push(`${minS} – ${maxS}`);
+    }
+    const extrasAcao = [];
+    if (r.tag) extrasAcao.push(`<span class="badge badge-cat">#${escHtml(r.tag)}</span>`);
+    if (r.apelidoDescricao) extrasAcao.push(`<span class="badge badge-origem-regra" title="Renomeia descrição mantendo original"><i class="ti ti-edit"></i> ${escHtml(r.apelidoDescricao)}</span>`);
+
+    return `
+      <div class="regra-item-card${r.ativa ? '' : ' inativa'}" data-regra-id="${escHtml(r.id)}">
+        <div class="regra-item-left">
+          <label class="regra-switch" title="${r.ativa ? 'Desativar regra' : 'Ativar regra'}">
+            <input type="checkbox" ${r.ativa ? 'checked' : ''} onchange="alternarRegraCategoriaAtiva('${escHtml(r.id)}', this.checked)">
+            <span class="regra-switch-slider"></span>
+          </label>
+          <div class="regra-item-info">
+            <div class="regra-item-linha">
+              <span class="badge badge-cat">${escHtml(labelModo[r.modoMatch] || 'Contém')}</span>
+              <strong>"${escHtml(r.padrao)}"</strong>
+              <i class="ti ti-arrow-right" style="opacity:.6"></i>
+              <span class="badge badge-pago">${escHtml(catExib)}</span>
+              ${extrasAcao.join(' ')}
+            </div>
+            <div class="regra-item-meta">
+              <span>Prioridade: <strong>${r.prioridade}</strong></span>
+              <span>·</span>
+              <span>Usos: <strong>${r.usos || 0}</strong></span>
+              ${extrasCond.length ? `<span>·</span><span>${escHtml(extrasCond.join(' · '))}</span>` : ''}
+            </div>
+          </div>
+        </div>
+        <div class="regra-item-acoes">
+          <button type="button" class="icon-btn" onclick="abrirModalRegraCategoria('${escHtml(r.id)}')" title="Editar regra"><i class="ti ti-pencil"></i></button>
+          <button type="button" class="icon-btn danger" onclick="excluirRegraCategoria('${escHtml(r.id)}')" title="Excluir regra"><i class="ti ti-trash"></i></button>
+        </div>
+      </div>`;
+  }).join('');
+}
+
+function atualizarCategoriasModalRegra(valorPreservado) {
+  const selTipo = document.getElementById('regra-modal-tipo');
+  const selCat = document.getElementById('regra-modal-categoria');
+  if (!selCat) return;
+  const tipo = selTipo ? selTipo.value : 'todos';
+  const filtroTipo = (tipo === 'despesa' || tipo === 'receita') ? tipo : '';
+  const atual = valorPreservado !== undefined ? valorPreservado : selCat.value;
+  selCat.innerHTML = construirOptionsCategoriasHTML(filtroTipo, atual);
+}
+
+function abrirModalRegraCategoria(regraId) {
+  normalizarRegrasCategoria();
+  const regra = regraId ? STATE.regrasCategoria.find(r => r && r.id === regraId) : null;
+
+  const tituloEl = document.getElementById('modal-regra-titulo');
+  if (tituloEl) {
+    tituloEl.innerHTML = regra
+      ? '<i class="ti ti-pencil" style="color:var(--accent);font-size:18px"></i><span>Editar Regra de Auto-Categorização</span>'
+      : '<i class="ti ti-sparkles" style="color:var(--accent);font-size:18px"></i><span>Nova Regra de Auto-Categorização</span>';
+  }
+
+  const selConta = document.getElementById('regra-modal-conta');
+  if (selConta) {
+    selConta.innerHTML = '<option value="">Todas as contas</option>'
+      + (STATE.contas || []).map(c => `<option value="${escHtml(c.nome)}">${escHtml(c.nome)}</option>`).join('');
+  }
+
+  document.getElementById('regra-modal-id').value = regra ? regra.id : '';
+  document.getElementById('regra-modal-padrao').value = regra ? regra.padrao : '';
+  document.getElementById('regra-modal-modo').value = regra ? regra.modoMatch : 'contem';
+  document.getElementById('regra-modal-tipo').value = regra ? regra.tipo : 'todos';
+  if (selConta) selConta.value = regra ? (regra.contaId || '') : '';
+  document.getElementById('regra-modal-vmin').value = (regra && regra.valorMin !== null) ? toBRL(regra.valorMin) : '';
+  document.getElementById('regra-modal-vmax').value = (regra && regra.valorMax !== null) ? toBRL(regra.valorMax) : '';
+  document.getElementById('regra-modal-prioridade').value = regra ? String(regra.prioridade) : '100';
+  document.getElementById('regra-modal-tag').value = regra ? (regra.tag || '') : '';
+  document.getElementById('regra-modal-apelido').value = regra ? (regra.apelidoDescricao || '') : '';
+  document.getElementById('regra-modal-ativa').checked = regra ? regra.ativa !== false : true;
+
+  const catInicial = regra ? montarCategoriaCompletaAutoCat(regra.categoria, regra.subcategoria) : '';
+  atualizarCategoriasModalRegra(catInicial);
+  atualizarPreviewRegraModal();
+  abrirModal('modal-regra-categoria');
+}
+
+function lerRascunhoRegraModal() {
+  const padrao = String(document.getElementById('regra-modal-padrao')?.value || '').trim();
+  const modoMatch = document.getElementById('regra-modal-modo')?.value || 'contem';
+  const tipo = document.getElementById('regra-modal-tipo')?.value || 'todos';
+  const contaId = String(document.getElementById('regra-modal-conta')?.value || '').trim();
+  const rawMin = String(document.getElementById('regra-modal-vmin')?.value || '').trim();
+  const rawMax = String(document.getElementById('regra-modal-vmax')?.value || '').trim();
+  const valorMin = rawMin ? moedaToNumber(rawMin) : null;
+  const valorMax = rawMax ? moedaToNumber(rawMax) : null;
+  const prioridade = parseInt(document.getElementById('regra-modal-prioridade')?.value, 10) || 100;
+  const catCompleta = String(document.getElementById('regra-modal-categoria')?.value || '').trim();
+  const parsed = extrairMacroESubcategoria(catCompleta);
+  const tag = String(document.getElementById('regra-modal-tag')?.value || '').trim().replace(/^#+/, '');
+  const apelidoDescricao = String(document.getElementById('regra-modal-apelido')?.value || '').trim();
+  const ativa = Boolean(document.getElementById('regra-modal-ativa')?.checked);
+
+  return {
+    id: String(document.getElementById('regra-modal-id')?.value || '').trim(),
+    padrao,
+    modoMatch,
+    tipo,
+    contaId,
+    valorMin: (rawMin && Number.isFinite(valorMin)) ? valorMin : null,
+    valorMax: (rawMax && Number.isFinite(valorMax)) ? valorMax : null,
+    prioridade,
+    categoria: parsed.macro,
+    subcategoria: parsed.temSub ? parsed.sub : '',
+    tag,
+    apelidoDescricao,
+    ativa
+  };
+}
+
+function atualizarPreviewRegraModal() {
+  const countEl = document.getElementById('regra-live-preview-count');
+  const exEl = document.getElementById('regra-live-preview-exemplos');
+  if (!countEl || !exEl) return;
+
+  const rascunho = lerRascunhoRegraModal();
+  if (!rascunho.padrao) {
+    countEl.textContent = 'Digite um padrão para visualizar quantos lançamentos existentes correspondem.';
+    exEl.innerHTML = '';
+    return;
+  }
+
+  const matches = [];
+  const lista = STATE.lancamentos || [];
+  for (let i = 0; i < lista.length; i += 1) {
+    const l = lista[i];
+    if (avaliarRegraNoLancamento(rascunho, l)) {
+      matches.push(l);
+    }
+  }
+
+  countEl.textContent = `${matches.length} lançamento(s) existente(s) correspondem a esta regra`;
+  exEl.innerHTML = matches.slice(0, 3).map(m => {
+    const descShow = obterDescricaoBaseAutoCat(m);
+    return `<div class="regra-live-preview-ex">
+      <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escHtml(descShow)}</span>
+      <span style="flex-shrink:0;color:var(--text3)">${escHtml(m.data || '')} · ${toBRL(m.valor)}</span>
+    </div>`;
+  }).join('');
+}
+
+async function salvarRegraCategoriaModal() {
+  normalizarRegrasCategoria();
+  const dados = lerRascunhoRegraModal();
+  if (!dados.padrao) {
+    toast('Informe o padrão / estabelecimento da regra.', 'err');
+    return;
+  }
+  if (!dados.categoria || ehCategoriaGenericaOuPendente(dados.categoria)) {
+    toast('Selecione uma categoria válida para a regra.', 'err');
+    return;
+  }
+  if (dados.valorMin !== null && dados.valorMax !== null && dados.valorMin > dados.valorMax) {
+    toast('O valor mínimo não pode ser maior que o valor máximo.', 'err');
+    return;
+  }
+
+  if (dados.id) {
+    const idx = STATE.regrasCategoria.findIndex(r => r && r.id === dados.id);
+    if (idx >= 0) {
+      STATE.regrasCategoria[idx] = {
+        ...STATE.regrasCategoria[idx],
+        ...dados
+      };
+    }
+  } else {
+    STATE.regrasCategoria.push({
+      ...dados,
+      id: uid(),
+      criadaEm: new Date().toISOString(),
+      usos: 0
+    });
+  }
+
+  await salvarDados();
+  fecharModal('modal-regra-categoria');
+  renderRegrasCategoriaConfig();
+  toast('Regra de auto-categorização salva!', 'ok');
+}
+
+async function alternarRegraCategoriaAtiva(regraId, ativa) {
+  normalizarRegrasCategoria();
+  const r = STATE.regrasCategoria.find(x => x && x.id === regraId);
+  if (!r) return;
+  r.ativa = Boolean(ativa);
+  await salvarDados();
+  renderRegrasCategoriaConfig();
+}
+
+async function excluirRegraCategoria(regraId) {
+  normalizarRegrasCategoria();
+  STATE.regrasCategoria = STATE.regrasCategoria.filter(r => r && r.id !== regraId);
+  await salvarDados();
+  renderRegrasCategoriaConfig();
+  toast('Regra excluída.', 'ok');
+}
+
+function abrirModalReprocessarRegras() {
+  normalizarRegrasCategoria();
+  const ativas = STATE.regrasCategoria.filter(r => r && r.ativa);
+  if (!ativas.length) {
+    toast('Ative ou crie pelo menos uma regra antes de reprocessar.', 'err');
+    return;
+  }
+  atualizarContagemReprocessarRegras();
+  abrirModal('modal-reprocessar-regras');
+}
+
+function obterEscopoReprocessamentoSelecionado() {
+  const radio = document.querySelector('input[name="reprocessar-escopo"]:checked');
+  return radio ? radio.value : 'pendentes';
+}
+
+function atualizarContagemReprocessarRegras() {
+  const infoEl = document.getElementById('reprocessar-preview-info');
+  if (!infoEl) return;
+  const escopo = obterEscopoReprocessamentoSelecionado();
+  const regrasAtivas = ordenarRegrasCategoriaParaAvaliacao((STATE.regrasCategoria || []).filter(r => r && r.ativa));
+  let elegiveis = 0;
+  let comMatch = 0;
+
+  (STATE.lancamentos || []).forEach(l => {
+    if (!l || ehLancamentoProtegidoAutoCat(l)) return;
+    if (escopo === 'pendentes' && !ehCategoriaGenericaOuPendente(l.categoria)) return;
+    elegiveis += 1;
+    const descBruta = obterDescricaoBaseAutoCat(l);
+    const descNorm = normalizarTextoSemAcento(descBruta);
+    const nuc = normalizarDescricaoBancaria(descBruta);
+    if (regrasAtivas.some(r => avaliarRegraNoLancamento(r, l, descNorm, nuc))) {
+      comMatch += 1;
+    }
+  });
+
+  infoEl.textContent = `${comMatch} de ${elegiveis} lançamento(s) elegível(is) serão atualizados pelas regras ativas.`;
+}
+
+async function executarReprocessamentoRegras() {
+  normalizarRegrasCategoria();
+  const escopo = obterEscopoReprocessamentoSelecionado();
+  const regrasAtivas = ordenarRegrasCategoriaParaAvaliacao(STATE.regrasCategoria.filter(r => r && r.ativa));
+  if (!regrasAtivas.length) {
+    toast('Nenhuma regra ativa para reprocessar.', 'err');
+    return;
+  }
+
+  let atualizados = 0;
+  (STATE.lancamentos || []).forEach(l => {
+    if (!l || ehLancamentoProtegidoAutoCat(l)) return;
+    if (escopo === 'pendentes' && !ehCategoriaGenericaOuPendente(l.categoria)) return;
+
+    const descBruta = obterDescricaoBaseAutoCat(l);
+    const descNorm = normalizarTextoSemAcento(descBruta);
+    const nuc = normalizarDescricaoBancaria(descBruta);
+
+    for (let i = 0; i < regrasAtivas.length; i += 1) {
+      const r = regrasAtivas[i];
+      if (avaliarRegraNoLancamento(r, l, descNorm, nuc)) {
+        const ok = aplicarResultadoAutoCatNoLancamento(l, {
+          categoria: r.categoria,
+          subcategoria: r.subcategoria,
+          categoriaCompleta: montarCategoriaCompletaAutoCat(r.categoria, r.subcategoria),
+          tag: r.tag,
+          apelidoDescricao: r.apelidoDescricao,
+          regraId: r.id
+        }, { incrementarUso: true });
+        if (ok) atualizados += 1;
+        break;
+      }
+    }
+  });
+
+  fecharModal('modal-reprocessar-regras');
+  if (atualizados > 0) {
+    await salvarDados();
+    renderRegrasCategoriaConfig();
+    renderPaginaAtiva();
+    atualizarContagemTriagem();
+    sincronizarEmSegundoPlano();
+    toast(`Reprocessamento concluído: ${atualizados} lançamento(s) atualizado(s)!`, 'ok');
+  } else {
+    toast('Nenhum lançamento precisou ser alterado pelas regras ativas.', 'ok');
+  }
 }

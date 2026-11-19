@@ -265,6 +265,7 @@
           <button type="button" class="chip-btn active" data-chip-target="f-tipo" data-chip-val="" onclick="selecionarChipFiltro('f-tipo','',this,renderLancamentos)">Todos</button>
           <button type="button" class="chip-btn" data-chip-target="f-tipo" data-chip-val="receita" onclick="selecionarChipFiltro('f-tipo','receita',this,renderLancamentos)">Receitas</button>
           <button type="button" class="chip-btn" data-chip-target="f-tipo" data-chip-val="despesa" onclick="selecionarChipFiltro('f-tipo','despesa',this,renderLancamentos)">Despesas</button>
+          <button type="button" class="chip-btn" data-chip-target="f-tipo" data-chip-val="transferencia" onclick="selecionarChipFiltro('f-tipo','transferencia',this,renderLancamentos)">Transferências</button>
         </div>
         <input type="hidden" id="f-status" value="">
         <div class="chip-group" role="group" aria-label="Filtrar por status">
@@ -276,6 +277,7 @@
         <select id="f-categoria" onchange="renderLancamentos()"></select>
         <select id="f-tag" onchange="renderLancamentos()"></select>
         <input type="search" id="f-busca" placeholder="Buscar descrição..." oninput="agendarRenderLancamentos()">
+        <button class="btn btn-sm btn-triagem" id="btn-abrir-triagem" type="button" onclick="abrirModalTriagemCategorias()" title="Caixa de Entrada: classificar lançamentos em 'A Classificar' e 'Outros' agrupados em lote"><i class="ti ti-inbox"></i> Triagem <span class="badge-triagem-count" id="triagem-contagem">0</span></button>
         <button class="btn btn-sm" onclick="abrirLixeira()" title="Lançamentos excluídos (recuperáveis)"><i class="ti ti-trash"></i> Lixeira <span id="lixeira-contagem"></span></button>
         <button class="btn btn-sm" id="btn-toggle-view" onclick="alternarEstiloTabela()" title="Alternar visualização Lista/Cards"><i class="ti ti-layout-cards"></i> Estilo Cards</button>
         <button class="btn btn-sm" id="btn-toggle-calendario" onclick="alternarModoCalendario()" title="Alternar entre Lista/Cards e Calendário"><i class="ti ti-calendar-event"></i> Calendário</button>
@@ -734,16 +736,26 @@
         </div>
         <div class="tag-list" id="conta-list"></div>
       </div>
-      <div class="card">
-        <div class="card-title" style="margin-bottom:.75rem">Regras de categorização automática</div>
-        <div class="help-text" style="margin-bottom:.75rem">Quando a descrição de um lançamento novo contiver a palavra-chave, a categoria é sugerida sozinha.</div>
-        <div class="form-row form-row-regras">
-          <input type="text" id="regra-palavra" placeholder="Palavra-chave (ex: UBER)" onkeydown="seEnviar(event, adicionarRegra)">
-          <select id="regra-categoria"></select>
-          <select id="regra-conta" title="Conta ou Cartão padrão (opcional)"><option value="">Qualquer Conta/Cartão</option></select>
-          <button class="btn btn-primary" onclick="adicionarRegra()"><i class="ti ti-plus"></i> Adicionar</button>
+      <div class="card" id="card-regras-autocat">
+        <div class="card-header" style="margin-bottom:.5rem;flex-wrap:wrap;gap:8px">
+          <div class="card-title" style="display:flex;align-items:center;gap:8px">
+            <i class="ti ti-sparkles" style="color:var(--accent);font-size:18px"></i>
+            <span>Regras de Auto-Categorização</span>
+            <span class="badge badge-cat" id="regras-autocat-total">0 regras</span>
+          </div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap">
+            <button class="btn btn-sm" type="button" onclick="abrirModalReprocessarRegras()" title="Executar regras ativas retroativamente nos lançamentos já salvos">
+              <i class="ti ti-refresh"></i> Reprocessar Regras
+            </button>
+            <button class="btn btn-sm btn-primary" type="button" onclick="abrirModalRegraCategoria()" title="Criar nova regra personalizada de auto-categorização">
+              <i class="ti ti-plus"></i> Nova Regra
+            </button>
+          </div>
         </div>
-        <div class="tag-list" id="regra-list"></div>
+        <div class="help-text" style="margin-bottom:.85rem">
+          Defina regras com prioridade, tipo, conta, faixa de valor, tag e apelido de descrição (preservando sempre a descrição original do banco). Transferências, pagamentos de fatura e cofres nunca são alterados.
+        </div>
+        <div id="regras-autocat-lista" class="regras-autocat-lista"></div>
       </div>
       <!-- MOTOR DE RECEITAS INTELIGENTES (AUTO-PAYCHECK) -->
       <div class="card" id="card-receitas-fixas">
@@ -1906,23 +1918,27 @@
           <div class="patch-notes-edition">COFIN Enterprise Edition</div>
           <div class="patch-date-label" id="patch-notes-date">Atualização de Novembro de 2026</div>
         </div>
-        <span class="patch-version-pill" id="patch-notes-version-badge"><i class="ti ti-rocket"></i> v1.4.5</span>
+        <span class="patch-version-pill" id="patch-notes-version-badge"><i class="ti ti-rocket"></i> v1.5.0</span>
       </div>
 
       <div class="patch-section">
         <div class="patch-section-title">✨ Novo</div>
         <ul class="patch-list" id="patch-list-novo">
           <li>
-            <strong class="patch-item-title">Open Finance Híbrido (Pluggy v2 + OFX Unificados)</strong>
-            <span class="patch-item-desc">Conexão bancária com servidor Loopback Bridge local para captura automática do <code>itemId</code>, paginação completa por cursor em <code>GET /v2/transactions</code> (<code>X-API-KEY</code>), cofre <code>.env</code> via IPC e revisão unificada em <code>#modal-revisao-importacao</code>.</span>
+            <strong class="patch-item-title">Motor de Auto-Categorização em 4 Camadas com Aprendizado</strong>
+            <span class="patch-item-desc">Normalizador de descrições bancárias BR + funil inteligente (<strong>Regras do Usuário → Memória Histórica → Pluggy/Dicionário BR → Fila "A Classificar"</strong>), preservando sempre <code>descricaoOriginal</code> ao aplicar apelidos.</span>
           </li>
           <li>
-            <strong class="patch-item-title">Diferenciação Conta vs. Cartão, Faturas &amp; Saldo Real</strong>
-            <span class="patch-item-desc">Identificação automática entre <code>BANK</code> e <code>CREDIT</code>, reconhecimento retroativo de faturas já quitadas, conciliação automática do Saldo Inicial bancário pela API e botão rápido de marcação de fatura paga.</span>
+            <strong class="patch-item-title">Aprendizado em 1 Clique &amp; Triagem Agrupada ("Caixa de Entrada")</strong>
+            <span class="patch-item-desc">Toast inteligente após edição manual para criar regra e aplicar em lançamentos antigos, além do modal <strong>Triagem (N)</strong> na aba Lançamentos para classificar pendências agrupadas em lote.</span>
           </li>
           <li>
-            <strong class="patch-item-title">Motor Offline de Extratos OFX &amp; Segurança Desktop</strong>
-            <span class="patch-item-desc">Importação local de extratos <code>.ofx</code> via Dropzone ou Overlay global, <code>contextIsolation</code> estrito, allowlist IPC no preload, proteção XSS e recursos da Edição Enterprise (Ambient Glow, Magic Move, Split-View e Skeleton Glass).</span>
+            <strong class="patch-item-title">Gerenciador Avançado de Regras &amp; Reprocessamento Retroativo</strong>
+            <span class="patch-item-desc">Crie regras com prioridade, modo de match (<code>Contém</code>/<code>Começa com</code>/<code>Exato</code>), conta, faixa de valor, tag e apelido com <strong>prévia ao vivo</strong> e botão <strong>Reprocessar Regras</strong> em Categorias &amp; Contas.</span>
+          </li>
+          <li>
+            <strong class="patch-item-title">Filtro Exclusivo de Transferências</strong>
+            <span class="patch-item-desc">Novo chip <strong>Transferências</strong> na aba Lançamentos e blindagem para que transferências nunca se misturem em Receitas ou Despesas.</span>
           </li>
         </ul>
       </div>
@@ -1931,12 +1947,16 @@
         <div class="patch-section-title">🛠️ Melhorado/Corrigido</div>
         <ul class="patch-list" id="patch-list-melhorado">
           <li>
-            <strong class="patch-item-title">Detecção Estrita de Transferências</strong>
-            <span class="patch-item-desc">Transferências passam a ser consolidadas apenas por pares reais entre contas bancárias distintas, preservando Pix (<code>Transfers</code>), movimentações em dinheiro físico (<code>CASH</code>) e transações isoladas (<code>Transfer - Internal</code>) em suas contas originais, com validação atômica de contrapartida na revisão manual.</span>
+            <strong class="patch-item-title">Patrimônio Total e Saldo Disponível Unificados</strong>
+            <span class="patch-item-desc">Os KPIs do topo agora compartilham exatamente a mesma fonte de verdade consolidada de <strong>Contas Bancárias</strong> (com efeito líquido zero para transferências entre contas próprias).</span>
           </li>
           <li>
-            <strong class="patch-item-title">Histórico Completo &amp; Conciliação</strong>
-            <span class="patch-item-desc">Remoção do corte fixo de 90 dias na sincronização Open Finance para importar todo o histórico disponível, além de armazenamento único em <code>localStorage</code> sem duplicação de cota e performance 60fps.</span>
+            <strong class="patch-item-title">Precisão em Despesas no Mês &amp; Competência de Faturas</strong>
+            <span class="patch-item-desc">Verificação estrita de <code>tipo === 'despesa'</code>, exclusão de despesas já reembolsadas, ampliação do detector de pagamentos de fatura Pluggy/OFX e correção do fallback de <code>diaFechamento</code> nos cartões.</span>
+          </li>
+          <li>
+            <strong class="patch-item-title">Open Finance Híbrido (Pluggy v2 + OFX) &amp; Merge P2P</strong>
+            <span class="patch-item-desc">Badges de origem no Modal de Revisão, gravação sempre em par sincronizado nas transferências importadas e sincronização de <code>regrasCategoria</code> no Backup JSON, Shadow Vault e P2P.</span>
           </li>
         </ul>
       </div>
@@ -1945,7 +1965,7 @@
         <div class="patch-section-title">🗑️ Removido</div>
         <ul class="patch-list" id="patch-list-removido">
           <li>
-            <span class="patch-item-desc">Chamadas depreciadas ao endpoint v1 de transações da Pluggy (HTTP 410), heurísticas agressivas que convertiam lançamentos isolados em transferências sem par real, código morto e fallback CORS wildcard no P2P.</span>
+            <span class="patch-item-desc">Fórmula duplicada de saldo global divergente do bloco de Contas Bancárias, fallback perigoso de dia de fechamento <code>1</code> em cartões sem configuração e mistura silenciosa de lançamentos desconhecidos em "Outros".</span>
           </li>
         </ul>
       </div>
@@ -2153,6 +2173,203 @@
       </button>
     </div>
   </div>
+</div>
+
+<!-- MODAL DE TRIAGEM AGRUPADA ("CAIXA DE ENTRADA") -->
+<div class="modal-bg" id="modal-triagem-categorias" onclick="if(event.target === this) fecharModal('modal-triagem-categorias')">
+  <div class="modal wide triagem-modal">
+    <div class="modal-head">
+      <div>
+        <div class="modal-title" style="display:flex;align-items:center;gap:8px">
+          <i class="ti ti-inbox" style="color:var(--amber);font-size:19px"></i>
+          <span>Triagem Agrupada — Caixa de Entrada</span>
+          <span class="badge badge-a-classificar" id="triagem-modal-badge">0 pendentes</span>
+        </div>
+        <div class="help-text">
+          Lançamentos em <strong>A Classificar</strong> ou <strong>Outros</strong> agrupados por núcleo bancário e tipo. Classifique em lote e salve regras automáticas com 1 clique.
+        </div>
+      </div>
+      <button type="button" class="modal-close" onclick="fecharModal('modal-triagem-categorias')" title="Fechar">
+        <i class="ti ti-x"></i>
+      </button>
+    </div>
+
+    <div class="triagem-lista" id="triagem-grupos-lista"></div>
+
+    <div class="modal-actions triagem-footer" style="margin-top:1rem;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
+      <span class="help-text" id="triagem-footer-info">Preencha os grupos desejados e clique em aplicar.</span>
+      <div style="display:flex;gap:8px">
+        <button type="button" class="btn" onclick="fecharModal('modal-triagem-categorias')">Fechar</button>
+        <button type="button" class="btn btn-primary" id="btn-triagem-aplicar-todos" onclick="aplicarTodosGruposTriagem()">
+          <i class="ti ti-checks"></i> Aplicar todos os grupos preenchidos
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL DE CRIAÇÃO / EDIÇÃO DE REGRA DE AUTO-CATEGORIZAÇÃO -->
+<div class="modal-bg" id="modal-regra-categoria" onclick="if(event.target === this) fecharModal('modal-regra-categoria')">
+  <div class="modal regra-modal">
+    <div class="modal-head">
+      <div>
+        <div class="modal-title" id="modal-regra-titulo" style="display:flex;align-items:center;gap:8px">
+          <i class="ti ti-sparkles" style="color:var(--accent);font-size:18px"></i>
+          <span>Nova Regra de Auto-Categorização</span>
+        </div>
+        <div class="help-text">A regra avalia a descrição bruta e o núcleo normalizado (sem ruídos bancários).</div>
+      </div>
+      <button type="button" class="modal-close" onclick="fecharModal('modal-regra-categoria')" title="Fechar">
+        <i class="ti ti-x"></i>
+      </button>
+    </div>
+
+    <input type="hidden" id="regra-modal-id">
+
+    <div class="form-row">
+      <div class="fg" style="flex:2">
+        <label for="regra-modal-padrao">Padrão / Estabelecimento *</label>
+        <input type="text" id="regra-modal-padrao" placeholder="Ex: uber, ifood, drogasil, padaria central" oninput="atualizarPreviewRegraModal()">
+      </div>
+      <div class="fg" style="flex:1">
+        <label for="regra-modal-modo">Modo de Match</label>
+        <select id="regra-modal-modo" onchange="atualizarPreviewRegraModal()">
+          <option value="contem">Contém</option>
+          <option value="comeca_com">Começa com</option>
+          <option value="exato">Exato</option>
+        </select>
+      </div>
+    </div>
+
+    <div class="form-row">
+      <div class="fg">
+        <label for="regra-modal-tipo">Tipo</label>
+        <select id="regra-modal-tipo" onchange="atualizarCategoriasModalRegra(); atualizarPreviewRegraModal()">
+          <option value="todos">Todos (Receitas e Despesas)</option>
+          <option value="despesa">Apenas Despesas</option>
+          <option value="receita">Apenas Receitas</option>
+        </select>
+      </div>
+      <div class="fg">
+        <label for="regra-modal-conta">Conta / Cartão (opcional)</label>
+        <select id="regra-modal-conta" onchange="atualizarPreviewRegraModal()">
+          <option value="">Todas as contas</option>
+        </select>
+      </div>
+    </div>
+
+    <div class="form-row tri">
+      <div class="fg">
+        <label for="regra-modal-vmin">Valor Mín. (opcional)</label>
+        <input type="text" id="regra-modal-vmin" placeholder="R$ 0,00" oninput="maskMoeda(this); atualizarPreviewRegraModal()">
+      </div>
+      <div class="fg">
+        <label for="regra-modal-vmax">Valor Máx. (opcional)</label>
+        <input type="text" id="regra-modal-vmax" placeholder="Sem limite" oninput="maskMoeda(this); atualizarPreviewRegraModal()">
+      </div>
+      <div class="fg">
+        <label for="regra-modal-prioridade">Prioridade (1 = mais alta)</label>
+        <input type="number" id="regra-modal-prioridade" value="100" min="1" max="9999" step="1">
+      </div>
+    </div>
+
+    <div class="form-row">
+      <div class="fg" style="flex:2">
+        <label for="regra-modal-categoria">Categoria / Subcategoria *</label>
+        <select id="regra-modal-categoria"></select>
+      </div>
+      <div class="fg" style="flex:1">
+        <label for="regra-modal-tag">Tag automática (opcional)</label>
+        <input type="text" id="regra-modal-tag" placeholder="Ex: trabalho, fixo">
+      </div>
+    </div>
+
+    <div class="form-row">
+      <div class="fg" style="flex:2">
+        <label for="regra-modal-apelido">Apelido de Descrição (opcional)</label>
+        <input type="text" id="regra-modal-apelido" placeholder="Ex: Uber (preserva a descrição original do banco)">
+      </div>
+      <div class="fg" style="flex:1;justify-content:flex-end;display:flex;flex-direction:column">
+        <label class="regra-ativa-chk">
+          <input type="checkbox" id="regra-modal-ativa" checked>
+          <span>Regra ativa</span>
+        </label>
+      </div>
+    </div>
+
+    <div class="regra-live-preview" id="regra-live-preview">
+      <div class="regra-live-preview-head">
+        <i class="ti ti-radar-2"></i>
+        <span id="regra-live-preview-count">Digite um padrão para visualizar quantos lançamentos correspondem.</span>
+      </div>
+      <div class="regra-live-preview-exemplos" id="regra-live-preview-exemplos"></div>
+    </div>
+
+    <div class="modal-actions" style="margin-top:1rem">
+      <button type="button" class="btn" onclick="fecharModal('modal-regra-categoria')">Cancelar</button>
+      <button type="button" class="btn btn-primary" onclick="salvarRegraCategoriaModal()">
+        <i class="ti ti-device-floppy"></i> Salvar Regra
+      </button>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL DE REPROCESSAMENTO RETROATIVO DE REGRAS -->
+<div class="modal-bg" id="modal-reprocessar-regras" onclick="if(event.target === this) fecharModal('modal-reprocessar-regras')">
+  <div class="modal" style="max-width:480px">
+    <div class="modal-head">
+      <div class="modal-title" style="display:flex;align-items:center;gap:8px">
+        <i class="ti ti-refresh" style="color:var(--accent)"></i>
+        <span>Reprocessar Regras Ativas</span>
+      </div>
+      <button type="button" class="modal-close" onclick="fecharModal('modal-reprocessar-regras')" title="Fechar">
+        <i class="ti ti-x"></i>
+      </button>
+    </div>
+    <p class="help-text" style="margin-bottom:.85rem">
+      Executa suas regras ativas sobre os lançamentos já salvos (nunca altera transferências, pagamentos de fatura ou movimentos de cofre; preserva sempre <code>descricaoOriginal</code>).
+    </p>
+    <div class="reprocessar-opcoes">
+      <label class="reprocessar-opcao">
+        <input type="radio" name="reprocessar-escopo" value="pendentes" checked onchange="atualizarContagemReprocessarRegras()">
+        <div>
+          <strong>Apenas "A Classificar" e "Outros"</strong>
+          <div class="help-text">Mais seguro: mantém categorias que você já classificou manualmente.</div>
+        </div>
+      </label>
+      <label class="reprocessar-opcao">
+        <input type="radio" name="reprocessar-escopo" value="todos" onchange="atualizarContagemReprocessarRegras()">
+        <div>
+          <strong>Todos os lançamentos não-transferência</strong>
+          <div class="help-text">Reaplica regras ativas em todo o histórico (exceto transferências, faturas e cofres).</div>
+        </div>
+      </label>
+    </div>
+    <div class="regra-live-preview" style="margin-top:.75rem">
+      <div class="regra-live-preview-head">
+        <i class="ti ti-filter"></i>
+        <span id="reprocessar-preview-info">Calculando lançamentos elegíveis...</span>
+      </div>
+    </div>
+    <div class="modal-actions" style="margin-top:1rem">
+      <button type="button" class="btn" onclick="fecharModal('modal-reprocessar-regras')">Cancelar</button>
+      <button type="button" class="btn btn-primary" onclick="executarReprocessamentoRegras()">
+        <i class="ti ti-player-play"></i> Reprocessar Agora
+      </button>
+    </div>
+  </div>
+</div>
+
+<!-- BARRA/TOAST INTELIGENTE DE APRENDIZADO COM 1 CLIQUE -->
+<div class="toast-aprendizado oculto" id="toast-aprendizado-regra" role="status" aria-live="polite">
+  <div class="toast-aprendizado-icon"><i class="ti ti-sparkles"></i></div>
+  <div class="toast-aprendizado-body">
+    <div class="toast-aprendizado-msg" id="toast-aprendizado-msg"></div>
+    <div class="toast-aprendizado-actions" id="toast-aprendizado-actions"></div>
+  </div>
+  <button type="button" class="toast-aprendizado-close" onclick="fecharToastAprendizadoRegra()" title="Fechar">
+    <i class="ti ti-x"></i>
+  </button>
 </div>
 
 <div class="toast" id="toast"></div>

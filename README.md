@@ -2,12 +2,13 @@
   <img src="cofin-icon.svg" alt="COFIN Logo" width="84" height="84" />
   <h1>COFIN — Controle Financeiro Pessoal & Familiar</h1>
   <p>
-    <strong>Aplicativo Desktop Offline-First em Electron</strong> com interface Glassmorphism em Bento Grid,
-    motor de sincronização P2P em rede local, OCR nativo, Shadow Vault e atualizações OTA automatizadas via GitHub Releases.
+    <strong>Aplicativo Desktop Offline-First em Electron</strong> com Motor de Auto-Categorização em 4 Camadas com Aprendizado,
+    Open Finance Híbrido (Pluggy v2 + OFX Drag &amp; Drop), integração Make.com + OneDrive, sincronização familiar P2P em rede local,
+    OCR nativo, Shadow Vault e atualizações OTA via GitHub Releases.
   </p>
 
   <p>
-    <img src="https://img.shields.io/badge/vers%C3%A3o-1.4.5-1A6FE0?style=for-the-badge" alt="Versão 1.4.5" />
+    <img src="https://img.shields.io/badge/vers%C3%A3o-1.5.0-1A6FE0?style=for-the-badge" alt="Versão 1.5.0" />
     <img src="https://img.shields.io/badge/Electron-32.0-47848F?style=for-the-badge&logo=electron&logoColor=white" alt="Electron 32" />
     <img src="https://img.shields.io/badge/Windows-NSIS%20Installer-0078D6?style=for-the-badge&logo=windows&logoColor=white" alt="Windows NSIS" />
     <img src="https://img.shields.io/badge/CI%2FCD-GitHub%20Actions-2088FF?style=for-the-badge&logo=github-actions&logoColor=white" alt="GitHub Actions" />
@@ -19,117 +20,41 @@
 
 ## Sumário
 
-1. [Visão Geral & Arquitetura](#1-visão-geral--arquitetura)
-2. [Design System & Interface (Glassmorphism + Bento Grid)](#2-design-system--interface-glassmorphism--bento-grid)
-3. [Motor de Sincronização Familiar P2P (LAN)](#3-motor-de-sincronização-familiar-p2p-lan)
-4. [Auto-Update OTA & Pipeline de Releases](#4-auto-update-ota--pipeline-de-releases)
-5. [Segurança Desktop, Privacidade & Shadow Vault](#5-segurança-desktop-privacidade--shadow-vault)
-6. [Instalação, Desenvolvimento & Build Limpo](#6-instalação-desenvolvimento--build-limpo)
-7. [Funcionalidades Financeiras & Integração em Nuvem](#7-funcionalidades-financeiras--integração-em-nuvem)
-8. [Atalhos de Teclado](#8-atalhos-de-teclado)
-9. [Estrutura do Repositório](#9-estrutura-do-repositório)
+1. [Novidades da v1.5.0](#1-novidades-da-v150)
+2. [Instalação e Primeiros Passos](#2-instalação-e-primeiros-passos)
+3. [Guia Passo a Passo de Uso do Painel](#3-guia-passo-a-passo-de-uso-do-painel)
+4. [Motor de Auto-Categorização com Aprendizado](#4-motor-de-auto-categorização-com-aprendizado)
+5. [Como Conectar no Pluggy (Open Finance)](#5-como-conectar-no-pluggy-open-finance)
+6. [Como Conectar no Make.com (Gravação Automática em Planilha)](#6-como-conectar-no-makecom-gravação-automática-em-planilha)
+7. [Como Conectar no OneDrive (Leitura & Sincronização)](#7-como-conectar-no-onedrive-leitura--sincronização)
+8. [Drag & Drop para Extratos (.OFX) e Comprovantes (OCR)](#8-drag--drop-para-extratos-ofx-e-comprovantes-ocr)
+9. [Sincronização Familiar P2P, Shadow Vault e Segurança](#9-sincronização-familiar-p2p-shadow-vault-e-segurança)
+10. [Atalhos de Teclado](#10-atalhos-de-teclado)
+11. [Desenvolvimento, Build e Publicação OTA](#11-desenvolvimento-build-e-publicação-ota)
 
 ---
 
-## 1. Visão Geral & Arquitetura
+## 1. Novidades da v1.5.0
 
-O **COFIN** foi projetado sob arquitetura **Offline-First** com separação estrita entre Processo Principal, Preload isolado e Renderer Process:
-
-```text
-┌─────────────────────────────────────────────────────────────────────────┐
-│                        RENDERER PROCESS (UI/UX)                         │
-│     index.html + style.css + app.js (Vanilla JS, Chart.js, Tesseract)   │
-│     Estado primário determinístico em localStorage (Zero latência)      │
-└───────────────────────────────┬─────────────────────────────────────────┘
-                                │
-             contextBridge + Allowlist estrita (preload.js)
-                                │
-┌───────────────────────────────▼─────────────────────────────────────────┐
-│                       MAIN PROCESS (main.js / Node)                     │
-│  ┌─────────────────────┬──────────────────────┬───────────────────────┐ │
-│  │   Shadow Vault      │   Motor P2P Local    │   Auto-Updater OTA    │ │
-│  │   Backups .json     │   HTTP LAN :45000    │   GitHub Releases     │ │
-│  │   Anti-traversal    │   x-cofin-client     │   electron-updater    │ │
-│  └─────────────────────┴──────────────────────┴───────────────────────┘ │
-└───────────────┬───────────────────────────────┬─────────────────────────┘
-                │                               │
-                ▼                               ▼
-     Disco Local (.json)             Sincronização Opcional em Nuvem
-   (Pasta segura escolhida)         Make.com Webhook / Microsoft OneDrive
-```
-
-### Camadas Principais
-* **Main Process ([`main.js`](main.js)):** Gerencia ciclo de vida da janela (`BrowserWindow`), controles customizados de janela, proxy IPC seguro para leitura de planilhas do OneDrive, persistência de backups no Shadow Vault, servidor HTTP P2P local e integração com `electron-updater` / `electron-log`.
-* **Preload Bridge ([`preload.js`](preload.js)):** Expõe exclusivamente a API congelada `window.electronAPI` com `contextIsolation` ativo, validando todos os canais `invoke` e `send` contra `ALLOWED_INVOKE_CHANNELS` e `ALLOWED_SEND_CHANNELS`.
-* **Renderer Process ([`index.html`](index.html), [`app.js`](app.js), [`style.css`](style.css)):** Interface reativa sem framework pesado, com motor de conciliação financeira, faturas de cartão, simuladores, gráficos (`Chart.js`), leitura/exportação Excel (`SheetJS / xlsx`) e OCR local (`Tesseract.js`).
+* **Motor de Auto-Categorização em 4 Camadas:** Normalizador de descrições bancárias brasileiras + classificação em cascata (**Regras do Usuário → Memória Histórica → Pluggy / Dicionário BR → Fila "A Classificar"**), preservando sempre `descricaoOriginal`.
+* **Aprendizado em 1 Clique:** Ao alterar manualmente a categoria ou descrição de um lançamento, um toast inteligente pergunta se você deseja criar a regra automática e aplicá-la nos lançamentos antigos similares.
+* **Triagem Agrupada ("Caixa de Entrada"):** Novo botão **Triagem (N)** na aba **Lançamentos** que agrupa pendências em *"A Classificar"* e *"Outros"* por estabelecimento + tipo para resolver tudo em lote.
+* **Gerenciador de Regras & Reprocessamento Retroativo:** Nova interface em **Categorias & Contas** com regras avançadas (modo de match, conta, faixa de valor, tag, apelido, prioridade), prévia ao vivo e botão **Reprocessar Regras**.
+* **Saldos 100% Unificados:** **Patrimônio Total** e **Saldo Disponível** passam a usar exatamente a mesma fonte de verdade consolidada do card **Contas Bancárias**, com efeito líquido **zero** para transferências entre contas próprias e novo filtro exclusivo **Transferências**.
+* **Precisão em Despesas no Mês & Faturas:** Verificação estrita de despesas, exclusão de despesas já reembolsadas, reconhecimento ampliado de pagamentos de fatura Pluggy/OFX e correção do fallback de `diaFechamento`.
 
 ---
 
-## 2. Design System & Interface (Glassmorphism + Bento Grid)
+## 2. Instalação e Primeiros Passos
 
-O sistema visual combina legibilidade financeira de alta densidade com profundidade translúcida:
+### Opção A — Instalador Windows (Recomendado)
+1. Acesse a aba **[Releases](https://github.com/pedrotsongas-ai/COFIN/releases)** do repositório.
+2. Baixe o instalador mais recente: **`COFIN-Setup-1.5.0.exe`**.
+3. Execute o instalador e conclua o assistente. A partir daí, futuras atualizações chegam automaticamente via **Auto-Update OTA**.
 
-* **Glassmorphism em Camadas:** Superfícies translúcidas (`rgba(var(--surface-rgb), ...)` + `backdrop-filter: blur(...)`) na barra superior, cartões, modais e notificações toast, com suporte nativo a **Light Mode** e **Dark Mode** via tokens CSS em [`style.css`](style.css).
-* **Ambient Glow Dinâmico:** Iluminação radial contextual adaptada ao estado financeiro atual (`--ambient-glow`) e paletas personalizáveis com ícones SVG embutidos por tema.
-* **Bento Grid Fluido & Drag-and-Drop:** Blocos de métricas e painéis reorganizáveis por arraste, com adaptação responsiva por **Container Queries** quando o visualizador de anexos em **Split-View 50/50** é aberto.
-* **Tipografia Financeira Tabular:** Fontes `Inter` (com `cv02`, `cv03`, `cv04`, `cv11`) e `IBM Plex Mono` para alinhamento numérico exato em saldos, tabelas e faturas.
-* **Micro-interações:** *Magic Move*, *Skeleton Glass* durante transições, *Spotlight Glow* sob o cursor e feedback auditivo opcional via **Web Audio API (SoundScape)**.
+### Opção B — Executar a partir do Código-Fonte
+> **Pré-requisitos:** [Node.js 20 LTS](https://nodejs.org) (ou 18+) e `npm`.
 
----
-
-## 3. Motor de Sincronização Familiar P2P (LAN)
-
-Para sincronizar dados financeiros entre dispositivos da mesma residência sem passar por servidores externos:
-
-* **Servidor HTTP Embarcado:** Iniciado automaticamente pelo Main Process em `0.0.0.0:45000` (tratando `EADDRINUSE` sem interromper o app).
-* **Isolamento de Rede Privada:** A função `ehIPPrivadoLAN` bloqueia requisições fora de loopback e faixas privadas RFC 1918 (`10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`) ou endereços link-local/ULA IPv6 (`fe80::`, `fc00::`/`fd00::`).
-* **Handshake & Integridade:**
-  * `GET /` ou `GET /status`: retorna status operacional, IP local detectado e porta (`45000`).
-  * `POST /sync`: exige o cabeçalho `x-cofin-client: COFIN-P2P/1`, limita o payload a `50 MB`, valida o JSON recebido, aplica `sanitizarStateP2P` antes de emitir o evento `receber-sync` ao Renderer e responde com o `STATE` local atualizado.
-* **Segurança de Pareamento:** Suporte opcional a PIN P2P nas configurações de sincronização familiar.
-
----
-
-## 4. Auto-Update OTA & Pipeline de Releases
-
-O COFIN implementa atualizações *Over-The-Air* automatizadas diretamente pelo repositório GitHub (`pedrotsongas-ai/COFIN`):
-
-### Fluxo em Produção (`electron-updater` + `electron-log`)
-1. Ao iniciar o app empacotado, `configurarAutoUpdater()` configura `autoDownload = true`, `autoInstallOnAppQuit = true` e registra logs em disco via `electron-log`.
-2. O app consulta `latest.yml` no GitHub Releases mais recente.
-3. Quando há versão superior, baixa apenas os blocos diferenciais via `.blockmap` + `COFIN-Setup-<versão>.exe` e instala ao reiniciar/encerrar o aplicativo (ou sob demanda via botão **Instalar Atualização**).
-
-### Diagnóstico Manual em Desenvolvimento
-* O arquivo [`dev-app-update.yml`](dev-app-update.yml) habilita `forceDevUpdateConfig = true` ao acionar a verificação manual de atualização (`verificar-atualizacoes-agora`) na aba de Configurações/Diagnóstico OTA, permitindo inspecionar a resposta real do GitHub Releases mesmo em execução local.
-
-### Pipeline Automatizado CI/CD ([`.github/workflows/release.yml`](.github/workflows/release.yml))
-Todo push de tag semântica no padrão `v*` (ou disparo manual via `workflow_dispatch`) executa em `windows-latest`:
-1. Checkout do repositório e setup do **Node.js 20**.
-2. Instalação determinística de dependências com **`npm ci`** (usando o `package-lock.json` versionado).
-3. Verificação de sintaxe em **`main.js`**, **`preload.js`** e **`app.js`** via `node --check`.
-4. Build NSIS e publicação automática no GitHub Releases via `npx electron-builder --win --publish always`, anexando:
-   * `COFIN-Setup-<versão>.exe`
-   * `COFIN-Setup-<versão>.exe.blockmap`
-   * `latest.yml`
-
----
-
-## 5. Segurança Desktop, Privacidade & Shadow Vault
-
-* **Hardening Electron:** `contextIsolation: true`, `nodeIntegration: false`, `webSecurity` nativa ativa, bloqueio de permissões/navegações externas inesperadas e comunicação restrita ao contrato em [`preload.js`](preload.js).
-* **Shadow Vault (Auto-Backup Local):** Grava snapshots `.json` na pasta escolhida pelo usuário (ex.: pasta sincronizada no OneDrive/Google Drive), com validação de caminho anti-traversal e bloqueio de nomes inválidos antes de escrever no disco.
-* **Bloqueio por PIN & Modo Stealth:** Proteção da abertura do app com PIN local e ocultação instantânea de valores monetários via `Alt + P`.
-* **OCR 100% Local:** Leitura de comprovantes e faturas por imagem via `Tesseract.js` processada inteiramente na máquina, sem envio de anexos a APIs terceiras.
-
----
-
-## 6. Instalação, Desenvolvimento & Build Limpo
-
-### Pré-requisitos
-* **Node.js 20 LTS** (ou 18+) e **npm** instalados ([nodejs.org](https://nodejs.org)).
-* **Windows 10/11** para gerar o instalador NSIS (`.exe`).
-
-### Executar em Modo de Desenvolvimento
 ```bash
 # 1. Clonar o repositório
 git clone https://github.com/pedrotsongas-ai/COFIN.git
@@ -141,71 +66,215 @@ npm ci
 # 3. Iniciar o aplicativo Electron
 npm start
 ```
-> No Windows, você também pode abrir rapidamente pelo atalho [`Iniciar COFIN.bat`](Iniciar%20COFIN.bat) após instalar as dependências.
-
-### Gerar Instalador Windows (`.exe`) Localmente
-```bash
-npm run dist
-```
-Os artefatos empacotados serão gerados em `dist/` (ex.: `dist/COFIN-Setup-1.4.5.exe`), diretório devidamente ignorado pelo Git.
-
-### Publicar uma Nova Versão (OTA)
-1. Atualize a versão em [`package.json`](package.json), [`package-lock.json`](package-lock.json), [`app.js`](app.js) (`CURRENT_VERSION` / `APP_VERSAO`) e Patch Notes em [`index.html`](index.html).
-2. Faça o commit das alterações em `main` e envie ao GitHub.
-3. Crie e envie a tag correspondente (ex.: `git tag -a v1.2.2 -m "Release v1.2.2"` e `git push origin v1.2.2`) para acionar a geração e publicação automática no GitHub Releases.
+> No Windows, após o `npm ci`, você também pode abrir o app dando duplo clique em [`Iniciar COFIN.bat`](Iniciar%20COFIN.bat).
 
 ---
 
-## 7. Funcionalidades Financeiras & Integração em Nuvem
+## 3. Guia Passo a Passo de Uso do Painel
 
-* **Conciliação & Faturas Inteligentes:** Separação estrita entre o status individual do lançamento e a liquidação da fatura (`faturaPaga`), pagamento de fatura com débito em conta corrente, restituição automática de limite e neutralidade no DRE para evitar dupla contagem.
-* **Lançamento Rápido (Smart Add) & Regras Inteligentes:** Interpretação em linguagem natural (*"Uber 25,90 ontem no Nubank"*) e auto-categorização por palavras-chave configuráveis.
-* **Anti-Metas & Cofres de Retenção:** Controle de tetos mensais com pacing diário seguro e reserva de patrimônio protegido fora do saldo diário disponível.
-* **Simuladores & Fechamento Guiado:** Simulador *What-If*, comparativo *À Vista vs. Parcelado (CDI)* e assistente em 3 etapas para fechamento mensal.
-* **Integração Make.com + OneDrive:** Envio automático em background (debounce de `1.2s`) da planilha `.xlsx` estruturada para Webhook do Make.com usando o blueprint oficial [`Cenario_COFIN_Make.json`](Cenario_COFIN_Make.json).
+### Passo 1 — Cadastre suas Contas, Cartões e Categorias
+1. No menu lateral, clique em **Categorias & Contas**.
+2. Em **Contas / Cartões**, cadastre suas contas bancárias (ex.: *Santander*, *Nubank*) e cartões de crédito informando **Dia de fechamento**, **Dia de vencimento** e **Limite**.
+   * *Dica:* Clique no ícone de balança (<i class="ti ti-scale"></i>) ao lado de uma conta bancária para conciliar rapidamente o **Saldo Inicial** com o saldo real do seu banco.
+3. Em **Categorias**, personalize suas categorias principais e subcategorias (ex.: `Alimentação › Supermercado`) e defina orçamentos mensais opcionais.
+
+### Passo 2 — Acompanhe o Dashboard
+* **Saldo Disponível:** Saldo consolidado das contas bancárias descontando apenas valores reservados em **Metas & Cofres**. Sem reservas bloqueadas, bate no centavo com **Contas Bancárias**.
+* **Patrimônio Total:** Soma consolidada de todas as contas bancárias (`saldoInicial + entradas efetivadas − saídas efetivadas`).
+* **Receitas no mês / Despesas no mês / Resultado / Taxa de Poupança:** Calculados apenas sobre os lançamentos reais da competência do mês atual (sem transferências internas, sem pagamentos de fatura duplicados, sem despesas já reembolsadas e sem `saldoInicial`).
+* **Saldo por Conta & Cartões:** Exibe o saldo individual de cada conta bancária e o resumo da fatura atual de cada cartão (com barra de limite e botão rápido de quitação).
+* **Personalização:** Arraste os cards e KPIs do Dashboard para reorganizar a ordem como preferir.
+
+### Passo 3 — Registre, Filtre e Organize Lançamentos
+1. Na aba **Lançamentos** (ou via **`Ctrl + N`**), crie receitas ou despesas manualmente, com suporte a **parcelamento**, **divisão em múltiplas categorias (Split)**, **rachar conta (Split Bill)**, **reembolsável**, **garantia** e **anexo/comprovante** (visualizável em Split-View 50/50).
+2. Use a barra **Lançamento Rápido (Smart Add)** no topo da aba para digitar em linguagem natural:
+   * Exemplo: `"Uber 25,90 ontem no Nubank"`, `"Ifood 50 hoje Itaú"`, `"recebi 300 freela na Carteira"`.
+3. Use o botão **Transferir** no topo para movimentar valores entre contas próprias — o COFIN grava automaticamente as duas pontas sincronizadas (saída na origem + entrada no destino) com efeito líquido **zero** no patrimônio global.
+4. Filtre por **Todos | Receitas | Despesas | Transferências**, por status (**Pagos / Pendentes**), conta, categoria, hashtag (`#viagem`), mês ou busca por descrição (que encontra tanto o apelido quanto a `descricaoOriginal` do banco).
+
+### Passo 4 — Cartões, Assinaturas, Metas e Relatórios
+* **Cartões & Faturas:** Navegue mês a mês pelas faturas e use **Pagar Fatura** para quitar os lançamentos sem duplicar despesas no DRE.
+* **Assinaturas & Recorrentes:** Cadastre contas fixas mensais e configure **Receitas Fixas (Auto-Paycheck)** por dia fixo ou dia útil em **Categorias & Contas**.
+* **Metas & Cofres:** Separe reservas financeiras dentro do seu patrimônio sem perder o controle do saldo livre diário.
+* **Relatórios & Simuladores:** Analise evolução patrimonial, comparativo mês a mês, *Simulador de Compra*, *À Vista vs. Parcelado (CDI)* e *Fechamento do Mês*.
 
 ---
 
-## 8. Atalhos de Teclado
+## 4. Motor de Auto-Categorização com Aprendizado
+
+Ao importar transações (Pluggy, OFX ou Planilha na Nuvem), o COFIN executa automaticamente um **funil em 4 camadas** (nunca alterando transferências, pagamentos de fatura ou cofres):
+
+1. **Camada 1 — Regras do Usuário (`STATE.regrasCategoria`):** Avalia regras ativas por **prioridade** e especificidade (`Exato` > `Começa com` > `Contém`), checando tipo, conta, faixa de valor, descrição bruta e o núcleo normalizado (sem ruídos como `PIX ENVIADO`, `PAG*`, `IFD*`, datas ou CNPJs). Pode aplicar **categoria/subcategoria**, **tag automática** e **apelido de descrição** (preservando sempre `descricaoOriginal`).
+2. **Camada 2 — Memória Histórica Automática:** Se nenhuma regra bater, o motor busca no seu histórico já classificado transações com o mesmo núcleo normalizado e mesmo tipo, herdando a categoria mais frequente/recente.
+3. **Camada 3 — Dicionário Pluggy + Palavras-Chave BR:** Mapeia categorias nativas do Open Finance (*Groceries*, *Eating out*, *Transport*, *Subscriptions*, *Healthcare*, *Salary*, *Investments*...) e termos comuns no Brasil (*Uber*, *iFood*, *Drogasil*, *Posto Shell*, *Carrefour*, *Netflix*...) para as suas categorias cadastradas.
+4. **Camada 4 — Fila `"A Classificar"`:** O que não for reconhecido vai para a fila **A Classificar** (badge âmbar), evitando misturar itens desconhecidos em *"Outros"*.
+
+### Como treinar o motor sem esforço
+* **Aprendizado em 1 Clique:** Sempre que você trocar manualmente a categoria de um lançamento (no modal de edição ou na revisão de importação), aparece uma barra flutuante no rodapé perguntando: *"Sempre classificar `[nucleo]` como `[categoria]`?"* com os botões **Criar regra** e **Criar e aplicar em +N antigos**.
+* **Triagem Agrupada (Caixa de Entrada):** Na aba **Lançamentos**, clique em **Triagem (N)**. O modal agrupa todas as pendências por estabelecimento + tipo (do mais frequente para o menos frequente). Escolha a categoria, tag/apelido opcionais, deixe marcado **Salvar regra automática** e clique em **Aplicar** (ou **Aplicar todos os grupos preenchidos**).
+* **Gerenciar Regras e Reprocessar:** Em **Categorias & Contas → Regras de Auto-Categorização**, clique em **+ Nova Regra** (com prévia ao vivo mostrando quantos lançamentos existentes batem com a regra) ou use **Reprocessar Regras** para aplicar suas regras retroativamente sobre *"Apenas 'A Classificar' e 'Outros'"* ou *"Todos os lançamentos não-transferência"*.
+
+---
+
+## 5. Como Conectar no Pluggy (Open Finance)
+
+O COFIN possui integração nativa com a API **Pluggy v2** rodando no processo principal Node.js, mantendo suas chaves protegidas exclusivamente em um arquivo `.env` local (nunca expostas no `localStorage`).
+
+### Passo a Passo
+1. **Crie sua conta de desenvolvedor na Pluggy:**
+   * Acesse [dashboard.pluggy.ai](https://dashboard.pluggy.ai) e crie/entre na sua conta.
+   * No painel da Pluggy, crie uma aplicação (ou acesse **API Keys**) e copie o **`Client ID`** e o **`Client Secret`**.
+2. **Configure as credenciais no COFIN:**
+   * Abra o COFIN e vá em **Categorias & Contas → Open Finance (Pluggy Connect)**.
+   * Clique em **Configurar Credenciais (.env)**.
+   * Cole o **`PLUGGY_CLIENT_ID`** e o **`PLUGGY_CLIENT_SECRET`** e clique em **Salvar**.
+   * *(Opcional)* Você também pode criar/editar manualmente um arquivo `.env` na raiz do projeto (ou na pasta `userData` se estiver usando o `.exe` instalado):
+     ```env
+     PLUGGY_CLIENT_ID=seu_client_id_aqui
+     PLUGGY_CLIENT_SECRET=seu_client_secret_aqui
+     ```
+     > ⚠️ O arquivo `.env` já está no `.gitignore` para nunca ser enviado ao GitHub.
+3. **Conecte seu banco:**
+   * Clique em **Conectar Banco (Pluggy)** (disponível no Dashboard, em Lançamentos ou em Configurações).
+   * O COFIN abrirá o fluxo do **Pluggy Connect** no navegador com um servidor *Loopback Bridge* local para capturar automaticamente o `itemId` da sua instituição.
+   * Selecione seu banco, autorize o compartilhamento via Open Finance e aguarde o retorno automático ao COFIN.
+4. **Revise e importe as transações:**
+   * O COFIN busca todas as contas bancárias (`BANK`) e cartões (`CREDIT`), diferencia despesas/receitas, detecta pares reais de transferência e pagamentos de fatura e executa o motor de auto-categorização em 4 camadas.
+   * No **Modal de Revisão**, confira:
+     * O mapeamento de cada conta/cartão de origem para sua conta correspondente no COFIN;
+     * A opção de **conciliar automaticamente o Saldo Inicial** com o saldo real retornado pela API;
+     * As categorias sugeridas (com badge de origem `Regra`, `Memória`, `Pluggy` ou `A Classificar`) e os apelidos;
+   * Clique em **Confirmar e Salvar**.
+5. **Próximas sincronizações:**
+   * Nas próximas vezes, basta clicar em **Sincronizar Conexão Atual** para puxar somente as novas transações (lançamentos já importados são bloqueados automaticamente por `pluggyId`/`externalId`).
+
+---
+
+## 6. Como Conectar no Make.com (Gravação Automática em Planilha)
+
+O Make.com permite que o COFIN envie automaticamente sua base atualizada em formato `.xlsx` (Excel) para o seu OneDrive/Google Drive sempre que você salvar ou editar lançamentos (com envio em segundo plano após `1,2s` de inatividade).
+
+### Passo a Passo
+1. **Importe o Blueprint oficial no Make.com:**
+   * Acesse [make.com](https://www.make.com) e clique em **Create a new scenario**.
+   * No rodapé do editor do cenário, clique no menu **`...` (More)** → **Import Blueprint**.
+   * Selecione o arquivo [`Cenario_COFIN_Make.json`](Cenario_COFIN_Make.json) localizado na raiz deste repositório.
+2. **Crie/Copie a URL do Webhook:**
+   * Clique no primeiro módulo (**Webhooks → Custom webhook**).
+   * Clique em **Add**, dê um nome (ex.: `COFIN Sync`) e salve.
+   * Clique em **Copy address to clipboard** para copiar a URL gerada (ex.: `https://hook.us2.make.com/xxxxxxxx...`).
+3. **Conecte o destino da planilha no cenário:**
+   * Clique no módulo de saída (**OneDrive — Upload a File** ou módulo equivalente no blueprint).
+   * Conecte sua conta Microsoft, escolha a pasta de destino no OneDrive e habilite a opção de **sobrescrever arquivo existente** (ex.: `Controle_Financeiro_COFIN.xlsx`).
+   * Salve o cenário e ative a chave **ON** (Scheduling: *Immediately as data arrives*).
+4. **Configure o Webhook dentro do COFIN:**
+   * No menu lateral do COFIN, clique em **Sincronizar OneDrive**.
+   * No campo **URL do Webhook do Make.com (para gravação automática)**, cole a URL copiada do Make.
+   * O COFIN salva automaticamente a URL e passa a sincronizar a planilha `.xlsx` em segundo plano a cada alteração!
+
+---
+
+## 7. Como Conectar no OneDrive (Leitura & Sincronização)
+
+Além da gravação via Make.com, você pode ler e mesclar sua planilha do OneDrive diretamente no COFIN de **duas formas** (na aba **Sincronizar OneDrive**):
+
+### Opção A — Login Microsoft (Recomendado)
+1. No menu lateral, abra **Sincronizar OneDrive**.
+2. No card **Login Microsoft (recomendado)**, clique para conectar sua conta Microsoft via OAuth.
+3. Escolha a planilha `.xlsx` diretamente no seu OneDrive.
+4. O COFIN sincronizará leitura e gravação diretamente com a API do Microsoft Graph / OneDrive.
+
+### Opção B — Link de Compartilhamento da Planilha (`1drv.ms/x/...`)
+1. No OneDrive Web (ou Explorador do Windows), clique com o botão direito na sua planilha `.xlsx` → **Compartilhar** → **Copiar link** (certifique-se de que o link permite visualização/download).
+2. No COFIN, abra **Sincronizar OneDrive** e cole o link no campo **Link de compartilhamento da planilha (para leitura no OneDrive)**.
+3. Clique em **Buscar planilha agora**:
+   * No aplicativo Electron, o COFIN utiliza o **proxy IPC seguro** do processo principal (`main.js`) para baixar o `.xlsx` sem bloqueios de CORS.
+   * As linhas são mescladas de forma inteligente: registros locais não sincronizados, garantias, comprovantes e `descricaoOriginal` são preservados, e linhas sem categoria passam automaticamente pelo **Motor de Auto-Categorização em 4 Camadas**.
+4. *(Alternativa Offline)* Você também pode clicar em **Selecionar arquivo .xlsx manualmente** para importar qualquer planilha Excel direto do seu computador.
+
+---
+
+## 8. Drag & Drop para Extratos (`.OFX`) e Comprovantes (OCR)
+
+O COFIN possui uma camada global inteligente de **Drag & Drop** ativa em qualquer tela do aplicativo — diferenciando automaticamente se você arrastou um **extrato bancário** ou uma **imagem/PDF de comprovante**:
+
+### Importando Extratos Bancários (`.OFX` / `.QFX`)
+1. **Exporte o extrato no seu banco:** No internet banking ou app do seu banco, exporte o extrato do período no formato **OFX** (`.ofx`).
+2. **Arraste e solte em qualquer lugar do COFIN:**
+   * Basta arrastar o arquivo `.ofx` para dentro da janela do aplicativo — um **Overlay Global** translúcido aparecerá automaticamente indicando *"Solte o extrato .OFX aqui para importar"*.
+   * Se preferir, você também pode usar a área dedicada em **Categorias & Contas → Conciliação de Extratos OFX (Offline)** ou o botão **Importar Extrato** na barra de **Lançamentos**.
+3. **Vínculo automático de conta (`<ACCTID>`):**
+   * O motor extrai a tag `<ACCTID>` do arquivo OFX. Na primeira vez que importar um extrato daquela conta, um modal pergunta a qual conta do COFIN ela pertence e grava o vínculo (`ofxAccountId`) para que próximas importações sejam reconhecidas sozinhas.
+4. **Anti-duplicação & Revisão Humana:**
+   * Lançamentos já importados são bloqueados automaticamente pelo identificador único `<FITID>` do banco.
+   * Os lançamentos novos passam pelo **Motor de Auto-Categorização em 4 Camadas** e abrem no **Modal de Revisão**, onde você pode revisar badges de origem (`Regra`, `Memória`, `Pluggy`, `A Classificar`), editar categorias (disparando o aprendizado em 1 clique), ajustar transferências e confirmar.
+   * **100% Local e Privado:** Nenhum dado do seu arquivo `.ofx` sai do seu computador.
+
+### Arrastando Comprovantes, Notas e Recibos (OCR Local)
+* Arraste uma imagem (**PNG, JPG, WEBP**) ou recibo para dentro da janela do COFIN.
+* O motor **Tesseract.js (OCR 100% local)** lê automaticamente o valor total, a data e o estabelecimento, abre o modal de **Novo Lançamento** pré-preenchido e já anexa a imagem ao lançamento para visualização em **Split-View**.
+
+---
+
+## 9. Sincronização Familiar P2P, Shadow Vault e Segurança
+
+* **Sincronização Familiar P2P (Rede Local — Porta `45000`):**
+  * Em **Categorias & Contas → Sincronização Familiar**, copie o **Seu IP na rede**, informe o **IP do Parceiro** (outro computador com COFIN na mesma rede Wi-Fi/LAN) e clique em **Sincronizar Agora**.
+  * O **Merge Inteligente** combina lançamentos, contas, cofres, metas e `regrasCategoria` de ambos os lados sem duplicar nem apagar nada, bloqueando qualquer conexão fora de redes privadas RFC 1918.
+* **Shadow Vault (Auto-Backup Local):**
+  * Escolha uma pasta segura em **Categorias & Contas** para gerar snapshots `.json` automáticos (contendo todo o `STATE`, incluindo `regrasCategoria`), além de exportação e restauração manual de backup `.json`.
+* **Privacidade e Hardening Electron:**
+  * Bloqueio por **PIN** local, **Modo Stealth (`Alt + P`)** para ocultar valores na tela, `contextIsolation: true`, `nodeIntegration: false`, allowlist estrita de canais IPC em [`preload.js`](preload.js) e credenciais Pluggy isoladas no `.env`.
+
+---
+
+## 10. Atalhos de Teclado
 
 | Atalho | Ação |
 | :--- | :--- |
 | **`Ctrl + K`** | Abre o **Spotlight Semântico** (busca global, filtros e comandos rápidos com `>`). |
 | **`Ctrl + N`** | Abre o modal de **Novo Lançamento**. |
 | **`Alt + P`** | Alterna o **Modo Stealth** (borra valores sensíveis na tela). |
-| **`Esc`** | Fecha modais e janelas sobrepostas ativas. |
-| **`Enter`** | Confirma formulários rápidos de lançamento. |
-| **Arrastar e Soltar** | Solte imagens de comprovantes/cupons para leitura automática via **OCR Local**. |
+| **`Esc`** | Fecha modais, Split-View e janelas sobrepostas ativas. |
+| **`Enter`** | Confirma formulários rápidos (Smart Add e cadastros). |
+| **Arrastar `.ofx`** | Abre o Overlay Global para conciliação local de extrato bancário. |
+| **Arrastar imagem** | Executa leitura automática via **OCR Local (Tesseract.js)** e anexa o comprovante. |
 
 ---
 
-## 9. Estrutura do Repositório
+## 11. Desenvolvimento, Build e Publicação OTA
 
+### Scripts disponíveis
+```bash
+npm start     # Inicia o COFIN em modo de desenvolvimento (Electron)
+npm run dist  # Gera o instalador Windows NSIS em dist/COFIN-Setup-1.5.0.exe
+```
+
+### Pipeline Automatizado CI/CD ([`.github/workflows/release.yml`](.github/workflows/release.yml))
+Todo push de tag semântica `v*` (ex.: `v1.5.0`) dispara o GitHub Actions em `windows-latest`:
+1. `npm ci` usando o `package-lock.json` versionado;
+2. Validação de sintaxe em `main.js`, `preload.js` e `app.js` via `node --check`;
+3. Empacotamento NSIS e publicação automática no **GitHub Releases** (`COFIN-Setup-1.5.0.exe`, `.blockmap` e `latest.yml`) para entrega **Auto-Update OTA**.
+
+### Estrutura do Repositório
 ```text
 COFIN/
-├── .github/
-│   └── workflows/
-│       └── release.yml         # CI/CD Windows NSIS + publicação OTA no GitHub Releases
-├── build/
-│   └── icon.ico                # Ícone oficial do executável e instalador NSIS
-├── app.js                      # Lógica de domínio, estado offline-first e UI renderer
-├── index.html                  # Estrutura HTML, modais, tabelas e Patch Notes
-├── style.css                   # Design System (Glassmorphism, Bento Grid, Light/Dark)
-├── main.js                     # Main Process Electron (IPC, P2P :45000, OTA, Shadow Vault)
-├── preload.js                  # Ponte segura contextBridge com allowlist de canais IPC
-├── dev-app-update.yml          # Configuração de diagnóstico OTA em desenvolvimento
-├── Cenario_COFIN_Make.json     # Blueprint pronto para importação no Make.com
-├── cofin-icon*.png / .svg      # Ícones da aplicação e suporte opcional PWA
-├── manifest.json / service-worker.js
-├── Iniciar COFIN.bat           # Atalho local Windows para npm start
-├── package.json
-├── package-lock.json           # Lockfile versionado para builds determinísticos (npm ci)
-├── .gitignore
+├── .github/workflows/release.yml   # CI/CD Windows NSIS + publicação OTA
+├── build/icon.ico                  # Ícone oficial do executável Windows
+├── app.js                          # Domínio, Auto-Categorização, Open Finance, OFX e UI
+├── index.html                      # Estrutura HTML, modais (Revisão, Triagem, Regras) e Patch Notes
+├── style.css                       # Design System Glassmorphism + Dark/Light Mode
+├── main.js                         # Main Process Electron (Pluggy v2 IPC, P2P :45000, OTA, Shadow Vault)
+├── preload.js                      # contextBridge seguro com allowlist de canais IPC
+├── Cenario_COFIN_Make.json         # Blueprint pronto para importação no Make.com
+├── dev-app-update.yml              # Diagnóstico OTA em desenvolvimento
+├── Iniciar COFIN.bat               # Atalho rápido Windows
+├── package.json / package-lock.json
 └── README.md
 ```
 
 ---
 
 <p align="center">
-  <strong>COFIN</strong> · Desenvolvido com foco em privacidade local, estabilidade contábil e produtividade desktop · Licença <strong>ISC</strong>
+  <strong>COFIN v1.5.0</strong> · Offline-First, Privacidade Local e Produtividade Financeira · Licença <strong>ISC</strong>
 </p>
