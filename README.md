@@ -8,7 +8,7 @@
   </p>
 
   <p>
-    <img src="https://img.shields.io/badge/vers%C3%A3o-1.5.0-1A6FE0?style=for-the-badge" alt="Versão 1.5.0" />
+    <img src="https://img.shields.io/badge/vers%C3%A3o-1.6.0-1A6FE0?style=for-the-badge" alt="Versão 1.6.0" />
     <img src="https://img.shields.io/badge/Electron-32.0-47848F?style=for-the-badge&logo=electron&logoColor=white" alt="Electron 32" />
     <img src="https://img.shields.io/badge/Windows-NSIS%20Installer-0078D6?style=for-the-badge&logo=windows&logoColor=white" alt="Windows NSIS" />
     <img src="https://img.shields.io/badge/CI%2FCD-GitHub%20Actions-2088FF?style=for-the-badge&logo=github-actions&logoColor=white" alt="GitHub Actions" />
@@ -49,7 +49,7 @@
 
 ### Opção A — Instalador Windows (Recomendado)
 1. Acesse a aba **[Releases](https://github.com/pedrotsongas-ai/COFIN/releases)** do repositório.
-2. Baixe o instalador mais recente: **`COFIN-Setup-1.5.0.exe`**.
+2. Baixe o instalador mais recente: **`COFIN-Setup-1.6.0.exe`**.
 3. Execute o instalador e conclua o assistente. A partir daí, futuras atualizações chegam automaticamente via **Auto-Update OTA**.
 
 ### Opção B — Executar a partir do Código-Fonte
@@ -247,14 +247,14 @@ O COFIN possui uma camada global inteligente de **Drag & Drop** ativa em qualque
 ### Scripts disponíveis
 ```bash
 npm start     # Inicia o COFIN em modo de desenvolvimento (Electron)
-npm run dist  # Gera o instalador Windows NSIS em dist/COFIN-Setup-1.5.0.exe
+npm run dist  # Gera o instalador Windows NSIS em dist/COFIN-Setup-1.6.0.exe
 ```
 
 ### Pipeline Automatizado CI/CD ([`.github/workflows/release.yml`](.github/workflows/release.yml))
-Todo push de tag semântica `v*` (ex.: `v1.5.0`) dispara o GitHub Actions em `windows-latest`:
+Todo push de tag semântica `v*` (ex.: `v1.6.0`) dispara o GitHub Actions em `windows-latest`:
 1. `npm ci` usando o `package-lock.json` versionado;
 2. Validação de sintaxe em `main.js`, `preload.js` e `app.js` via `node --check`;
-3. Empacotamento NSIS e publicação automática no **GitHub Releases** (`COFIN-Setup-1.5.0.exe`, `.blockmap` e `latest.yml`) para entrega **Auto-Update OTA**.
+3. Empacotamento NSIS e publicação automática no **GitHub Releases** (`COFIN-Setup-1.6.0.exe`, `.blockmap` e `latest.yml`) para entrega **Auto-Update OTA**.
 
 ### Estrutura do Repositório
 ```text
@@ -276,5 +276,5 @@ COFIN/
 ---
 
 <p align="center">
-  <strong>COFIN v1.5.0</strong> · Offline-First, Privacidade Local e Produtividade Financeira · Licença <strong>ISC</strong>
+  <strong>COFIN v1.6.0</strong> · Offline-First, Privacidade Local e Produtividade Financeira · Licença <strong>ISC</strong>
 </p>

@@ -139,7 +139,6 @@
 </div>
 
 <main class="main" id="main-workspace">
-  <div class="ambient-glow" id="ambient-glow" aria-hidden="true"></div>
   <div class="travel-banner" id="travel-banner">
     <div class="travel-banner-left">
       <span id="travel-banner-text">✈️ Modo Viagem Ativo: —</span>
@@ -150,6 +149,7 @@
   </div>
   <div class="topbar">
     <div style="display:flex;align-items:center;gap:10px;min-width:0">
+      <button type="button" class="btn btn-sm topbar-menu-btn" id="btn-topbar-menu" onclick="alternarNavegacaoCompacta()" title="Alternar menu lateral" aria-label="Alternar menu lateral"><i class="ti ti-menu-2"></i></button>
       <div class="topbar-title" id="topbar-title">Dashboard</div>
     </div>
     <div class="topbar-actions">
@@ -201,9 +201,9 @@
         <div class="card dash-draggable bento-item" id="dash-saldo-contas-card" draggable="true" data-widget-id="cartoes-banco">
           <div class="card-header">
             <div class="card-title"><i class="ti ti-grip-vertical dash-drag-handle"></i>Saldo por conta &amp; Cartões</div>
-            <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
-              <button class="btn btn-sm" onclick="abrirModalConciliacaoBancaria()" title="Conciliar saldo real do banco com os lançamentos do app"><i class="ti ti-scale"></i> Conciliar Saldo</button>
-              <button class="btn btn-sm" onclick="abrirModalGerirCartoes()" title="Gerenciar limites e faturas dos cartões"><i class="ti ti-credit-card"></i> Cartões</button>
+            <div class="card-header-actions">
+              <button type="button" class="btn btn-sm" onclick="event.stopPropagation(); abrirModalConciliacaoBancaria()" title="Conciliar saldo real do banco com os lançamentos do app"><i class="ti ti-scale"></i> Conciliar Saldo</button>
+              <button type="button" class="btn btn-sm" onclick="event.stopPropagation(); abrirModalGerirCartoes()" title="Gerenciar limites e faturas dos cartões"><i class="ti ti-credit-card"></i> Cartões</button>
               <div class="metric-sub" id="dash-contas-resumo-topo"></div>
             </div>
           </div>
@@ -226,7 +226,7 @@
         <div class="card dash-draggable bento-item" id="dash-antimetas-card" draggable="true" data-widget-id="anti-metas">
           <div class="card-header">
             <div class="card-title"><i class="ti ti-grip-vertical dash-drag-handle"></i><i class="ti ti-flame-off icon-orange card-title-icon"></i>Anti-Metas (Redução de Hábitos)</div>
-            <button class="btn btn-sm" onclick="abrirModalAntiMetas()" title="Configurar Anti-Meta"><i class="ti ti-settings"></i></button>
+            <button type="button" class="btn btn-sm" onclick="event.stopPropagation(); abrirModalAntiMetas()" title="Configurar Anti-Meta"><i class="ti ti-settings"></i></button>
           </div>
           <div id="dash-antimetas-content"></div>
         </div>
@@ -240,9 +240,9 @@
         <div class="card dash-draggable bento-item" id="dash-ultimos-card" draggable="true" data-widget-id="ultimos-lancamentos">
           <div class="card-header">
             <div class="card-title"><i class="ti ti-grip-vertical dash-drag-handle"></i>Últimos lançamentos</div>
-            <button class="btn btn-sm" onclick="expandirCardMagicMove(this, 'lancamentos')">Ver todos</button>
+            <button type="button" class="btn btn-sm" onclick="event.stopPropagation(); expandirCardMagicMove(this, 'lancamentos')">Ver todos</button>
           </div>
-          <div class="table-wrap"><table><thead><tr><th>Data</th><th>Descrição</th><th>Categoria</th><th>Conta</th><th>Status</th><th style="text-align:right">Valor</th></tr></thead><tbody id="dash-ultimos"></tbody></table></div>
+          <div class="table-wrap table-responsive"><table><thead><tr><th>Data</th><th>Descrição</th><th>Categoria</th><th>Conta</th><th>Status</th><th style="text-align:right">Valor</th></tr></thead><tbody id="dash-ultimos"></tbody></table></div>
         </div>
       </div>
     </div>
@@ -259,7 +259,14 @@
         <div class="help-text" id="rapido-dica">Entende "hoje", "ontem", "amanhã", "anteontem" ou uma data (dd/mm), identifica a conta ou cartão onde entrou/saiu o valor (ex: "no Nubank", "pelo Itaú", "no cartão") e mapeia a categoria automaticamente. Pressione Enter para salvar.</div>
       </div>
       <div class="filters">
-        <select id="f-mes" onchange="renderLancamentos()"></select>
+        <div class="filtro-mes-wrap">
+          <select id="f-mes" onchange="renderLancamentos()"></select>
+          <input type="hidden" id="f-modo-mes" value="data">
+          <div class="chip-group chip-group-modo-mes" id="filtro-modo-mes-group" role="group" aria-label="Critério do filtro de mês" style="display:none">
+            <button type="button" class="chip-btn active" data-chip-target="f-modo-mes" data-chip-val="data" onclick="selecionarModoFiltroMes('data', this)" title="Filtrar pela data real do lançamento">Por Data</button>
+            <button type="button" class="chip-btn" data-chip-target="f-modo-mes" data-chip-val="fatura" onclick="selecionarModoFiltroMes('fatura', this)" title="Filtrar pelo mês de competência da fatura">Por Fatura</button>
+          </div>
+        </div>
         <input type="hidden" id="f-tipo" value="">
         <div class="chip-group" role="group" aria-label="Filtrar por tipo">
           <button type="button" class="chip-btn active" data-chip-target="f-tipo" data-chip-val="" onclick="selecionarChipFiltro('f-tipo','',this,renderLancamentos)">Todos</button>
@@ -286,9 +293,10 @@
         <button class="btn btn-sm" onclick="document.getElementById('extrato-file-input').click()" title="Importar extrato bancário (.csv ou .ofx)"><i class="ti ti-file-import"></i> Importar Extrato</button>
         <input type="file" id="extrato-file-input" accept=".csv,.ofx" style="display:none" onchange="lerArquivoExtrato(this.files[0]); this.value='';">
       </div>
+      <div id="drilldown-filtro-banner" class="drilldown-banner" style="display:none" role="status" aria-live="polite"></div>
       <div id="tag-resumo" class="banner" style="display:none;background:var(--accent-bg);border-color:var(--accent);color:var(--accent-text)"></div>
       <div class="card" id="lanc-card-container" style="padding:0">
-        <div class="table-wrap" id="lanc-table-wrap">
+        <div class="table-wrap table-responsive" id="lanc-table-wrap">
           <table>
             <thead id="lanc-thead"><tr><th>Data</th><th>Descrição</th><th>Categoria</th><th>Conta</th><th>Status</th><th style="text-align:right">Valor</th><th style="width:70px"></th></tr></thead>
             <tbody id="lanc-tbody"></tbody>
@@ -296,7 +304,6 @@
         </div>
         <div id="lanc-empty" class="empty" style="display:none">
           <div class="empty-illustration-wrap">
-            <div class="empty-glow-orb"></div>
             <div class="empty-icon-badge">
               <i class="ti ti-receipt-off"></i>
             </div>
@@ -307,12 +314,6 @@
         </div>
       </div>
       <div class="card" id="view-calendario" style="display:none"></div>
-      <div class="conciliacao-bar" id="conciliacao-bar">
-        <span id="conciliacao-contador" style="font-size:12.5px;font-weight:700">0 selecionados</span>
-        <button class="btn btn-danger btn-sm" id="btn-concil-apagar" onclick="excluirSelecionadosEmLote()" title="Apagar todos os lançamentos selecionados"><i class="ti ti-trash"></i> Apagar Selecionados</button>
-        <button class="btn btn-primary btn-sm" id="btn-concil-pago" onclick="marcarSelecionadosComoPagos()" title="Marcar lançamentos selecionados como pagos"><i class="ti ti-checks"></i> Marcar como Pagos</button>
-        <button class="btn btn-sm" style="background:rgba(255,255,255,.12);color:var(--text);border-color:var(--border2)" onclick="alternarModoConciliacao()">Cancelar</button>
-      </div>
     </div>
 
     <!-- CARTÕES & FATURAS -->
@@ -338,7 +339,6 @@
       <div id="cartoes-content"></div>
       <div id="cartoes-empty" class="empty" style="display:none">
         <div class="empty-illustration-wrap">
-          <div class="empty-glow-orb"></div>
           <div class="empty-icon-badge">
             <i class="ti ti-credit-card-off"></i>
           </div>
@@ -390,7 +390,6 @@
         </div>
         <div id="rec-empty" class="empty" style="display:none">
           <div class="empty-illustration-wrap">
-            <div class="empty-glow-orb"></div>
             <div class="empty-icon-badge">
               <i class="ti ti-repeat-off"></i>
             </div>
@@ -430,7 +429,6 @@
       <div id="metas-lista"></div>
       <div id="metas-empty" class="empty" style="display:none">
         <div class="empty-illustration-wrap">
-          <div class="empty-glow-orb"></div>
           <div class="empty-icon-badge">
             <i class="ti ti-pig-off"></i>
           </div>
@@ -476,7 +474,6 @@
         </div>
         <div id="divida-empty" class="empty" style="display:none">
           <div class="empty-illustration-wrap">
-            <div class="empty-glow-orb"></div>
             <div class="empty-icon-badge">
               <i class="ti ti-users"></i>
             </div>
@@ -555,7 +552,7 @@
         </div>
         <div class="card">
           <div class="card-header"><div class="card-title">Maiores despesas do período</div></div>
-          <div class="table-wrap"><table><thead><tr><th>Data</th><th>Descrição</th><th>Categoria</th><th style="text-align:right">Valor</th></tr></thead><tbody id="rel-ranking"></tbody></table></div>
+          <div class="table-wrap table-responsive"><table><thead><tr><th>Data</th><th>Descrição</th><th>Categoria</th><th style="text-align:right">Valor</th></tr></thead><tbody id="rel-ranking"></tbody></table></div>
         </div>
       </div>
     </div>
@@ -1918,27 +1915,23 @@
           <div class="patch-notes-edition">COFIN Enterprise Edition</div>
           <div class="patch-date-label" id="patch-notes-date">Atualização de Novembro de 2026</div>
         </div>
-        <span class="patch-version-pill" id="patch-notes-version-badge"><i class="ti ti-rocket"></i> v1.5.0</span>
+        <span class="patch-version-pill" id="patch-notes-version-badge"><i class="ti ti-rocket"></i> v1.6.0</span>
       </div>
 
       <div class="patch-section">
         <div class="patch-section-title">✨ Novo</div>
         <ul class="patch-list" id="patch-list-novo">
           <li>
-            <strong class="patch-item-title">Motor de Auto-Categorização em 4 Camadas com Aprendizado</strong>
-            <span class="patch-item-desc">Normalizador de descrições bancárias BR + funil inteligente (<strong>Regras do Usuário → Memória Histórica → Pluggy/Dicionário BR → Fila "A Classificar"</strong>), preservando sempre <code>descricaoOriginal</code> ao aplicar apelidos.</span>
+            <strong class="patch-item-title">Drill-Down Interativo no Dashboard e Relatórios</strong>
+            <span class="patch-item-desc">Clique em KPIs, Contas Bancárias, Cartões de Crédito, barras do gráfico de 6 meses, Top 3 Gastos, Anti-Metas, Pendentes e gráficos de Relatórios para ir direto à aba <strong>Lançamentos</strong> com os filtros aplicados e banner de limpeza em 1 clique.</span>
           </li>
           <li>
-            <strong class="patch-item-title">Aprendizado em 1 Clique &amp; Triagem Agrupada ("Caixa de Entrada")</strong>
-            <span class="patch-item-desc">Toast inteligente após edição manual para criar regra e aplicar em lançamentos antigos, além do modal <strong>Triagem (N)</strong> na aba Lançamentos para classificar pendências agrupadas em lote.</span>
+            <strong class="patch-item-title">Alternador "Por Data | Por Fatura" &amp; Tag Discreta de Fatura</strong>
+            <span class="patch-item-desc">A aba <strong>Lançamentos</strong> agora filtra pela data real (<code>l.data</code>) por padrão (em Tabela, Cards e Calendário), com opção rápida para auditar <strong>Por Fatura</strong> e selo discreto (ex.: <code>Fat. Dez/26</code>) em compras cobradas no mês seguinte.</span>
           </li>
           <li>
-            <strong class="patch-item-title">Gerenciador Avançado de Regras &amp; Reprocessamento Retroativo</strong>
-            <span class="patch-item-desc">Crie regras com prioridade, modo de match (<code>Contém</code>/<code>Começa com</code>/<code>Exato</code>), conta, faixa de valor, tag e apelido com <strong>prévia ao vivo</strong> e botão <strong>Reprocessar Regras</strong> em Categorias &amp; Contas.</span>
-          </li>
-          <li>
-            <strong class="patch-item-title">Filtro Exclusivo de Transferências</strong>
-            <span class="patch-item-desc">Novo chip <strong>Transferências</strong> na aba Lançamentos e blindagem para que transferências nunca se misturem em Receitas ou Despesas.</span>
+            <strong class="patch-item-title">Layout Responsivo &amp; Interface Flat Dark Precision</strong>
+            <span class="patch-item-desc">Sidebar compactável em janelas estreitas (<code>&lt;= 1024px</code>), cabeçalhos fluidos sem aperto visual, tabelas responsivas, modais adaptáveis (<code>min(95vw, ...)</code>) e dark mode sóbrio de alta legibilidade.</span>
           </li>
         </ul>
       </div>
@@ -1947,16 +1940,12 @@
         <div class="patch-section-title">🛠️ Melhorado/Corrigido</div>
         <ul class="patch-list" id="patch-list-melhorado">
           <li>
-            <strong class="patch-item-title">Patrimônio Total e Saldo Disponível Unificados</strong>
-            <span class="patch-item-desc">Os KPIs do topo agora compartilham exatamente a mesma fonte de verdade consolidada de <strong>Contas Bancárias</strong> (com efeito líquido zero para transferências entre contas próprias).</span>
+            <strong class="patch-item-title">Precisão Total de Datas e Fuso Horário (Pluggy, OFX &amp; Planilha)</strong>
+            <span class="patch-item-desc">Nova função única <code>extrairDataLocalISO</code> tratando <code>DD/MM/YYYY</code>, OFX, meia-noite UTC sem recuar dia, compras noturnas UTC-3 e serial do Excel, além de data editável no Modal de Revisão com <code>dataCompra</code> sincronizada nos cartões.</span>
           </li>
           <li>
-            <strong class="patch-item-title">Precisão em Despesas no Mês &amp; Competência de Faturas</strong>
-            <span class="patch-item-desc">Verificação estrita de <code>tipo === 'despesa'</code>, exclusão de despesas já reembolsadas, ampliação do detector de pagamentos de fatura Pluggy/OFX e correção do fallback de <code>diaFechamento</code> nos cartões.</span>
-          </li>
-          <li>
-            <strong class="patch-item-title">Open Finance Híbrido (Pluggy v2 + OFX) &amp; Merge P2P</strong>
-            <span class="patch-item-desc">Badges de origem no Modal de Revisão, gravação sempre em par sincronizado nas transferências importadas e sincronização de <code>regrasCategoria</code> no Backup JSON, Shadow Vault e P2P.</span>
+            <strong class="patch-item-title">Modo Seleção em Lote &amp; Barra Fixa no Viewport</strong>
+            <span class="patch-item-desc">Correção da marcação visual de checkboxes (alto contraste <code>#10b981</code>), destaque das linhas/cards selecionados em <code>#lanc-tbody</code>, estado <code>indeterminate</code> em "Selecionar todos" e barra flutuante realmente fixa na base da janela.</span>
           </li>
         </ul>
       </div>
@@ -1965,7 +1954,7 @@
         <div class="patch-section-title">🗑️ Removido</div>
         <ul class="patch-list" id="patch-list-removido">
           <li>
-            <span class="patch-item-desc">Fórmula duplicada de saldo global divergente do bloco de Contas Bancárias, fallback perigoso de dia de fechamento <code>1</code> em cartões sem configuração e mistura silenciosa de lançamentos desconhecidos em "Outros".</span>
+            <span class="patch-item-desc">Flares radiais de fundo (<code>ambient-glow</code> / <code>empty-glow-orb</code>), rastreamento <code>mousemove</code> de spotlight nos cards, brilhos neon excessivos e <code>backdrop-filter</code> desnecessário em cards comuns.</span>
           </li>
         </ul>
       </div>
@@ -2370,6 +2359,14 @@
   <button type="button" class="toast-aprendizado-close" onclick="fecharToastAprendizadoRegra()" title="Fechar">
     <i class="ti ti-x"></i>
   </button>
+</div>
+
+<!-- BARRA FLUTUANTE DE AÇÕES EM LOTE (FILHO DIRETO DO BODY PARA POSITION: FIXED REAL) -->
+<div class="conciliacao-bar" id="conciliacao-bar" role="region" aria-label="Ações em lote de lançamentos selecionados">
+  <span id="conciliacao-contador" style="font-size:12.5px;font-weight:700">0 selecionados</span>
+  <button type="button" class="btn btn-danger btn-sm" id="btn-concil-apagar" onclick="excluirSelecionadosEmLote()" title="Apagar todos os lançamentos selecionados"><i class="ti ti-trash"></i> Apagar Selecionados</button>
+  <button type="button" class="btn btn-primary btn-sm" id="btn-concil-pago" onclick="marcarSelecionadosComoPagos()" title="Marcar lançamentos selecionados como pagos"><i class="ti ti-checks"></i> Marcar como Pagos</button>
+  <button type="button" class="btn btn-sm" onclick="alternarModoConciliacao()">Cancelar</button>
 </div>
 
 <div class="toast" id="toast"></div>

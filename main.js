@@ -820,17 +820,206 @@ function sanitizarOpcoesConnectToken(opcoesBrutas) {
   };
 }
 
-function normalizarDataTransacaoPluggy(valorData) {
-  if (!valorData) return new Date().toISOString().slice(0, 10);
-  if (valorData instanceof Date && !isNaN(valorData.getTime())) {
-    return valorData.toISOString().slice(0, 10);
+function hojeLocalISO(deslocDias = 0) {
+  const d = new Date();
+  if (deslocDias) d.setDate(d.getDate() + deslocDias);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+function formatarPartesDataLocalISO(ano, mes, dia) {
+  if (!Number.isInteger(ano) || !Number.isInteger(mes) || !Number.isInteger(dia)) return '';
+  if (ano < 1900 || ano > 2100 || mes < 1 || mes > 12 || dia < 1 || dia > 31) return '';
+  const dt = new Date(Date.UTC(ano, mes - 1, dia));
+  if (dt.getUTCFullYear() !== ano || dt.getUTCMonth() !== mes - 1 || dt.getUTCDate() !== dia) return '';
+  return `${String(ano).padStart(4, '0')}-${String(mes).padStart(2, '0')}-${String(dia).padStart(2, '0')}`;
+}
+
+function extrairDataLocalISO(valorData, contextoOuOpcoes) {
+  const opcoes = (contextoOuOpcoes && typeof contextoOuOpcoes === 'object' && ('retornarVazioSeInvalido' in contextoOuOpcoes || 'silencioso' in contextoOuOpcoes || 'aceitarSerialExcel' in contextoOuOpcoes || 'contexto' in contextoOuOpcoes))
+    ? contextoOuOpcoes
+    : { contexto: contextoOuOpcoes };
+  const retornarVazio = Boolean(opcoes.retornarVazioSeInvalido);
+  const silencioso = Boolean(opcoes.silencioso);
+  const aceitarSerialExcel = opcoes.aceitarSerialExcel !== false;
+
+  const fallbackInvalido = () => {
+    if (retornarVazio) return '';
+    if (!silencioso) {
+      console.warn('[COFIN][Data][Main] Valor de data nulo/inválido; aplicando hojeLocalISO():', valorData, opcoes.contexto || '');
+    }
+    return hojeLocalISO();
+  };
+
+  if (valorData === null || valorData === undefined || valorData === '') {
+    return fallbackInvalido();
   }
-  const str = String(valorData).trim();
-  const mIso = str.match(/^(\d{4}-\d{2}-\d{2})/);
-  if (mIso) return mIso[1];
-  const parsed = new Date(str);
-  if (!isNaN(parsed.getTime())) return parsed.toISOString().slice(0, 10);
-  return new Date().toISOString().slice(0, 10);
+
+  if (valorData instanceof Date) {
+    if (!isNaN(valorData.getTime())) {
+      const isoDate = formatarPartesDataLocalISO(
+        valorData.getFullYear(),
+        valorData.getMonth() + 1,
+        valorData.getDate()
+      );
+      if (isoDate) return isoDate;
+    }
+    return fallbackInvalido();
+  }
+
+  if (typeof valorData === 'number' && Number.isFinite(valorData)) {
+    if (Number.isInteger(valorData) && valorData >= 19000101 && valorData <= 21001231) {
+      const sNum = String(valorData);
+      const isoNum = formatarPartesDataLocalISO(
+        parseInt(sNum.slice(0, 4), 10),
+        parseInt(sNum.slice(4, 6), 10),
+        parseInt(sNum.slice(6, 8), 10)
+      );
+      if (isoNum) return isoNum;
+    }
+    if (aceitarSerialExcel && valorData >= 1 && valorData <= 90000) {
+      const diasInteiros = Math.floor(valorData);
+      const baseMs = Date.UTC(1899, 11, diasInteiros < 60 ? 31 : 30);
+      const dtExcel = new Date(baseMs + diasInteiros * 86400000);
+      const isoExcel = formatarPartesDataLocalISO(
+        dtExcel.getUTCFullYear(),
+        dtExcel.getUTCMonth() + 1,
+        dtExcel.getUTCDate()
+      );
+      if (isoExcel) return isoExcel;
+    }
+    if (valorData >= 1e9) {
+      const ms = valorData < 1e12 ? valorData * 1000 : valorData;
+      const dtUnix = new Date(ms);
+      if (!isNaN(dtUnix.getTime())) {
+        const isoUnix = formatarPartesDataLocalISO(
+          dtUnix.getFullYear(),
+          dtUnix.getMonth() + 1,
+          dtUnix.getDate()
+        );
+        if (isoUnix) return isoUnix;
+      }
+    }
+    return fallbackInvalido();
+  }
+
+  const s = String(valorData).trim().replace(/^["']|["']$/g, '');
+  if (!s) return fallbackInvalido();
+
+  if (aceitarSerialExcel && /^\d{5}(?:[.,]\d+)?$/.test(s)) {
+    const numSerial = parseFloat(s.replace(',', '.'));
+    if (Number.isFinite(numSerial) && numSerial >= 20000 && numSerial <= 73050) {
+      const diasInteiros = Math.floor(numSerial);
+      const baseMs = Date.UTC(1899, 11, 30);
+      const dtExcel = new Date(baseMs + diasInteiros * 86400000);
+      const isoExcel = formatarPartesDataLocalISO(
+        dtExcel.getUTCFullYear(),
+        dtExcel.getUTCMonth() + 1,
+        dtExcel.getUTCDate()
+      );
+      if (isoExcel) return isoExcel;
+    }
+  }
+
+  // a) DD/MM/YYYY (ou DD/MM/YY ou DD-MM-YYYY), com ou sem hora
+  const mBR = s.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})(?:[\sT].*)?$/);
+  if (mBR) {
+    const p1 = parseInt(mBR[1], 10);
+    const p2 = parseInt(mBR[2], 10);
+    let ano = parseInt(mBR[3], 10);
+    if (mBR[3].length === 2) ano = ano < 70 ? 2000 + ano : 1900 + ano;
+    let dia = p1;
+    let mes = p2;
+    if (p2 > 12 && p1 <= 12) {
+      mes = p1;
+      dia = p2;
+    }
+    const isoBR = formatarPartesDataLocalISO(ano, mes, dia);
+    if (isoBR) return isoBR;
+    return fallbackInvalido();
+  }
+
+  // b) OFX: YYYYMMDD ou YYYYMMDDHHMMSS[-3:BRT]
+  const mOFX = s.match(/^(\d{4})(\d{2})(\d{2})(?:$|[\d.\[\s])/);
+  if (mOFX) {
+    const isoOFX = formatarPartesDataLocalISO(
+      parseInt(mOFX[1], 10),
+      parseInt(mOFX[2], 10),
+      parseInt(mOFX[3], 10)
+    );
+    if (isoOFX) return isoOFX;
+    return fallbackInvalido();
+  }
+
+  // c) e d) ISO YYYY-MM-DD com ou sem hora e fuso
+  const mISO = s.match(/^(\d{4})[\/\-](\d{1,2})[\/\-](\d{1,2})(?:[T\s](\d{2}):(\d{2})(?::(\d{2})(?:\.(\d+))?)?(Z|[+-]\d{2}:?\d{2})?)?$/i);
+  if (mISO) {
+    const ano = parseInt(mISO[1], 10);
+    const mes = parseInt(mISO[2], 10);
+    const dia = parseInt(mISO[3], 10);
+    const hora = mISO[4];
+    const min = mISO[5];
+    const seg = mISO[6] || '00';
+    const msStr = mISO[7] || '0';
+    const tz = mISO[8] || '';
+
+    if (!hora || !tz) {
+      const isoSimples = formatarPartesDataLocalISO(ano, mes, dia);
+      if (isoSimples) return isoSimples;
+      return fallbackInvalido();
+    }
+
+    const ehUtcZero = /^(?:Z|[+-]00:?00)$/i.test(tz);
+    const ehMeiaNoiteExata = hora === '00' && min === '00' && seg === '00' && /^0+$/.test(msStr);
+    if (ehUtcZero && ehMeiaNoiteExata) {
+      const isoMeiaNoite = formatarPartesDataLocalISO(ano, mes, dia);
+      if (isoMeiaNoite) return isoMeiaNoite;
+      return fallbackInvalido();
+    }
+
+    const tzNorm = tz.toUpperCase() === 'Z'
+      ? 'Z'
+      : (tz.includes(':') ? tz : `${tz.slice(0, 3)}:${tz.slice(3)}`);
+    const isoParaParse = `${String(ano).padStart(4, '0')}-${String(mes).padStart(2, '0')}-${String(dia).padStart(2, '0')}T${hora}:${min}:${seg}${mISO[7] ? '.' + mISO[7] : ''}${tzNorm}`;
+    const dtComFuso = new Date(isoParaParse);
+    if (!isNaN(dtComFuso.getTime())) {
+      const isoLocal = formatarPartesDataLocalISO(
+        dtComFuso.getFullYear(),
+        dtComFuso.getMonth() + 1,
+        dtComFuso.getDate()
+      );
+      if (isoLocal) return isoLocal;
+    }
+    return fallbackInvalido();
+  }
+
+  if (/[a-zA-Z]{3}/.test(s)) {
+    const dtFallback = new Date(s);
+    if (!isNaN(dtFallback.getTime())) {
+      const isoFallback = formatarPartesDataLocalISO(
+        dtFallback.getFullYear(),
+        dtFallback.getMonth() + 1,
+        dtFallback.getDate()
+      );
+      if (isoFallback) return isoFallback;
+    }
+  }
+
+  return fallbackInvalido();
+}
+
+function preservarDataBrutaPluggy(valor) {
+  if (valor === null || valor === undefined) return null;
+  if (valor instanceof Date && !isNaN(valor.getTime())) {
+    return valor.toISOString();
+  }
+  if (typeof valor === 'string') {
+    const limpo = valor.trim();
+    return limpo || null;
+  }
+  if (typeof valor === 'number' && Number.isFinite(valor)) {
+    return valor;
+  }
+  return null;
 }
 
 function serializarContaPluggy(acc) {
@@ -850,13 +1039,41 @@ function serializarContaPluggy(acc) {
 
 function serializarTransacaoPluggy(tx, contaMeta) {
   if (!tx || typeof tx !== 'object') return null;
+  const purchaseDateBruta = (tx.creditCardMetadata && typeof tx.creditCardMetadata === 'object')
+    ? preservarDataBrutaPluggy(tx.creditCardMetadata.purchaseDate)
+    : null;
+  const transactedAtBruta = preservarDataBrutaPluggy(tx.transactedAt);
+  // Prioriza sempre a data real da transação (nunca createdAt/updatedAt ou data de sincronização)
+  // e repassa o valor bruto original (sem cortar com .slice(0, 10)) para preservação de fuso horário no frontend.
+  const dataRealBruta =
+    preservarDataBrutaPluggy(tx.date) ??
+    transactedAtBruta ??
+    purchaseDateBruta ??
+    preservarDataBrutaPluggy(tx.dataCompra) ??
+    preservarDataBrutaPluggy(tx.data) ??
+    null;
+
+  if (dataRealBruta === null) {
+    console.warn('[Pluggy] Transação sem campo de data real (date/transactedAt/purchaseDate):', {
+      id: tx.id || tx.providerId || null,
+      description: tx.description || tx.descriptionRaw || null
+    });
+  }
+
   return {
     id: String(tx.id || tx.providerId || ''),
     providerId: tx.providerId ? String(tx.providerId) : null,
     accountId: String(tx.accountId || (contaMeta && contaMeta.id) || ''),
     accountName: (contaMeta && contaMeta.name) ? String(contaMeta.name) : (tx.accountName ? String(tx.accountName) : ''),
     accountType: (contaMeta && contaMeta.type) ? String(contaMeta.type) : (tx.accountType ? String(tx.accountType) : ''),
-    date: normalizarDataTransacaoPluggy(tx.date),
+    date: dataRealBruta,
+    transactedAt: transactedAtBruta,
+    creditCardMetadata: (tx.creditCardMetadata && typeof tx.creditCardMetadata === 'object')
+      ? {
+          ...tx.creditCardMetadata,
+          purchaseDate: purchaseDateBruta
+        }
+      : null,
     description: String(tx.description || tx.descriptionRaw || 'Transação Open Finance').trim(),
     descriptionRaw: tx.descriptionRaw ? String(tx.descriptionRaw).trim() : null,
     amount: typeof tx.amount === 'number' ? tx.amount : Number(tx.amount || 0),
@@ -1261,8 +1478,7 @@ ipcMain.handle('pluggy:openConnectInBrowser', async (_evento, params) => {
 });
 
 function calcularDataInicioPadraoPluggy(diasAtras = 365) {
-  const data = new Date(Date.now() - diasAtras * 24 * 60 * 60 * 1000);
-  return data.toISOString().slice(0, 10);
+  return hojeLocalISO(-Math.abs(Number(diasAtras) || 365));
 }
 
 async function obterContasPluggyComFallback(client, itemIdInformado, accountType, itemIdsExtras = []) {
