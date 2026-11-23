@@ -20,7 +20,7 @@
 
 ## Sumário
 
-1. [Novidades da v1.5.0](#1-novidades-da-v150)
+1. [Novidades da v1.6.0](#1-novidades-da-v160)
 2. [Instalação e Primeiros Passos](#2-instalação-e-primeiros-passos)
 3. [Guia Passo a Passo de Uso do Painel](#3-guia-passo-a-passo-de-uso-do-painel)
 4. [Motor de Auto-Categorização com Aprendizado](#4-motor-de-auto-categorização-com-aprendizado)
@@ -34,14 +34,24 @@
 
 ---
 
-## 1. Novidades da v1.5.0
+## 1. Novidades da v1.6.0
+
+* **Drill-Down Interativo no Dashboard e Relatórios:** Clique em KPIs, Contas Bancárias, Cartões de Crédito, barras do gráfico de 6 meses, Top 3 Gastos, Anti-Metas, Pendentes e gráficos de Relatórios para ir direto à aba **Lançamentos** com os filtros já aplicados e banner de limpeza em 1 clique.
+* **Alternador "Por Data | Por Fatura" & Tag Discreta de Fatura:** A aba **Lançamentos** passa a filtrar pela data real (`l.data`) por padrão (em Tabela, Cards e Calendário), com opção rápida para auditar **Por Fatura** e selo discreto (ex.: `Fat. Dez/26`) em compras de cartão cobradas no mês seguinte.
+* **Precisão Total de Datas e Fuso Horário (Pluggy, OFX & Planilha):** Nova função única `extrairDataLocalISO` no backend (`main.js`) e frontend (`app.js`) tratando `DD/MM/YYYY`, formato OFX, ISO meia-noite UTC sem recuar o dia, compras noturnas em UTC-3 (`preservarDataBrutaPluggy`) e datas seriais do Excel, além de data editável no Modal de Revisão sincronizando `dataCompra` nos cartões.
+* **Layout Responsivo & Interface Flat Dark Precision:** Sidebar compactável em janelas estreitas (`<= 1024px`), cabeçalhos fluidos, tabelas responsivas, modais adaptáveis (`min(95vw, ...)`) e dark mode sóbrio de alta legibilidade — removendo flares radiais (`ambient-glow` / `empty-glow-orb`), spotlight `mousemove`, brilhos neon excessivos e `backdrop-filter` desnecessário em cards comuns.
+* **Modo Seleção em Lote & Barra Fixa no Viewport:** Correção da marcação visual de checkboxes (alto contraste `#10b981`), destaque claro nas linhas/cards selecionados em `#lanc-tbody`, estado `indeterminate` em "Selecionar todos" e barra flutuante de ações em lote fixa na base da janela.
+
+<details>
+<summary><strong>Ver novidades anteriores (v1.5.0)</strong></summary>
 
 * **Motor de Auto-Categorização em 4 Camadas:** Normalizador de descrições bancárias brasileiras + classificação em cascata (**Regras do Usuário → Memória Histórica → Pluggy / Dicionário BR → Fila "A Classificar"**), preservando sempre `descricaoOriginal`.
-* **Aprendizado em 1 Clique:** Ao alterar manualmente a categoria ou descrição de um lançamento, um toast inteligente pergunta se você deseja criar a regra automática e aplicá-la nos lançamentos antigos similares.
-* **Triagem Agrupada ("Caixa de Entrada"):** Novo botão **Triagem (N)** na aba **Lançamentos** que agrupa pendências em *"A Classificar"* e *"Outros"* por estabelecimento + tipo para resolver tudo em lote.
-* **Gerenciador de Regras & Reprocessamento Retroativo:** Nova interface em **Categorias & Contas** com regras avançadas (modo de match, conta, faixa de valor, tag, apelido, prioridade), prévia ao vivo e botão **Reprocessar Regras**.
-* **Saldos 100% Unificados:** **Patrimônio Total** e **Saldo Disponível** passam a usar exatamente a mesma fonte de verdade consolidada do card **Contas Bancárias**, com efeito líquido **zero** para transferências entre contas próprias e novo filtro exclusivo **Transferências**.
-* **Precisão em Despesas no Mês & Faturas:** Verificação estrita de despesas, exclusão de despesas já reembolsadas, reconhecimento ampliado de pagamentos de fatura Pluggy/OFX e correção do fallback de `diaFechamento`.
+* **Aprendizado em 1 Clique:** Toast inteligente após edição manual para criar regra automática e aplicá-la nos lançamentos antigos similares.
+* **Triagem Agrupada ("Caixa de Entrada"):** Botão **Triagem (N)** na aba **Lançamentos** agrupando pendências em *"A Classificar"* e *"Outros"* por estabelecimento + tipo para classificar em lote.
+* **Gerenciador de Regras & Reprocessamento Retroativo:** Regras avançadas em **Categorias & Contas** com prévia ao vivo e botão **Reprocessar Regras**.
+* **Saldos 100% Unificados & Precisão em Despesas no Mês:** **Patrimônio Total** e **Saldo Disponível** alinhados ao card **Contas Bancárias**, efeito líquido zero para transferências, chip exclusivo **Transferências** e correção do fallback de `diaFechamento`.
+
+</details>
 
 ---
 
