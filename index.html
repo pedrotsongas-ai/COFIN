@@ -754,6 +754,37 @@
         </div>
         <div id="regras-autocat-lista" class="regras-autocat-lista"></div>
       </div>
+      <!-- SINCRONIZAÇÃO DO CÉREBRO DE CATEGORIAS (GITHUB GIST PRIVADO) -->
+      <div class="card" id="card-sync-cerebro-gist">
+        <div class="card-header" style="margin-bottom:.5rem;flex-wrap:wrap;gap:8px">
+          <div class="card-title" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+            <i class="ti ti-brand-github" style="color:var(--accent);font-size:18px"></i>
+            <span>Sincronização de Categorias (GitHub Gist Privado)</span>
+            <span class="badge gist-status-badge gist-status-idle" id="gist-sync-status-badge">Não configurado</span>
+          </div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap">
+            <button class="btn btn-sm" type="button" id="btn-gist-configurar" onclick="abrirModalConfigGist()" title="Configurar Personal Access Token no arquivo .env">
+              <i class="ti ti-key"></i> Configurar Token (.env)
+            </button>
+            <button class="btn btn-sm btn-primary" type="button" id="btn-gist-sync-agora" onclick="sincronizarCerebroGitHub({ silencioso: false, motivo: 'manual' })" title="Executar Pull, Merge e Push das categorias, regras e memória silenciosa" disabled>
+              <i class="ti ti-refresh"></i> Sincronizar Agora
+            </button>
+          </div>
+        </div>
+        <div class="help-text" style="margin-bottom:.75rem">
+          Sincronize automaticamente suas <strong>Categorias</strong>, <strong>Regras de Auto-Categorização</strong> e <strong>Memória Silenciosa</strong> entre computadores usando um Gist <strong>estritamente privado</strong> no GitHub. Seu token fica isolado apenas no arquivo <code>.env</code> local (nunca no <code>localStorage</code> nem em backups).
+        </div>
+        <div class="gist-sync-meta oculto" id="gist-sync-meta-bar">
+          <div class="gist-sync-meta-info">
+            <span class="gist-sync-meta-label"><i class="ti ti-lock" style="font-size:12px"></i> Gist Privado:</span>
+            <code class="gist-sync-id-code" id="gist-sync-id-display">—</code>
+            <span class="gist-sync-token-mask" id="gist-sync-token-display"></span>
+          </div>
+          <button type="button" class="btn btn-sm" id="btn-gist-copiar-id" onclick="copiarGistIdCerebro()" title="Copiar Gist ID para a área de transferência">
+            <i class="ti ti-copy"></i> Copiar ID
+          </button>
+        </div>
+      </div>
       <!-- MOTOR DE RECEITAS INTELIGENTES (AUTO-PAYCHECK) -->
       <div class="card" id="card-receitas-fixas">
         <div class="card-header" style="margin-bottom:.5rem">
@@ -1915,23 +1946,23 @@
           <div class="patch-notes-edition">COFIN Enterprise Edition</div>
           <div class="patch-date-label" id="patch-notes-date">Atualização de Novembro de 2026</div>
         </div>
-        <span class="patch-version-pill" id="patch-notes-version-badge"><i class="ti ti-rocket"></i> v1.6.0</span>
+        <span class="patch-version-pill" id="patch-notes-version-badge"><i class="ti ti-rocket"></i> v1.7.0</span>
       </div>
 
       <div class="patch-section">
         <div class="patch-section-title">✨ Novo</div>
         <ul class="patch-list" id="patch-list-novo">
           <li>
-            <strong class="patch-item-title">Drill-Down Interativo no Dashboard e Relatórios</strong>
-            <span class="patch-item-desc">Clique em KPIs, Contas Bancárias, Cartões de Crédito, barras do gráfico de 6 meses, Top 3 Gastos, Anti-Metas, Pendentes e gráficos de Relatórios para ir direto à aba <strong>Lançamentos</strong> com os filtros aplicados e banner de limpeza em 1 clique.</span>
+            <strong class="patch-item-title">Cérebro de Categorias na Nuvem (GitHub Gist Privado)</strong>
+            <span class="patch-item-desc">Sincronize automaticamente Categorias, Regras de Auto-Categorização e Memória Silenciosa entre computadores via Gist estritamente privado (<code>cofin-cerebro.json</code>), com token isolado no <code>.env</code>, autodescoberta no 2º PC, tombstones de exclusão, portabilidade de contas por nome e toast de reprocessamento em 1 clique.</span>
           </li>
           <li>
-            <strong class="patch-item-title">Alternador "Por Data | Por Fatura" &amp; Tag Discreta de Fatura</strong>
-            <span class="patch-item-desc">A aba <strong>Lançamentos</strong> agora filtra pela data real (<code>l.data</code>) por padrão (em Tabela, Cards e Calendário), com opção rápida para auditar <strong>Por Fatura</strong> e selo discreto (ex.: <code>Fat. Dez/26</code>) em compras cobradas no mês seguinte.</span>
+            <strong class="patch-item-title">Hidratação Automática do Histórico</strong>
+            <span class="patch-item-desc">Antes do sincronismo com o GitHub Gist, o COFIN extrai automaticamente os padrões já classificados em <code>STATE.lancamentos</code> para a memória silenciosa sem sobrescrever escolhas manuais nem ressuscitar itens excluídos.</span>
           </li>
           <li>
-            <strong class="patch-item-title">Layout Responsivo &amp; Interface Flat Dark Precision</strong>
-            <span class="patch-item-desc">Sidebar compactável em janelas estreitas (<code>&lt;= 1024px</code>), cabeçalhos fluidos sem aperto visual, tabelas responsivas, modais adaptáveis (<code>min(95vw, ...)</code>) e dark mode sóbrio de alta legibilidade.</span>
+            <strong class="patch-item-title">Auto-Categorização v2 com Metadados Pluggy (CNAE &amp; CPF/CNPJ)</strong>
+            <span class="patch-item-desc">Classificação mais precisa aproveitando CNAE, dados do lojista, proteção para Pix entre pessoas físicas (<code>#pessoa</code>), Memória Histórica por Tokens/Jaccard, Aprendizado Silencioso Automático e botão <strong>Auto-Classificar Pendentes</strong> direto na Triagem.</span>
           </li>
         </ul>
       </div>
@@ -1940,12 +1971,12 @@
         <div class="patch-section-title">🛠️ Melhorado/Corrigido</div>
         <ul class="patch-list" id="patch-list-melhorado">
           <li>
-            <strong class="patch-item-title">Precisão Total de Datas e Fuso Horário (Pluggy, OFX &amp; Planilha)</strong>
-            <span class="patch-item-desc">Nova função única <code>extrairDataLocalISO</code> tratando <code>DD/MM/YYYY</code>, OFX, meia-noite UTC sem recuar dia, compras noturnas UTC-3 e serial do Excel, além de data editável no Modal de Revisão com <code>dataCompra</code> sincronizada nos cartões.</span>
+            <strong class="patch-item-title">Estornos e Créditos no Cartão de Crédito</strong>
+            <span class="patch-item-desc">Estornos no cartão agora respeitam o dia de fechamento da fatura, abatem corretamente despesas, fatura e limite disponível (em vez de inflar receitas), são auto-categorizados na categoria de despesa correspondente e exibem selo discreto <code>Estorno</code> com valor <code>+ R$</code> em verde.</span>
           </li>
           <li>
-            <strong class="patch-item-title">Modo Seleção em Lote &amp; Barra Fixa no Viewport</strong>
-            <span class="patch-item-desc">Correção da marcação visual de checkboxes (alto contraste <code>#10b981</code>), destaque das linhas/cards selecionados em <code>#lanc-tbody</code>, estado <code>indeterminate</code> em "Selecionar todos" e barra flutuante realmente fixa na base da janela.</span>
+            <strong class="patch-item-title">Trava Estrita de Tipo &amp; Limpeza de PIX no Crédito</strong>
+            <span class="patch-item-desc">Impede despesas de caírem em categorias de receita (e vice-versa) e neutraliza automaticamente o repasse técnico de <strong>PIX no Crédito</strong> na conta corrente antes da triagem e dos totais mensais.</span>
           </li>
         </ul>
       </div>
@@ -1954,7 +1985,7 @@
         <div class="patch-section-title">🗑️ Removido</div>
         <ul class="patch-list" id="patch-list-removido">
           <li>
-            <span class="patch-item-desc">Flares radiais de fundo (<code>ambient-glow</code> / <code>empty-glow-orb</code>), rastreamento <code>mousemove</code> de spotlight nos cards, brilhos neon excessivos e <code>backdrop-filter</code> desnecessário em cards comuns.</span>
+            <span class="patch-item-desc">Ruídos operacionais de repasse de PIX no Crédito da fila de triagem e falsos positivos de categoria por correspondência parcial sem fronteira de palavra.</span>
           </li>
         </ul>
       </div>
@@ -2167,9 +2198,9 @@
 <!-- MODAL DE TRIAGEM AGRUPADA ("CAIXA DE ENTRADA") -->
 <div class="modal-bg" id="modal-triagem-categorias" onclick="if(event.target === this) fecharModal('modal-triagem-categorias')">
   <div class="modal wide triagem-modal">
-    <div class="modal-head">
-      <div>
-        <div class="modal-title" style="display:flex;align-items:center;gap:8px">
+    <div class="modal-head" style="align-items:flex-start;gap:12px">
+      <div style="flex:1;min-width:0">
+        <div class="modal-title" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
           <i class="ti ti-inbox" style="color:var(--amber);font-size:19px"></i>
           <span>Triagem Agrupada — Caixa de Entrada</span>
           <span class="badge badge-a-classificar" id="triagem-modal-badge">0 pendentes</span>
@@ -2178,9 +2209,14 @@
           Lançamentos em <strong>A Classificar</strong> ou <strong>Outros</strong> agrupados por núcleo bancário e tipo. Classifique em lote e salve regras automáticas com 1 clique.
         </div>
       </div>
-      <button type="button" class="modal-close" onclick="fecharModal('modal-triagem-categorias')" title="Fechar">
-        <i class="ti ti-x"></i>
-      </button>
+      <div style="display:flex;align-items:center;gap:8px;flex-shrink:0">
+        <button type="button" class="btn btn-sm btn-primary" id="btn-triagem-autoclassificar" onclick="autoClassificarPendentesTriagem()" title="Rodar motor completo (Ruídos PIX Crédito, Regras, Memória, CNAE/Pluggy e Dicionário BR)">
+          <i class="ti ti-wand"></i> Auto-classificar pendentes
+        </button>
+        <button type="button" class="modal-close" onclick="fecharModal('modal-triagem-categorias')" title="Fechar">
+          <i class="ti ti-x"></i>
+        </button>
+      </div>
     </div>
 
     <div class="triagem-lista" id="triagem-grupos-lista"></div>
@@ -2309,14 +2345,14 @@
     <div class="modal-head">
       <div class="modal-title" style="display:flex;align-items:center;gap:8px">
         <i class="ti ti-refresh" style="color:var(--accent)"></i>
-        <span>Reprocessar Regras Ativas</span>
+        <span>Reprocessar Motor de Categorização</span>
       </div>
       <button type="button" class="modal-close" onclick="fecharModal('modal-reprocessar-regras')" title="Fechar">
         <i class="ti ti-x"></i>
       </button>
     </div>
     <p class="help-text" style="margin-bottom:.85rem">
-      Executa suas regras ativas sobre os lançamentos já salvos (nunca altera transferências, pagamentos de fatura ou movimentos de cofre; preserva sempre <code>descricaoOriginal</code>).
+      Executa o motor completo sobre os lançamentos salvos (Ruídos de PIX no Crédito, Regras, Memória Silenciosa, Memória por Tokens, CNAE/Pluggy, Dicionário BR e Saneamento de Tipo; preserva sempre <code>descricaoOriginal</code>, transferências, faturas e cofres).
     </p>
     <div class="reprocessar-opcoes">
       <label class="reprocessar-opcao">
@@ -2345,6 +2381,54 @@
       <button type="button" class="btn btn-primary" onclick="executarReprocessamentoRegras()">
         <i class="ti ti-player-play"></i> Reprocessar Agora
       </button>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL DE CONFIGURAÇÃO DO GITHUB GIST PRIVADO (.ENV) -->
+<div class="modal-bg" id="modal-config-gist" onclick="if(event.target === this) fecharModal('modal-config-gist')">
+  <div class="modal" style="max-width:480px">
+    <div class="modal-head">
+      <div>
+        <div class="modal-title" style="display:flex;align-items:center;gap:8px">
+          <i class="ti ti-brand-github" style="color:var(--accent);font-size:19px"></i>
+          <span>Configurar GitHub Gist Privado (.env)</span>
+        </div>
+        <div class="help-text">As credenciais são validadas na API do GitHub e salvas exclusivamente no arquivo <code>.env</code> local.</div>
+      </div>
+      <button type="button" class="modal-close" onclick="fecharModal('modal-config-gist')" title="Fechar">
+        <i class="ti ti-x"></i>
+      </button>
+    </div>
+
+    <div class="fg" style="margin-bottom:.85rem">
+      <label for="gist-modal-token">Personal Access Token (escopo <code>gist</code>) *</label>
+      <input type="password" id="gist-modal-token" autocomplete="off" spellcheck="false" placeholder="ghp_... ou github_pat_...">
+      <div class="help-text" id="gist-modal-token-hint" style="margin-top:4px">
+        Gere em GitHub → Settings → Developer settings → Personal access tokens marcando apenas a permissão <code>gist</code>.
+      </div>
+    </div>
+
+    <div class="fg" style="margin-bottom:.85rem">
+      <label for="gist-modal-id">Gist ID (opcional)</label>
+      <input type="text" id="gist-modal-id" autocomplete="off" spellcheck="false" placeholder="Deixe em branco para autodescoberta ou criação">
+      <div class="help-text" style="margin-top:4px">
+        Deixe em branco para criar automaticamente ou localizar o Gist do seu outro computador.
+      </div>
+    </div>
+
+    <div class="gist-modal-feedback oculto" id="gist-modal-feedback"></div>
+
+    <div class="modal-actions" style="margin-top:1rem;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
+      <button type="button" class="btn btn-danger btn-sm oculto" id="btn-gist-desconectar" onclick="desconectarGistCerebro()">
+        <i class="ti ti-unlink"></i> Desconectar
+      </button>
+      <div style="display:flex;gap:8px;margin-left:auto">
+        <button type="button" class="btn" onclick="fecharModal('modal-config-gist')">Cancelar</button>
+        <button type="button" class="btn btn-primary" id="btn-gist-salvar" onclick="salvarCredenciaisGistModal()">
+          <i class="ti ti-shield-check"></i> Validar e Salvar
+        </button>
+      </div>
     </div>
   </div>
 </div>

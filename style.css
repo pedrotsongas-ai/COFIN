@@ -4919,3 +4919,94 @@ tr.dash-clickable {
     padding: 1rem;
   }
 }
+
+/* ================= CÉREBRO DE CATEGORIAS (GITHUB GIST PRIVADO) ================= */
+.gist-status-badge {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+}
+.gist-status-idle {
+  background: var(--surface2);
+  color: var(--text3);
+}
+.gist-status-ok {
+  background: var(--good-bg, rgba(16, 185, 129, 0.12));
+  border-color: var(--good-border, rgba(16, 185, 129, 0.3));
+  color: var(--good);
+}
+.gist-status-syncing {
+  background: var(--accent-bg, rgba(26, 111, 224, 0.12));
+  border-color: var(--accent);
+  color: var(--accent-text, var(--accent));
+}
+.gist-status-err {
+  background: var(--bad-bg, rgba(239, 68, 68, 0.12));
+  border-color: var(--bad-border, rgba(239, 68, 68, 0.3));
+  color: var(--bad);
+}
+.gist-sync-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 8px 12px;
+  border-radius: 8px;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+}
+.gist-sync-meta-info {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  min-width: 0;
+  font-size: 12px;
+  color: var(--text2);
+}
+.gist-sync-meta-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--text3);
+  font-weight: 600;
+}
+.gist-sync-id-code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11.5px;
+  padding: 2px 6px;
+  border-radius: 5px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  color: var(--text);
+  max-width: 280px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.gist-sync-token-mask {
+  font-size: 11.5px;
+  color: var(--text3);
+}
+.gist-modal-feedback {
+  padding: 8px 10px;
+  border-radius: 8px;
+  font-size: 12px;
+  border: 1px solid var(--border);
+  background: var(--surface2);
+  color: var(--text2);
+}
+.gist-modal-feedback.erro {
+  background: var(--bad-bg, rgba(239, 68, 68, 0.12));
+  border-color: var(--bad-border, rgba(239, 68, 68, 0.3));
+  color: var(--bad);
+}
+.gist-modal-feedback.ok {
+  background: var(--good-bg, rgba(16, 185, 129, 0.12));
+  border-color: var(--good-border, rgba(16, 185, 129, 0.3));
+  color: var(--good);
+}
+

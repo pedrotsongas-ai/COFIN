@@ -1,6 +1,6 @@
 /* ================= ESTADO E PERSISTÊNCIA ================= */
-const CURRENT_VERSION = '1.6.0';
-const APP_VERSAO = '1.6.0 · r16';
+const CURRENT_VERSION = '1.7.0';
+const APP_VERSAO = '1.7.0 · r17';
 const STORAGE_KEY = 'controle-financeiro-dados';
 
 const SUBCATEGORIAS_PADRAO_MAP = {
@@ -11,10 +11,12 @@ const SUBCATEGORIAS_PADRAO_MAP = {
   'Educação': ['Cursos & Faculdade', 'Livros & Material'],
   'Lazer': ['Passeios & Eventos', 'Viagens & Hospedagem', 'Jogos & Hobbies'],
   'Assinaturas': ['Streaming (Vídeo/Música)', 'Software & Nuvem', 'Clubes & Assinaturas'],
+  'Impostos': ['Impostos & Tributos', 'Taxas & Órgãos Públicos'],
   'Outros': [],
   'Salário': ['Salário Mensal', '13º & Férias', 'Bônus / PLR'],
   'Freelance': ['Projetos', 'Consultoria'],
-  'Investimentos': ['Dividendos / FIIs', 'Rendimentos Renda Fixa']
+  'Investimentos': ['Dividendos / FIIs', 'Rendimentos Renda Fixa'],
+  'Renda Extra': ['Cashback & Estornos', 'Vendas & Reembolsos']
 };
 
 let STATE = {
@@ -27,10 +29,12 @@ let STATE = {
     {nome:'Educação',tipo:'despesa',subcategorias:['Cursos & Faculdade','Livros & Material']},
     {nome:'Lazer',tipo:'despesa',subcategorias:['Passeios & Eventos','Viagens & Hospedagem','Jogos & Hobbies']},
     {nome:'Assinaturas',tipo:'despesa',subcategorias:['Streaming (Vídeo/Música)','Software & Nuvem','Clubes & Assinaturas']},
+    {nome:'Impostos',tipo:'despesa',subcategorias:['Impostos & Tributos','Taxas & Órgãos Públicos']},
     {nome:'Outros',tipo:'despesa',subcategorias:[]},
     {nome:'Salário',tipo:'receita',subcategorias:['Salário Mensal','13º & Férias','Bônus / PLR']},
     {nome:'Freelance',tipo:'receita',subcategorias:['Projetos','Consultoria']},
     {nome:'Investimentos',tipo:'receita',subcategorias:['Dividendos / FIIs','Rendimentos Renda Fixa']},
+    {nome:'Renda Extra',tipo:'receita',subcategorias:['Cashback & Estornos','Vendas & Reembolsos']},
     {nome:'Outros',tipo:'receita',subcategorias:[]}
   ],
   contas: [{nome:'Conta principal', tipo:'conta'}],
@@ -40,6 +44,8 @@ let STATE = {
   receitasFixas: [],        // Motor de Receitas Inteligentes (Auto-Paycheck): { id, descricao, valor, conta, categoria, tipoRegra: 'dia_fixo'|'dia_util', diaRegra, ativo }
   regras: [],               // Legado: migrado automaticamente para regrasCategoria
   regrasCategoria: [],      // Motor de Regras de Auto-Categorização (v2)
+  memoriaCategorias: {},    // Aprendizado Silencioso Automático: { 'tipo::nucleo': { categoria, subcategoria, tag, usos, atualizadoEm } }
+  tombstonesCerebro: { categorias: {}, regras: {}, memoria: {} }, // Registro de exclusões com timestamp ISO para sincronização multi-PC
   antiMetas: [],            // Anti-Metas: { id, categoriaId, limiteMensal }
   metas: [],
   cofres: [],               // Cofres/Caixinhas (Vaults): { id, nome, icone, cor, objetivo, saldoAlocado }
@@ -144,7 +150,7 @@ function calcularCompetenciaLancamentoCartao(l, cartaoParam) {
 
 function mesCompetenciaLancamento(l) {
   if (!l) return '';
-  if (ehLancamentoCartao(l) && l.tipo === 'despesa' && !l.ehPagamentoFatura) {
+  if (ehLancamentoCartao(l) && (l.tipo === 'despesa' || ehEstornoCartao(l)) && !l.ehPagamentoFatura) {
     const comp = calcularCompetenciaLancamentoCartao(l);
     return `${comp.ano}-${String(comp.mes).padStart(2, '0')}`;
   }
@@ -173,12 +179,17 @@ function calcularVencimentoFatura(anoComp, mesComp, diaFechamento, diaVencimento
 
 function ehContaDeCartaoLancamento(l) {
   if (!l || typeof l !== 'object') return false;
+  if (l.ehCartaoCredito === true) return true;
   if (l.faturaAno && l.faturaMes) return true;
   if (l.dataVencimentoFatura) return true;
   if (l.parcelaAtual || l.parcelaTotal) return true;
   if (String(l.accountType || '').toUpperCase() === 'CREDIT' || l.meioPagamento === 'cartao') return true;
-  const c = (STATE.contas || []).find(x => x && x.nome === l.conta) || (STATE.cartoes || []).find(x => x && x.nome === l.conta);
-  return !!(c && (c.tipo === 'cartao' || (STATE.cartoes || []).some(k => k && k.nome === l.conta)));
+  const destinoRaw = String(l.contaDestino || l.conta || l.cartaoNome || '').trim();
+  if (/^__CRIAR_CARTAO__:/i.test(destinoRaw)) return true;
+  const nomeConta = destinoRaw.replace(/^__(?:CRIAR_CARTAO|CRIAR_CONTA)__:/i, '').trim();
+  if (!nomeConta) return false;
+  const c = (STATE.contas || []).find(x => x && x.nome === nomeConta) || (STATE.cartoes || []).find(x => x && x.nome === nomeConta);
+  return !!(c && (c.tipo === 'cartao' || (STATE.cartoes || []).some(k => k && k.nome === nomeConta)));
 }
 
 function ehLancamentoPagamentoFatura(l) {
@@ -232,7 +243,9 @@ function correspondeFiltroTipoLancamento(l, tipoFiltro) {
   if (!tipoFiltro) return true;
   const ehTransf = isLancamentoTransferencia(l);
   if (tipoFiltro === 'transferencia') return ehTransf;
-  return l.tipo === tipoFiltro && !ehTransf;
+  if (ehTransf) return false;
+  if (ehEstornoCartao(l)) return tipoFiltro === 'despesa';
+  return l.tipo === tipoFiltro;
 }
 
 function normalizarIntegridadeTransferencias() {
@@ -303,6 +316,28 @@ function calcularDeltaTransferenciasOrfasNaoCalibradas(mesLimiteOpt, saldosConta
 function ehLancamentoCartao(l) {
   if (!l || ehLancamentoPagamentoFatura(l)) return false;
   return ehContaDeCartaoLancamento(l);
+}
+
+function ehEstornoCartao(l) {
+  if (!l || typeof l !== 'object') return false;
+  return Boolean(
+    ehLancamentoCartao(l) &&
+    l.tipo === 'receita' &&
+    !ehLancamentoPagamentoFatura(l) &&
+    !isLancamentoTransferencia(l) &&
+    !l.ehOperacaoTecnica
+  );
+}
+
+function valorAssinadoFaturaCartao(l) {
+  if (!l) return 0;
+  const val = Math.abs(Number(l.valor) || 0);
+  return ehEstornoCartao(l) ? -val : val;
+}
+
+function somarItensFaturaLiquido(lista) {
+  if (!Array.isArray(lista) || !lista.length) return 0;
+  return Math.round(lista.reduce((acc, item) => acc + valorAssinadoFaturaCartao(item), 0) * 100) / 100;
 }
 
 function construirOptionsCategoriasHTML(tipoFiltro, valorSelecionado) {
@@ -387,7 +422,8 @@ function normalizarLancamentosCartaoExistentes() {
       }
       return;
     }
-    if (l.tipo !== 'despesa' || !l.conta) return;
+    const ehEstorno = ehEstornoCartao(l);
+    if ((l.tipo !== 'despesa' && !ehEstorno) || !l.conta) return;
     const cartaoConta = (STATE.contas || []).find(c => c.nome === l.conta && c.tipo === 'cartao') || (STATE.cartoes || []).find(c => c.nome === l.conta);
     if (!cartaoConta) return;
 
@@ -404,11 +440,17 @@ function normalizarLancamentosCartaoExistentes() {
     }
 
     // Recalcula a competência da fatura conforme a regra (dia >= diaFechamento -> mês + 1)
-    const comp = calcularCompetenciaLancamentoCartao(l, cartaoConta);
+    const fechRaw = parseInt(cartaoConta.diaFechamento, 10);
+    const diaFechValido = (Number.isInteger(fechRaw) && fechRaw >= 2 && fechRaw <= 31) ? fechRaw : null;
+    const comp = ehEstorno
+      ? competenciaFatura(l.dataCompra || l.data, diaFechValido)
+      : calcularCompetenciaLancamentoCartao(l, cartaoConta);
     const novoVenc = calcularVencimentoFatura(comp.ano, comp.mes, cartaoConta.diaFechamento || 1, cartaoConta.diaVencimento || 10);
-    if (l.faturaAno !== comp.ano || l.faturaMes !== comp.mes || l.dataVencimentoFatura !== novoVenc) {
+    const novaCompFmt = `${String(comp.mes).padStart(2, '0')}/${comp.ano}`;
+    if (l.faturaAno !== comp.ano || l.faturaMes !== comp.mes || l.dataVencimentoFatura !== novoVenc || (ehEstorno && l.faturaCompetencia !== novaCompFmt)) {
       l.faturaAno = comp.ano;
       l.faturaMes = comp.mes;
+      l.faturaCompetencia = novaCompFmt;
       l.dataVencimentoFatura = novoVenc;
       alterado = true;
     }
@@ -493,14 +535,14 @@ function obterMapaPagamentosDeFaturaReais() {
     }
 
     if (!ano || !mes || isNaN(ano) || isNaN(mes)) {
-      const despesasCartao = (STATE.lancamentos || []).filter(x => x && x.conta === nomeCartao && x.tipo === 'despesa' && !ehLancamentoPagamentoFatura(x));
+      const despesasCartao = (STATE.lancamentos || []).filter(x => x && x.conta === nomeCartao && (x.tipo === 'despesa' || ehEstornoCartao(x)) && !ehLancamentoPagamentoFatura(x));
       const porComp = new Map();
       const refCartao = cartaoAlvo || { nome: nomeCartao, diaFechamento: 1 };
       despesasCartao.forEach(x => {
         const c = calcularCompetenciaLancamentoCartao(x, refCartao);
         const k = `${c.ano}-${c.mes}`;
         if (!porComp.has(k)) porComp.set(k, { ano: c.ano, mes: c.mes, soma: 0 });
-        porComp.get(k).soma = Math.round((porComp.get(k).soma + (Number(x.valor) || 0)) * 100) / 100;
+        porComp.get(k).soma = Math.round((porComp.get(k).soma + valorAssinadoFaturaCartao(x)) * 100) / 100;
       });
 
       const valorPag = Math.round((Number(l.valor) || 0) * 100) / 100;
@@ -594,9 +636,9 @@ function corrigirFaturasPresas() {
     });
   }
 
-  // Varre todos os lançamentos de Cartão de Crédito e valida contra conta corrente + quitações explícitas
+  // Varre todos os lançamentos de Cartão de Crédito (despesas e estornos) e valida contra conta corrente + quitações explícitas
   STATE.lancamentos.forEach(l => {
-    if (!l || l.tipo !== 'despesa' || ehLancamentoPagamentoFatura(l) || !ehLancamentoCartao(l)) return;
+    if (!l || (l.tipo !== 'despesa' && !ehEstornoCartao(l)) || ehLancamentoPagamentoFatura(l) || !ehLancamentoCartao(l)) return;
 
     const contaLower = String(l.conta || l.cartaoNome || '').toLowerCase();
     const cartaoAlvo = todosCartoes.find(c => c && (
@@ -749,15 +791,16 @@ function recalcularLimitesCartoes() {
 
   const calcularUsadoCartao = (nomeCartao) => {
     if (!nomeCartao || !Array.isArray(STATE.lancamentos)) return 0;
-    const despesasEmAberto = STATE.lancamentos.filter(l =>
+    const itensEmAberto = STATE.lancamentos.filter(l =>
       l &&
       l.conta === nomeCartao &&
-      l.tipo === 'despesa' &&
+      (l.tipo === 'despesa' || ehEstornoCartao(l)) &&
       !ehLancamentoPagamentoFatura(l) &&
+      !isLancamentoTransferencia(l) &&
+      !l.ehOperacaoTecnica &&
       l.faturaPaga !== true
     );
-    const soma = despesasEmAberto.reduce((acc, l) => acc + (Number(l.valor) || 0), 0);
-    return Math.max(0, Math.round(soma * 100) / 100);
+    return Math.max(0, somarItensFaturaLiquido(itensEmAberto));
   };
 
   if (Array.isArray(STATE.cartoes)) {
@@ -791,14 +834,14 @@ function obterInfoCartaoInteligente(cartao) {
 
   const compAtual = obterCompetenciaFaturaDashboard(cartao.nome, diaFechamento, hoje);
   const itensFaturaAtual = lancamentosDaFatura(cartao.nome, compAtual.ano, compAtual.mes);
-  const totalFaturaAtual = itensFaturaAtual.reduce((s, l) => s + l.valor, 0);
-  const totalFaturaPendente = itensFaturaAtual.filter(l => l.faturaPaga !== true).reduce((s, l) => s + (Number(l.valor) || 0), 0);
+  const totalFaturaAtual = somarItensFaturaLiquido(itensFaturaAtual);
+  const totalFaturaPendente = somarItensFaturaLiquido(itensFaturaAtual.filter(l => l.faturaPaga !== true));
 
-  // Todo o comprometimento da fatura sem flag faturaPaga === true
+  // Todo o comprometimento da fatura sem flag faturaPaga === true (despesas - estornos em aberto)
   const pendentesCartao = (STATE.lancamentos || []).filter(
-    l => l.conta === cartao.nome && l.tipo === 'despesa' && !ehLancamentoPagamentoFatura(l) && l.faturaPaga !== true
+    l => l.conta === cartao.nome && (l.tipo === 'despesa' || ehEstornoCartao(l)) && !ehLancamentoPagamentoFatura(l) && !isLancamentoTransferencia(l) && !l.ehOperacaoTecnica && l.faturaPaga !== true
   );
-  const totalComprometido = Math.round(pendentesCartao.reduce((s, l) => s + (Number(l.valor) || 0), 0) * 100) / 100;
+  const totalComprometido = Math.max(0, somarItensFaturaLiquido(pendentesCartao));
   const limiteDisponivel = limiteTotal > 0 ? Math.max(0, Math.round((limiteTotal - totalComprometido) * 100) / 100) : 0;
   const pctUsado = (limiteTotal > 0) ? Math.min(100, Math.round((totalComprometido / limiteTotal) * 100)) : 0;
 
@@ -1449,8 +1492,10 @@ function renderWidgetTop3Categorias() {
 
   const mesAtual = hojeLocalISO().slice(0, 7);
   const despesasDoMes = (STATE.lancamentos || []).filter(l =>
-    l.tipo === 'despesa' &&
+    (l.tipo === 'despesa' || ehEstornoCartao(l)) &&
+    !l.ehOperacaoTecnica &&
     !isLancamentoTransferencia(l) &&
+    !ehLancamentoPagamentoFatura(l) &&
     !l.ehMovimentoCofre &&
     !(l.ehReembolsavel && l.reembolsado) &&
     mesCompetenciaLancamento(l) === mesAtual
@@ -1459,10 +1504,11 @@ function renderWidgetTop3Categorias() {
   const porCat = {};
   despesasDoMes.forEach(l => {
     const rawCat = String(l.categoria || 'Sem categoria').trim() || 'Sem categoria';
-    porCat[rawCat] = (porCat[rawCat] || 0) + (Number(l.valor) || 0);
+    const delta = (ehEstornoCartao(l) ? -1 : 1) * (Number(l.valor) || 0);
+    porCat[rawCat] = Math.round(((porCat[rawCat] || 0) + delta) * 100) / 100;
   });
 
-  const ordenados = Object.entries(porCat).sort((a, b) => b[1] - a[1]);
+  const ordenados = Object.entries(porCat).filter(([, v]) => v > 0).sort((a, b) => b[1] - a[1]);
   const top3 = ordenados.slice(0, 3);
   const somaTop3 = top3.reduce((s, [, v]) => s + v, 0);
 
@@ -1532,15 +1578,16 @@ function renderAntiMetasWidget() {
   const lancsMesCat = [];
 
   (STATE.lancamentos || []).forEach(l => {
-    if (l.tipo !== 'despesa' || isLancamentoTransferencia(l) || l.ehMovimentoCofre) return;
+    if ((l.tipo !== 'despesa' && !ehEstornoCartao(l)) || l.ehOperacaoTecnica || isLancamentoTransferencia(l) || ehLancamentoPagamentoFatura(l) || l.ehMovimentoCofre) return;
     if (mesCompetenciaLancamento(l) !== mesAtual) return;
     const { macro, completo } = extrairMacroESubcategoria(l.categoria);
     if (macro.toLowerCase() === catAlvo.toLowerCase() || completo.toLowerCase() === catAlvo.toLowerCase()) {
-      const val = Number(l.valor) || 0;
-      gastoAtual += val;
+      const val = (ehEstornoCartao(l) ? -1 : 1) * (Number(l.valor) || 0);
+      gastoAtual = Math.round((gastoAtual + val) * 100) / 100;
       lancsMesCat.push(l);
     }
   });
+  gastoAtual = Math.max(0, gastoAtual);
 
   const pct = limite > 0 ? Math.round((gastoAtual / limite) * 100) : 0;
   const pctRing = Math.min(100, Math.max(0, pct));
@@ -1990,7 +2037,24 @@ async function carregarDados() {
     recalcularLimitesCartoes();
     normalizarConciliacaoLancamentos();
     normalizarIntegridadeTransferencias();
+    if (!STATE.config.categoriasAutoCatV2Garantidas && Array.isArray(STATE.categorias) && STATE.categorias.length >= 5) {
+      if (!STATE.categorias.some(c => c && normalizarTextoSemAcento(c.nome) === 'impostos')) {
+        const idxOutrosDesp = STATE.categorias.findIndex(c => c && c.tipo === 'despesa' && normalizarTextoSemAcento(c.nome) === 'outros');
+        const novaCatImp = { nome: 'Impostos', tipo: 'despesa', subcategorias: ['Impostos & Tributos', 'Taxas & Órgãos Públicos'] };
+        if (idxOutrosDesp >= 0) STATE.categorias.splice(idxOutrosDesp, 0, novaCatImp);
+        else STATE.categorias.push(novaCatImp);
+      }
+      if (!STATE.categorias.some(c => c && normalizarTextoSemAcento(c.nome) === 'renda extra')) {
+        const idxOutrosRec = STATE.categorias.findIndex(c => c && c.tipo === 'receita' && normalizarTextoSemAcento(c.nome) === 'outros');
+        const novaCatRenda = { nome: 'Renda Extra', tipo: 'receita', subcategorias: ['Cashback & Estornos', 'Vendas & Reembolsos'] };
+        if (idxOutrosRec >= 0) STATE.categorias.splice(idxOutrosRec, 0, novaCatRenda);
+        else STATE.categorias.push(novaCatRenda);
+      }
+      STATE.config.categoriasAutoCatV2Garantidas = true;
+    }
     normalizarRegrasCategoria();
+    if (typeof normalizarMemoriaCategorias === 'function') normalizarMemoriaCategorias();
+    if (typeof normalizarTombstonesCerebro === 'function') normalizarTombstonesCerebro();
     if (!STATE.regras) STATE.regras = [];
     if (!Array.isArray(STATE.antiMetas)) STATE.antiMetas = [];
     if (STATE.regras.length === 0) {
@@ -2986,8 +3050,10 @@ function calcularSimulacaoImpacto() {
   const mesAtual = hojeLocalISO().slice(0, 7);
   let receitasMes = 0, despesasMes = 0;
   STATE.lancamentos.forEach(l => {
-    if (l.data && l.data.slice(0, 7) === mesAtual && !isLancamentoTransferencia(l)) {
-      if (l.tipo === 'receita') receitasMes += l.valor;
+    if (l.ehOperacaoTecnica || ehLancamentoPagamentoFatura(l) || isLancamentoTransferencia(l)) return;
+    if (mesCompetenciaLancamento(l) === mesAtual) {
+      if (ehEstornoCartao(l)) despesasMes -= l.valor;
+      else if (l.tipo === 'receita') receitasMes += l.valor;
       else despesasMes += l.valor;
     }
   });
@@ -3300,14 +3366,14 @@ function renderDashboard() {
   const em3DiasISO = hojeLocalISO(3);
   const listaCartoes = (STATE.cartoes && STATE.cartoes.length) ? STATE.cartoes : (STATE.contas || []).filter(c => c.tipo === 'cartao');
   listaCartoes.forEach(cartao => {
-    // Agrupa todos os lançamentos sem faturaPaga === true deste cartão por fatura (ano-mes)
-    const pendentes = (STATE.lancamentos || []).filter(l => l.conta === cartao.nome && l.tipo === 'despesa' && !ehLancamentoPagamentoFatura(l) && l.faturaPaga !== true);
+    // Agrupa todos os lançamentos sem faturaPaga === true deste cartão por fatura (ano-mes), abatendo estornos
+    const pendentes = (STATE.lancamentos || []).filter(l => l.conta === cartao.nome && (l.tipo === 'despesa' || ehEstornoCartao(l)) && !ehLancamentoPagamentoFatura(l) && !isLancamentoTransferencia(l) && !l.ehOperacaoTecnica && l.faturaPaga !== true);
     const porFatura = {};
     pendentes.forEach(l => {
       const comp = calcularCompetenciaLancamentoCartao(l, cartao);
       const chave = `${comp.ano}-${String(comp.mes).padStart(2, '0')}`;
       if (!porFatura[chave]) porFatura[chave] = { ano: comp.ano, mes: comp.mes, total: 0 };
-      porFatura[chave].total += l.valor;
+      porFatura[chave].total = Math.round((porFatura[chave].total + valorAssinadoFaturaCartao(l)) * 100) / 100;
     });
 
     Object.values(porFatura).forEach(fat => {
@@ -3351,8 +3417,8 @@ function renderDashboard() {
   } else if (!(STATE.config && STATE.config.modoViagem && STATE.config.modoViagem.ativo) && despesasMes > 0) {
     const mesPassadoKey = mesesDoisUltimos[0];
     const despMesPassado = STATE.lancamentos
-      .filter(l => !isLancamentoTransferencia(l) && l.tipo === 'despesa' && (l.data || '').slice(0, 7) === mesPassadoKey)
-      .reduce((s, l) => s + l.valor, 0);
+      .filter(l => !l.ehOperacaoTecnica && !ehLancamentoPagamentoFatura(l) && !isLancamentoTransferencia(l) && (l.tipo === 'despesa' || ehEstornoCartao(l)) && mesCompetenciaLancamento(l) === mesPassadoKey)
+      .reduce((s, l) => s + (ehEstornoCartao(l) ? -l.valor : l.valor), 0);
     if (despMesPassado > 0 && despesasMes > despMesPassado * 1.15) {
       const altaPct = (((despesasMes - despMesPassado) / despMesPassado) * 100).toFixed(0);
       insights.push({
@@ -3382,9 +3448,14 @@ function renderDashboard() {
   const somaPorMes = {};
   meses.forEach(m => somaPorMes[m] = { receita: 0, despesa: 0 });
   STATE.lancamentos.forEach(l => {
-    if (isLancamentoTransferencia(l)) return;
+    if (l.ehOperacaoTecnica || ehLancamentoPagamentoFatura(l) || isLancamentoTransferencia(l)) return;
     const m = mesCompetenciaLancamento(l);
-    if (somaPorMes[m]) somaPorMes[m][l.tipo] += l.valor;
+    if (!somaPorMes[m]) return;
+    if (ehEstornoCartao(l)) {
+      somaPorMes[m].despesa = Math.round((somaPorMes[m].despesa - l.valor) * 100) / 100;
+    } else if (l.tipo === 'receita' || l.tipo === 'despesa') {
+      somaPorMes[m][l.tipo] = Math.round((somaPorMes[m][l.tipo] + l.valor) * 100) / 100;
+    }
   });
   const nomesMes = { '01':'Jan','02':'Fev','03':'Mar','04':'Abr','05':'Mai','06':'Jun','07':'Jul','08':'Ago','09':'Set','10':'Out','11':'Nov','12':'Dez' };
   const labelsDash = meses.map(m => { const [ano, mes] = m.split('-'); return `${nomesMes[mes]}/${ano.slice(2)}`; });
@@ -3550,20 +3621,17 @@ function renderDashboard() {
         html += cartoesDash.map(cartao => {
           const compAtual = obterCompetenciaFaturaDashboard(cartao.nome, cartao.diaFechamento || 1, hojeDashISO);
           const itensFatura = lancamentosDaFatura(cartao.nome, compAtual.ano, compAtual.mes);
-          const totalBrutoFatura = Math.round(itensFatura.reduce((s, l) => s + (Number(l.valor) || 0), 0) * 100) / 100;
-          const totalFatura = Math.round(
-            itensFatura
-              .filter(l => l.faturaPaga !== true)
-              .reduce((s, l) => s + (Number(l.valor) || 0), 0) * 100
-          ) / 100;
-          const faturaSemSaldo = totalFatura === 0;
-          const faturaJaPaga = itensFatura.length > 0 && totalFatura <= 0;
+          const totalBrutoFatura = somarItensFaturaLiquido(itensFatura);
+          const itensFaturaEmAberto = itensFatura.filter(l => l.faturaPaga !== true);
+          const totalFatura = somarItensFaturaLiquido(itensFaturaEmAberto);
+          const faturaSemSaldo = totalFatura <= 0;
+          const faturaJaPaga = itensFatura.length > 0 && itensFaturaEmAberto.length === 0;
           const limite = Number(cartao.limite || cartao.limiteTotal) || 0;
           const temLimite = limite > 0;
           const pendentesCartao = STATE.lancamentos.filter(
-            l => l.conta === cartao.nome && l.tipo === 'despesa' && !ehLancamentoPagamentoFatura(l) && l.faturaPaga !== true
+            l => l.conta === cartao.nome && (l.tipo === 'despesa' || ehEstornoCartao(l)) && !ehLancamentoPagamentoFatura(l) && !isLancamentoTransferencia(l) && !l.ehOperacaoTecnica && l.faturaPaga !== true
           );
-          const totalPendente = Math.round(pendentesCartao.reduce((s, l) => s + (Number(l.valor) || 0), 0) * 100) / 100;
+          const totalPendente = Math.max(0, somarItensFaturaLiquido(pendentesCartao));
           const disponivel = temLimite ? Math.max(0, Math.round((limite - totalPendente) * 100) / 100) : 0;
           const pctUsado = (temLimite && limite > 0) ? Math.min(100, Math.max(0, (totalPendente / limite) * 100)) : 0;
 
@@ -3592,7 +3660,7 @@ function renderDashboard() {
                 </div>
                 <div style="margin-top:6px">
                   <button type="button" class="btn btn-sm btn-primary btn-pagar-fatura" onclick="event.stopPropagation()" data-cartao-id="${idCartaoAttr}" data-mes="${compAtual.mes}" data-ano="${compAtual.ano}" style="padding:3px 10px;font-size:11px" ${faturaSemSaldo ? 'disabled' : ''}>
-                    <i class="ti ${faturaSemSaldo ? 'ti-circle-check' : 'ti-cash-banknote'}"></i> ${faturaSemSaldo ? 'Fatura Paga' : 'Pagar Fatura'}
+                    <i class="ti ${faturaSemSaldo ? 'ti-circle-check' : 'ti-cash-banknote'}"></i> ${faturaSemSaldo ? (totalFatura < 0 ? 'Crédito na Fatura' : 'Fatura Paga') : 'Pagar Fatura'}
                   </button>
                 </div>
               </div>
@@ -3891,7 +3959,10 @@ function badgeFaturaCompetenciaHTML(l) {
   const nomesMesCurto = { '01':'Jan','02':'Fev','03':'Mar','04':'Abr','05':'Mai','06':'Jun','07':'Jul','08':'Ago','09':'Set','10':'Out','11':'Nov','12':'Dez' };
   const rotulo = `Fat. ${nomesMesCurto[mmFat] || mmFat}/${anoFat.slice(-2)}`;
   const [anoData, mmData] = mesData.split('-');
-  const titulo = `Compra de ${nomesMesCurto[mmData] || mmData}/${anoData} cobrada na fatura de ${nomesMesCurto[mmFat] || mmFat}/${anoFat}`;
+  const ehEst = ehEstornoCartao(l);
+  const titulo = ehEst
+    ? `Estorno de ${nomesMesCurto[mmData] || mmData}/${anoData} abatido na fatura de ${nomesMesCurto[mmFat] || mmFat}/${anoFat}`
+    : `Compra de ${nomesMesCurto[mmData] || mmData}/${anoData} cobrada na fatura de ${nomesMesCurto[mmFat] || mmFat}/${anoFat}`;
   return `<span class="badge-fatura-comp" title="${escHtml(titulo)}">${escHtml(rotulo)}</span>`;
 }
 
@@ -3951,13 +4022,19 @@ function estaPago(l) {
   if (ehLancamentoPagamentoFatura(l)) {
     return l.pago !== false;
   }
-  if (ehLancamentoCartao(l) && l.tipo === 'despesa') {
+  if (ehLancamentoCartao(l) && (l.tipo === 'despesa' || ehEstornoCartao(l))) {
     return l.faturaPaga === true;
   }
   return l.pago !== false || l.status === 'Liquidado' || l.status === 'Pago/Efetivado';
 }
 function badgeStatusHTML(l, comClique) {
   const onclick = comClique ? ` onclick="togglePagamento('${l.id}')" title="Clique para alternar"` : '';
+  if (ehEstornoCartao(l)) {
+    if (l.faturaPaga === true) {
+      return `<span class="badge badge-pago badge-liquidado${comClique?' badge-click':''}"${onclick} title="Estorno contabilizado em fatura liquidada"><i class="ti ti-checks" style="font-size:11px;margin-right:2px"></i>Liquidado</span>`;
+    }
+    return `<span class="badge badge-pago${comClique?' badge-click':''}"${onclick} title="Crédito/Estorno abatendo a fatura em aberto"><i class="ti ti-arrow-back-up" style="font-size:11px;margin-right:2px"></i>Creditado</span>`;
+  }
   if (ehLancamentoCartao(l) && l.tipo === 'despesa' && !ehLancamentoPagamentoFatura(l)) {
     const faturaQuitada = l.faturaPaga === true;
     if (faturaQuitada) {
@@ -3981,8 +4058,13 @@ function badgeParcelaHTML(l) {
   if (!l.parcelaTotal || l.parcelaTotal <= 1) return '';
   return `<span class="badge badge-parcela">${l.parcelaAtual}/${l.parcelaTotal}</span>`;
 }
+function badgeEstornoCartaoHTML(l) {
+  if (!ehEstornoCartao(l)) return '';
+  return ' <span class="badge badge-receita" style="font-size:10px;padding:1px 6px;vertical-align:middle" title="Estorno / crédito que abate a fatura do cartão"><i class="ti ti-arrow-back-up" style="font-size:11px;margin-right:2px"></i>Estorno</span>';
+}
 function badgeValorHTML(l) {
   if (isLancamentoTransferencia(l)) return `<span class="badge badge-transfer"><i class="ti ti-transfer" style="font-size:10px"></i> ${toBRL(l.valor)}</span>`;
+  if (ehEstornoCartao(l)) return `<span class="badge badge-receita" title="Crédito/Estorno no cartão (abate a fatura)">+ ${toBRL(l.valor)}</span>`;
   return `<span class="badge ${l.tipo==='receita'?'badge-receita':'badge-despesa'}">${l.tipo==='receita'?'+':'-'} ${toBRL(l.valor)}</span>`;
 }
 function comprovanteIconHTML(l) {
@@ -4013,7 +4095,7 @@ function linhaLancamento(l) {
     : `if(podeExecutarCliqueDashboard(event)) abrirModalLancamento('${l.id}')`;
   return `<tr data-id="${l.id}" class="card-lancamento dash-clickable" onclick="${onclickLinha}" title="${ehTransf ? 'Ver transferência em Lançamentos' : 'Abrir lançamento'}">
     <td>${dataFmt}</td>
-    <td>${formatarDescricaoComHashtags(l.descricao)}${badgeParcelaHTML(l)}${badgesTagsHTML(l)}${comprovanteIconHTML(l)}</td>
+    <td>${formatarDescricaoComHashtags(l.descricao)}${badgeEstornoCartaoHTML(l)}${badgeParcelaHTML(l)}${badgesTagsHTML(l)}${comprovanteIconHTML(l)}</td>
     <td><span class="badge badge-cat">${escHtml(formatarCategoriaExibicao(l.categoria))}</span></td>
     <td>${escHtml(l.conta || '-')}${badgeFaturaCompetenciaHTML(l)}</td>
     <td>${badgeStatusHTML(l, false)}</td>
@@ -4231,8 +4313,8 @@ function renderLancamentos(opcoes) {
 
   const resumoTag = document.getElementById('tag-resumo');
   if (tagFiltro) {
-    const gastos = lista.filter(l => l.tipo === 'despesa' && !isLancamentoTransferencia(l)).reduce((s,l) => s + l.valor, 0);
-    const entradas = lista.filter(l => l.tipo === 'receita' && !isLancamentoTransferencia(l)).reduce((s,l) => s + l.valor, 0);
+    const gastos = Math.max(0, lista.filter(l => (l.tipo === 'despesa' || ehEstornoCartao(l)) && !l.ehOperacaoTecnica && !isLancamentoTransferencia(l)).reduce((s,l) => s + (ehEstornoCartao(l) ? -l.valor : l.valor), 0));
+    const entradas = lista.filter(l => l.tipo === 'receita' && !ehEstornoCartao(l) && !l.ehOperacaoTecnica && !isLancamentoTransferencia(l)).reduce((s,l) => s + l.valor, 0);
     const cats = gastosPorCategoria(lista).slice(0, 4).map(([c, v]) => `${escHtml(c)}: ${toBRL(v)}`).join(' · ');
     resumoTag.style.display = '';
     resumoTag.innerHTML = `<i class="ti ti-tag" style="flex-shrink:0"></i><div><strong>#${escHtml(tagFiltro)}</strong> — gasto total ${toBRL(gastos)}${entradas ? ` · entradas ${toBRL(entradas)}` : ''} · ${lista.length} lançamento(s)${cats ? `<br><span style="font-weight:400">Por categoria: ${cats}</span>` : ''}</div>`;
@@ -4280,7 +4362,7 @@ function renderLancamentos(opcoes) {
       : '';
     return `<tr data-id="${l.id}"${classesTr ? ` class="${classesTr}"` : ''}${attrCliqueTr}>
       <td>${chkConcil}${dataFmt}</td>
-      <td>${formatarDescricaoComHashtags(l.descricao)}${badgeDescOrig}${badgeParcelaHTML(l)}${subCatsBadge}${badgesTagsHTML(l)}${comprovanteIconHTML(l)}</td>
+      <td>${formatarDescricaoComHashtags(l.descricao)}${badgeDescOrig}${badgeEstornoCartaoHTML(l)}${badgeParcelaHTML(l)}${subCatsBadge}${badgesTagsHTML(l)}${comprovanteIconHTML(l)}</td>
       <td><span class="badge badge-cat${ehAClassificar ? ' badge-a-classificar' : ''}">${escHtml(formatarCategoriaExibicao(l.categoria))}</span></td>
       <td>${escHtml(l.conta || '-')}${badgeFaturaCompetenciaHTML(l)}</td>
       <td>${badgeStatusHTML(l, !ehTransfItem && !modoConciliacaoAtivo)}</td>
@@ -4549,7 +4631,7 @@ async function marcarSelecionadosComoPagos() {
   let ignoradosCartao = 0;
   STATE.lancamentos.forEach(l => {
     if (conciliacaoSelecionados.has(l.id)) {
-      if (ehLancamentoCartao(l) && l.tipo === 'despesa' && !ehLancamentoPagamentoFatura(l)) {
+      if (ehLancamentoCartao(l) && (l.tipo === 'despesa' || ehEstornoCartao(l)) && !ehLancamentoPagamentoFatura(l)) {
         ignoradosCartao++;
         return;
       }
@@ -4580,7 +4662,7 @@ async function marcarSelecionadosComoPagos() {
 async function togglePagamento(id) {
   const l = STATE.lancamentos.find(x => x.id === id);
   if (!l) return;
-  if (ehLancamentoCartao(l) && l.tipo === 'despesa' && !ehLancamentoPagamentoFatura(l)) {
+  if (ehLancamentoCartao(l) && (l.tipo === 'despesa' || ehEstornoCartao(l)) && !ehLancamentoPagamentoFatura(l)) {
     if (l.faturaPaga === true) {
       toast('Esta fatura já está liquidada.', 'info');
       return;
@@ -4602,9 +4684,18 @@ async function togglePagamento(id) {
 }
 function popularCategoriasSelect() {
   const tipo = document.getElementById('lanc-tipo').value;
+  const selContaModal = document.getElementById('lanc-conta');
+  const nomeContaModal = selContaModal ? selContaModal.value : '';
+  const contaModalEhCartao = Boolean(
+    nomeContaModal && (
+      (STATE.contas || []).some(c => c && c.nome === nomeContaModal && c.tipo === 'cartao') ||
+      (STATE.cartoes || []).some(c => c && c.nome === nomeContaModal)
+    )
+  );
+  const tipoCategoriasModal = (tipo === 'receita' && contaModalEhCartao) ? 'despesa' : tipo;
   const sel = document.getElementById('lanc-categoria');
   const atual = sel.value;
-  sel.innerHTML = construirOptionsCategoriasHTML(tipo, atual);
+  sel.innerHTML = construirOptionsCategoriasHTML(tipoCategoriasModal, atual);
   if ([...sel.options].some(o => o.value === atual)) sel.value = atual;
   if (splitAtivoNoModal) renderLinhasSplit();
   const rowRachar = document.getElementById('lanc-split-bill-toggle-row');
@@ -5111,6 +5202,7 @@ function abrirModalLancamento(id) {
   document.getElementById('lanc-modal-title').textContent = l ? 'Editar lançamento' : 'Novo lançamento';
   document.getElementById('lanc-id').value = l ? l.id : '';
   document.getElementById('lanc-tipo').value = l ? l.tipo : 'despesa';
+  document.getElementById('lanc-conta').value = l ? l.conta : (STATE.contas[0] ? STATE.contas[0].nome : '');
   popularCategoriasSelect();
   document.getElementById('lanc-data').value = l ? (l.dataCompra || l.data) : hojeLocalISO();
   
@@ -5447,10 +5539,18 @@ async function salvarLancamento() {
           item.reembolsado = anterior.reembolsado || false;
         }
       });
+      if (typeof registrarAprendizadoSilencioso === 'function') {
+        registrarAprendizadoSilencioso({ ...anterior, tipo, descricao, categoria }, categoria, {
+          tag: (Array.isArray(tags) && tags[0]) || ''
+        });
+      }
       toast(`Compra parcelada atualizada em lote (${n} parcelas).`, 'ok');
     } else {
-      // Edição de item único
-      const cartaoConta = (tipo === 'despesa') ? (STATE.contas.find(c => c.nome === conta && c.tipo === 'cartao') || (STATE.cartoes || []).find(c => c.nome === conta)) : null;
+      // Edição de item único (despesa ou estorno/crédito em cartão)
+      const ehPagFaturaAnt = ehLancamentoPagamentoFatura(anterior);
+      const cartaoConta = (!ehPagFaturaAnt && (tipo === 'despesa' || tipo === 'receita'))
+        ? (STATE.contas.find(c => c.nome === conta && c.tipo === 'cartao') || (STATE.cartoes || []).find(c => c.nome === conta))
+        : null;
       const dataLancamento = data;
       let faturaAno = anterior.faturaAno;
       let faturaMes = anterior.faturaMes;
@@ -5486,6 +5586,11 @@ async function salvarLancamento() {
         sincronizado: false
       };
       if (idx >= 0) STATE.lancamentos[idx] = editado; else STATE.lancamentos.push(editado);
+      if (typeof registrarAprendizadoSilencioso === 'function') {
+        registrarAprendizadoSilencioso(editado, categoria, {
+          tag: (Array.isArray(tags) && tags[0]) || ''
+        });
+      }
       if (anterior && (anterior.categoria !== categoria || anterior.descricao !== descricao)) {
         window.__pendenteAprendizadoSalvar = {
           lanc: editado,
@@ -5547,7 +5652,9 @@ async function salvarLancamento() {
     }
     toast(`${parcelas} parcelas criadas, distribuídas mês a mês no cartão/conta.`, 'ok');
   } else {
-    const cartaoConta = (tipo === 'despesa') ? (STATE.contas.find(c => c.nome === conta && c.tipo === 'cartao') || (STATE.cartoes || []).find(c => c.nome === conta)) : null;
+    const cartaoConta = (tipo === 'despesa' || tipo === 'receita')
+      ? (STATE.contas.find(c => c.nome === conta && c.tipo === 'cartao') || (STATE.cartoes || []).find(c => c.nome === conta))
+      : null;
     const dataLancamento = data;
     let faturaAno = undefined;
     let faturaMes = undefined;
@@ -5576,6 +5683,11 @@ async function salvarLancamento() {
       anexoNome, anexoPath,
       garantiaFim, garantiaMeses
     });
+    if (typeof registrarAprendizadoSilencioso === 'function') {
+      registrarAprendizadoSilencioso({ tipo, descricao, categoria, tags }, categoria, {
+        tag: (Array.isArray(tags) && tags[0]) || ''
+      });
+    }
   }
   if (!id) injetarReceitaSplitBill();
   comprovanteAtual = null;
@@ -6188,6 +6300,7 @@ function renderConfig() {
     }).join('') || '<span class="help-text">Nenhuma regra cadastrada.</span>';
   }
   if (typeof renderRegrasCategoriaConfig === 'function') renderRegrasCategoriaConfig();
+  if (typeof atualizarUISyncCerebroGist === 'function') atualizarUISyncCerebroGist();
   atualizarSegurancaUI();
   atualizarUIModoViagem();
   atualizarUIBackup();
@@ -6201,6 +6314,7 @@ async function adicionarCategoria() {
   const paiNome = document.getElementById('cat-pai') ? document.getElementById('cat-pai').value : '';
   const orcamento = moedaToNumber(document.getElementById('cat-orcamento').value) || undefined;
   if (!nome) return;
+  const agoraISO = new Date().toISOString();
   if (paiNome) {
     const macro = STATE.categorias.find(c => c.nome === paiNome && c.tipo === tipo);
     if (!macro) { toast('Categoria principal não encontrada.', 'err'); return; }
@@ -6210,18 +6324,27 @@ async function adicionarCategoria() {
       return;
     }
     macro.subcategorias.push(nome);
+    macro.atualizadoEm = agoraISO;
+    if (typeof limparTombstoneCerebro === 'function') {
+      limparTombstoneCerebro('categorias', chaveTombstoneSubcategoria(macro.tipo, macro.nome, nome));
+    }
     document.getElementById('cat-nome').value = '';
     await salvarDados();
     renderConfig();
+    if (typeof agendarSyncCerebroGitHub === 'function') agendarSyncCerebroGitHub('categoria');
     toast(`Subcategoria "${macro.nome} › ${nome}" adicionada!`, 'ok');
     return;
   }
   if (STATE.categorias.some(c => c.nome.toLowerCase() === nome.toLowerCase() && c.tipo === tipo)) { toast('Categoria principal já existe.', 'err'); return; }
-  STATE.categorias.push({ nome, tipo, orcamento, subcategorias: [] });
+  STATE.categorias.push({ nome, tipo, orcamento, subcategorias: [], atualizadoEm: agoraISO });
+  if (typeof limparTombstoneCerebro === 'function') {
+    limparTombstoneCerebro('categorias', chaveTombstoneCategoria(tipo, nome));
+  }
   document.getElementById('cat-nome').value = '';
   document.getElementById('cat-orcamento').value = '';
   await salvarDados();
   renderConfig();
+  if (typeof agendarSyncCerebroGitHub === 'function') agendarSyncCerebroGitHub('categoria');
   toast(`Categoria principal "${nome}" adicionada!`, 'ok');
 }
 async function adicionarSubcategoriaRapida(idxMacro) {
@@ -6237,21 +6360,38 @@ async function adicionarSubcategoriaRapida(idxMacro) {
     return;
   }
   macro.subcategorias.push(subNome);
+  macro.atualizadoEm = new Date().toISOString();
+  if (typeof limparTombstoneCerebro === 'function') {
+    limparTombstoneCerebro('categorias', chaveTombstoneSubcategoria(macro.tipo, macro.nome, subNome));
+  }
   await salvarDados();
   renderConfig();
+  if (typeof agendarSyncCerebroGitHub === 'function') agendarSyncCerebroGitHub('categoria');
   toast(`Subcategoria "${macro.nome} › ${subNome}" criada!`, 'ok');
 }
 async function removerSubcategoria(idxMacro, idxSub) {
   normalizarHierarquiaCategorias();
   const macro = STATE.categorias[idxMacro];
   if (!macro || !Array.isArray(macro.subcategorias)) return;
+  const removida = macro.subcategorias[idxSub];
   macro.subcategorias.splice(idxSub, 1);
+  const agoraISO = new Date().toISOString();
+  macro.atualizadoEm = agoraISO;
+  if (removida && typeof registrarTombstoneCerebro === 'function') {
+    registrarTombstoneCerebro('categorias', chaveTombstoneSubcategoria(macro.tipo, macro.nome, removida), agoraISO);
+  }
   await salvarDados();
   renderConfig();
+  if (typeof agendarSyncCerebroGitHub === 'function') agendarSyncCerebroGitHub('categoria');
 }
 async function removerCategoria(idx) {
+  const removida = STATE.categorias[idx];
+  if (removida && typeof registrarTombstoneCerebro === 'function') {
+    registrarTombstoneCerebro('categorias', chaveTombstoneCategoria(removida.tipo, removida.nome));
+  }
   STATE.categorias.splice(idx, 1);
   await salvarDados(); renderConfig();
+  if (typeof agendarSyncCerebroGitHub === 'function') agendarSyncCerebroGitHub('categoria');
 }
 async function editarOrcamentoCategoria(idx) {
   const cat = STATE.categorias[idx];
@@ -6261,7 +6401,9 @@ async function editarOrcamentoCategoria(idx) {
   if (resposta === null) return;
   const valor = moedaToNumber(resposta);
   cat.orcamento = valor > 0 ? valor : undefined;
+  cat.atualizadoEm = new Date().toISOString();
   await salvarDados(); renderConfig(); renderDashboard();
+  if (typeof agendarSyncCerebroGitHub === 'function') agendarSyncCerebroGitHub('categoria');
 }
 async function salvarConta() {
   const idxEdicao = document.getElementById('conta-id').value;
@@ -7291,10 +7433,15 @@ function ultimosMeses(n) {
 function receitasDespesasDoMes(mesKey) {
   let receitas = 0, despesas = 0;
   STATE.lancamentos.forEach(l => {
-    if (isLancamentoTransferencia(l) || ehLancamentoPagamentoFatura(l) || mesCompetenciaLancamento(l) !== mesKey) return;
-    if (l.tipo === 'receita') receitas += l.valor; else despesas += l.valor;
+    if (l.ehOperacaoTecnica || isLancamentoTransferencia(l) || ehLancamentoPagamentoFatura(l) || mesCompetenciaLancamento(l) !== mesKey) return;
+    if (ehEstornoCartao(l)) despesas -= l.valor;
+    else if (l.tipo === 'receita') receitas += l.valor;
+    else despesas += l.valor;
   });
-  return { receitas, despesas };
+  return {
+    receitas: Math.round(receitas * 100) / 100,
+    despesas: Math.round(despesas * 100) / 100
+  };
 }
 // Taxa de poupança = (receitas − despesas) ÷ receitas. Sem receita no mês, não existe (null).
 function taxaPoupanca(mesKey) {
@@ -7360,7 +7507,7 @@ function lancamentosDaFatura(nomeCartao, ano, mes) {
   const anoAlvo = parseInt(ano, 10);
   const mesAlvo = parseInt(mes, 10);
   return (STATE.lancamentos || []).filter(l => {
-    if (!l || l.tipo !== 'despesa' || ehLancamentoPagamentoFatura(l)) return false;
+    if (!l || (l.tipo !== 'despesa' && !ehEstornoCartao(l)) || ehLancamentoPagamentoFatura(l) || isLancamentoTransferencia(l) || l.ehOperacaoTecnica) return false;
     const contaLancLower = String(l.conta || l.cartaoNome || '').trim().toLowerCase();
     const matchCartao = contaLancLower === cartaoLower || (!l.conta && cartao.id && l.cartaoId === cartao.id);
     if (!matchCartao) return false;
@@ -7377,7 +7524,7 @@ function obterCompetenciaFaturaDashboard(nomeCartao, diaFechamento, dataRefISO) 
   // 1) Se o mês civil atual tiver lançamentos sem a flag faturaPaga === true, prioriza exibir a fatura do mês civil atual
   const itensMesCivil = lancamentosDaFatura(nomeCartao, anoRef, mesRef);
   const pendentesMesCivil = itensMesCivil.filter(l => l.faturaPaga !== true);
-  if (pendentesMesCivil.length > 0) {
+  if (pendentesMesCivil.length > 0 && somarItensFaturaLiquido(pendentesMesCivil) > 0) {
     return { ano: anoRef, mes: mesRef };
   }
 
@@ -7387,12 +7534,15 @@ function obterCompetenciaFaturaDashboard(nomeCartao, diaFechamento, dataRefISO) 
   if (pendentesCiclo.length > 0) {
     return compCiclo;
   }
+  if (pendentesMesCivil.length > 0) {
+    return { ano: anoRef, mes: mesRef };
+  }
 
   // 3) Se houver fatura anterior/atual em atraso (até o ciclo atual) sem faturaPaga === true, prioriza a mais antiga pendente
   // (Não avança automaticamente para parcelas de meses futuros quando a fatura atual foi liquidada)
   const cartao = (STATE.contas || []).find(c => c.nome === nomeCartao && c.tipo === 'cartao') || (STATE.cartoes || []).find(c => c.nome === nomeCartao);
   const todosPendentesAteCiclo = (STATE.lancamentos || []).filter(l => {
-    if (!l || l.conta !== nomeCartao || l.tipo !== 'despesa' || ehLancamentoPagamentoFatura(l)) return false;
+    if (!l || l.conta !== nomeCartao || (l.tipo !== 'despesa' && !ehEstornoCartao(l)) || ehLancamentoPagamentoFatura(l) || isLancamentoTransferencia(l) || l.ehOperacaoTecnica) return false;
     if (l.faturaPaga === true) return false;
     const c = calcularCompetenciaLancamentoCartao(l, cartao);
     return (c.ano < compCiclo.ano) || (c.ano === compCiclo.ano && c.mes <= compCiclo.mes);
@@ -7421,11 +7571,22 @@ function obterCompetenciaFaturaDashboard(nomeCartao, diaFechamento, dataRefISO) 
 function gastosPorMacroESubcategoria(lista) {
   const somaMacro = {};
   const subMap = {};
-  lista.filter(l => l.tipo === 'despesa' && !isLancamentoTransferencia(l) && !ehLancamentoPagamentoFatura(l) && !(l.ehReembolsavel && l.reembolsado)).forEach(l => {
+  lista.filter(l => (l.tipo === 'despesa' || ehEstornoCartao(l)) && !l.ehOperacaoTecnica && !isLancamentoTransferencia(l) && !ehLancamentoPagamentoFatura(l) && !(l.ehReembolsavel && l.reembolsado)).forEach(l => {
+    const delta = (ehEstornoCartao(l) ? -1 : 1) * (Number(l.valor) || 0);
     const { macro, sub } = extrairMacroESubcategoria(l.categoria);
-    somaMacro[macro] = (somaMacro[macro] || 0) + l.valor;
+    somaMacro[macro] = Math.round(((somaMacro[macro] || 0) + delta) * 100) / 100;
     if (!subMap[macro]) subMap[macro] = {};
-    subMap[macro][sub] = (subMap[macro][sub] || 0) + l.valor;
+    subMap[macro][sub] = Math.round(((subMap[macro][sub] || 0) + delta) * 100) / 100;
+  });
+  Object.keys(somaMacro).forEach(macro => {
+    if (somaMacro[macro] <= 0) {
+      delete somaMacro[macro];
+      delete subMap[macro];
+    } else if (subMap[macro]) {
+      Object.keys(subMap[macro]).forEach(sub => {
+        if (subMap[macro][sub] <= 0) delete subMap[macro][sub];
+      });
+    }
   });
   const macrosOrdenadas = Object.entries(somaMacro).sort((a, b) => b[1] - a[1]);
   return { macrosOrdenadas, subMap };
@@ -7524,12 +7685,12 @@ function abrirModalPagamentoFatura(idCartao, mesParam, anoParam) {
   let itensFatura = lancamentosDaFatura(nomeCartao, ano, mes);
   let itensPendentes = itensFatura.filter(l => l.faturaPaga !== true);
 
-  // Fallback: se a competência informada não tiver saldo pendente, verifica se há fatura ativa pendente no cartão
-  if (itensPendentes.length === 0) {
+  // Fallback: se a competência informada não tiver saldo pendente > 0, verifica se há fatura ativa pendente no cartão
+  if (itensPendentes.length === 0 || somarItensFaturaLiquido(itensPendentes) <= 0) {
     const compFallback = obterCompetenciaFaturaDashboard(nomeCartao, diaFechamento, hojeLocalISO());
     const itensFallback = lancamentosDaFatura(nomeCartao, compFallback.ano, compFallback.mes);
     const pendentesFallback = itensFallback.filter(l => l.faturaPaga !== true);
-    if (pendentesFallback.length > 0) {
+    if (pendentesFallback.length > 0 && somarItensFaturaLiquido(pendentesFallback) > 0) {
       ano = compFallback.ano;
       mes = compFallback.mes;
       itensFatura = itensFallback;
@@ -7537,7 +7698,7 @@ function abrirModalPagamentoFatura(idCartao, mesParam, anoParam) {
     }
   }
 
-  const valorFatura = Math.round(itensPendentes.reduce((s, l) => s + (Number(l.valor) || 0), 0) * 100) / 100;
+  const valorFatura = somarItensFaturaLiquido(itensPendentes);
 
   if (valorFatura <= 0) {
     toast('Esta fatura já está liquidada ou não possui saldo pendente.', 'info');
@@ -7644,7 +7805,7 @@ function quitarItensFaturaCartao(infoCartao, anoNum, mesNum, opcoes = {}) {
   const contaOrigem = opcoes.contaOrigem !== undefined ? String(opcoes.contaOrigem || '').trim() : '';
   const pagamentoFaturaId = opcoes.pagamentoFaturaId ? String(opcoes.pagamentoFaturaId).trim() : '';
   const origemQuitacao = opcoes.origemQuitacao || (pagamentoFaturaId ? 'conta_corrente' : 'manual_sem_conta');
-  const valorCalculado = Math.round(itensAlvo.reduce((s, l) => s + (Number(l.valor) || 0), 0) * 100) / 100;
+  const valorCalculado = Math.max(0, somarItensFaturaLiquido(itensAlvo));
   const valorFinal = (typeof opcoes.valorTotal === 'number' && !isNaN(opcoes.valorTotal) && opcoes.valorTotal > 0)
     ? Math.round(opcoes.valorTotal * 100) / 100
     : valorCalculado;
@@ -7688,7 +7849,7 @@ function quitarItensFaturaCartao(infoCartao, anoNum, mesNum, opcoes = {}) {
   const idsTodosFatura = itensFatura.map(l => l.id).filter(Boolean);
   const idsNovos = itensAlvo.map(l => l.id).filter(Boolean);
   const todosIdsPagos = [...new Set([...idsExistentesReg, ...idsTodosFatura, ...idsNovos])];
-  const totalBrutoFatura = Math.round(itensFatura.reduce((s, l) => s + (Number(l.valor) || 0), 0) * 100) / 100;
+  const totalBrutoFatura = Math.max(0, somarItensFaturaLiquido(itensFatura));
 
   STATE.config.faturasPagas[chaveFaturaPaga] = {
     ...(regAnterior || {}),
@@ -7935,11 +8096,11 @@ function renderCartoes() {
       while (mesH > 12) { mesH -= 12; anoH++; }
       while (mesH < 1) { mesH += 12; anoH--; }
       const itensHero = lancamentosDaFatura(cartaoHero.nome, anoH, mesH);
-      const totalBrutoHero = Math.round(itensHero.reduce((s, l) => s + (Number(l.valor) || 0), 0) * 100) / 100;
+      const totalBrutoHero = somarItensFaturaLiquido(itensHero);
       const itensPendentesHero = itensHero.filter(l => l.faturaPaga !== true);
-      const totalAbertoHero = Math.round(itensPendentesHero.reduce((s, l) => s + (Number(l.valor) || 0), 0) * 100) / 100;
-      const faturaSemSaldoHero = totalAbertoHero === 0;
-      const faturaPagaHeroComItens = itensHero.length > 0 && faturaSemSaldoHero;
+      const totalAbertoHero = somarItensFaturaLiquido(itensPendentesHero);
+      const faturaSemSaldoHero = totalAbertoHero <= 0;
+      const faturaPagaHeroComItens = itensHero.length > 0 && itensPendentesHero.length === 0;
 
       const elHeroValor = document.getElementById('cartoes-hero-total-valor');
       const elHeroSub = document.getElementById('cartoes-hero-sub');
@@ -7987,18 +8148,18 @@ function renderCartoes() {
     while (mes > 12) { mes -= 12; ano++; }
     while (mes < 1) { mes += 12; ano--; }
     const itens = lancamentosDaFatura(cartao.nome, ano, mes).sort((a,b) => (a.data||'').localeCompare(b.data||''));
-    const totalBruto = Math.round(itens.reduce((s,l) => s + (Number(l.valor) || 0), 0) * 100) / 100;
-    // Avalia ESTRITAMENTE apenas lançamentos sem a flag faturaPaga === true
+    const totalBruto = somarItensFaturaLiquido(itens);
+    // Avalia ESTRITAMENTE apenas lançamentos sem a flag faturaPaga === true (abatendo estornos da fatura)
     const itensPendentes = itens.filter(l => l.faturaPaga !== true);
-    const totalAberto = Math.round(itensPendentes.reduce((s,l) => s + (Number(l.valor) || 0), 0) * 100) / 100;
-    const faturaSemSaldo = totalAberto === 0;
-    const faturaJaPaga = itens.length > 0 && faturaSemSaldo;
+    const totalAberto = somarItensFaturaLiquido(itensPendentes);
+    const faturaSemSaldo = totalAberto <= 0;
+    const faturaJaPaga = itens.length > 0 && itensPendentes.length === 0;
 
-    // Comprometimento global em aberto deste cartão: soma APENAS itens com faturaPaga !== true
+    // Comprometimento global em aberto deste cartão: soma despesas menos estornos com faturaPaga !== true
     const pendentesGlobaisCartao = (STATE.lancamentos || []).filter(
-      l => l.conta === cartao.nome && l.tipo === 'despesa' && !ehLancamentoPagamentoFatura(l) && l.faturaPaga !== true
+      l => l.conta === cartao.nome && (l.tipo === 'despesa' || ehEstornoCartao(l)) && !ehLancamentoPagamentoFatura(l) && !isLancamentoTransferencia(l) && !l.ehOperacaoTecnica && l.faturaPaga !== true
     );
-    const limiteUsadoCartao = Math.round(pendentesGlobaisCartao.reduce((s, l) => s + (Number(l.valor) || 0), 0) * 100) / 100;
+    const limiteUsadoCartao = Math.max(0, somarItensFaturaLiquido(pendentesGlobaisCartao));
     const limiteTotalCartao = Number(cartao.limite || cartao.limiteTotal) || 0;
     const limiteDisponivelCartao = limiteTotalCartao > 0 ? Math.max(0, Math.round((limiteTotalCartao - limiteUsadoCartao) * 100) / 100) : 0;
     const usoLimite = limiteTotalCartao > 0 ? Math.min(100, (limiteUsadoCartao / limiteTotalCartao) * 100) : null;
@@ -8053,7 +8214,11 @@ function renderCartoes() {
             <table><thead><tr><th>Data</th><th>Descrição</th><th>Categoria</th><th>Status</th><th style="text-align:right">Valor</th></tr></thead><tbody>
               ${itens.length ? itens.map(l => {
                 const [a,m,d] = (l.data||'').split('-');
-                return `<tr><td>${d}/${m}/${a}</td><td>${escHtml(l.descricao || '-')}${badgeParcelaHTML(l)}</td><td><span class="badge badge-cat">${escHtml(l.categoria || '-')}</span></td><td>${badgeStatusHTML(l, true)}</td><td style="text-align:right" class="valor-sensivel">${toBRL(l.valor)}</td></tr>`;
+                const ehEst = ehEstornoCartao(l);
+                const valCelulaHTML = ehEst
+                  ? `<span class="badge badge-receita" title="Crédito/Estorno que abate o valor desta fatura">+ ${toBRL(l.valor)}</span>`
+                  : toBRL(l.valor);
+                return `<tr><td>${d}/${m}/${a}</td><td>${escHtml(l.descricao || '-')}${badgeEstornoCartaoHTML(l)}${badgeParcelaHTML(l)}</td><td><span class="badge badge-cat">${escHtml(formatarCategoriaExibicao(l.categoria || '-'))}</span></td><td>${badgeStatusHTML(l, true)}</td><td style="text-align:right" class="valor-sensivel">${valCelulaHTML}</td></tr>`;
               }).join('') : `<tr><td colspan="5" style="text-align:center;color:var(--text3);padding:1.5rem 0">Nenhum lançamento nessa fatura.</td></tr>`}
             </tbody></table>
           </div>
@@ -8150,7 +8315,7 @@ function calcularSaldoDisponivelGeral(mesAnoLimite) {
   let receitasMes = 0, despesasMes = 0;
 
   (STATE.lancamentos || []).forEach(l => {
-    if (!l || l.ehMovimentoCofre) return;
+    if (!l || l.ehMovimentoCofre || l.ehOperacaoTecnica) return;
     if (l.ehReembolsavel && l.reembolsado) return;
     const ehPagFatura = ehLancamentoPagamentoFatura(l);
     const ehTransf = !ehPagFatura && isLancamentoTransferencia(l);
@@ -8158,12 +8323,15 @@ function calcularSaldoDisponivelGeral(mesAnoLimite) {
 
     const mesLanc = mesCompetenciaLancamento(l);
     const valor = Number(l.valor) || 0;
+    const ehEstorno = ehEstornoCartao(l);
     if (!mesLanc || mesLanc <= mesLimite) {
-      if (l.tipo === 'receita') totalReceitas += valor;
+      if (ehEstorno) totalDespesas -= valor;
+      else if (l.tipo === 'receita') totalReceitas += valor;
       else if (l.tipo === 'despesa') totalDespesas += valor;
     }
     if (mesLanc === mesLimite) {
-      if (l.tipo === 'receita') receitasMes += valor;
+      if (ehEstorno) despesasMes -= valor;
+      else if (l.tipo === 'receita') receitasMes += valor;
       else if (l.tipo === 'despesa') despesasMes += valor;
     }
   });
@@ -8700,8 +8868,12 @@ function renderRelatorios() {
     (!hashtagFiltro || lancamentoTemHashtag(l, hashtagFiltro))
   );
 
-  const receitas = doPeriodo.filter(l => l.tipo==='receita' && !isLancamentoTransferencia(l)).reduce((s,l)=>s+l.valor,0);
-  const despesas = doPeriodo.filter(l => l.tipo==='despesa' && !isLancamentoTransferencia(l)).reduce((s,l)=>s+l.valor,0);
+  const receitas = doPeriodo.filter(l => l.tipo==='receita' && !ehEstornoCartao(l) && !l.ehOperacaoTecnica && !ehLancamentoPagamentoFatura(l) && !isLancamentoTransferencia(l)).reduce((s,l)=>s+l.valor,0);
+  const despesas = Math.round(
+    doPeriodo
+      .filter(l => (l.tipo==='despesa' || ehEstornoCartao(l)) && !l.ehOperacaoTecnica && !ehLancamentoPagamentoFatura(l) && !isLancamentoTransferencia(l))
+      .reduce((s,l) => s + (ehEstornoCartao(l) ? -l.valor : l.valor), 0) * 100
+  ) / 100;
   const subPeriodo = `últimos ${numMeses} meses${hashtagFiltro ? ' · #' + hashtagFiltro : ''}`;
   document.getElementById('rel-kpis').innerHTML = `
     <div class="metric"><div class="metric-label">Receitas no período</div><div class="metric-value mv-ok">${toBRL(receitas)}</div><div class="metric-sub">${subPeriodo}</div></div>
@@ -8719,9 +8891,11 @@ function renderRelatorios() {
     if (!hashtagFiltro) return receitasDespesasDoMes(mesKey);
     let rec = 0, desp = 0;
     STATE.lancamentos.forEach(l => {
-      if (isLancamentoTransferencia(l) || !lancamentoTemHashtag(l, hashtagFiltro)) return;
+      if (l.ehOperacaoTecnica || isLancamentoTransferencia(l) || ehLancamentoPagamentoFatura(l) || !lancamentoTemHashtag(l, hashtagFiltro)) return;
       if (mesCompetenciaLancamento(l) !== mesKey) return;
-      if (l.tipo === 'receita') rec += l.valor; else desp += l.valor;
+      if (ehEstornoCartao(l)) desp -= l.valor;
+      else if (l.tipo === 'receita') rec += l.valor;
+      else desp += l.valor;
     });
     return { receitas: rec, despesas: desp };
   };
@@ -8878,16 +9052,17 @@ function renderRelatorios() {
   const gastosMesAnterior = {};
   const subGastosMesAtual = {};
   STATE.lancamentos.forEach(l => {
-    if (l.tipo !== 'despesa' || isLancamentoTransferencia(l)) return;
+    if ((l.tipo !== 'despesa' && !ehEstornoCartao(l)) || l.ehOperacaoTecnica || ehLancamentoPagamentoFatura(l) || isLancamentoTransferencia(l)) return;
     if (hashtagFiltro && !lancamentoTemHashtag(l, hashtagFiltro)) return;
     const m = mesCompetenciaLancamento(l);
     const { macro: cat, sub } = extrairMacroESubcategoria(l.categoria);
+    const delta = (ehEstornoCartao(l) ? -1 : 1) * l.valor;
     if (m === mesAtual) {
-      gastosMesAtual[cat] = (gastosMesAtual[cat] || 0) + l.valor;
+      gastosMesAtual[cat] = Math.round(((gastosMesAtual[cat] || 0) + delta) * 100) / 100;
       if (!subGastosMesAtual[cat]) subGastosMesAtual[cat] = {};
-      subGastosMesAtual[cat][sub] = (subGastosMesAtual[cat][sub] || 0) + l.valor;
+      subGastosMesAtual[cat][sub] = Math.round(((subGastosMesAtual[cat][sub] || 0) + delta) * 100) / 100;
     } else if (m === mesAnteriorExato) {
-      gastosMesAnterior[cat] = (gastosMesAnterior[cat] || 0) + l.valor;
+      gastosMesAnterior[cat] = Math.round(((gastosMesAnterior[cat] || 0) + delta) * 100) / 100;
     }
   });
 
@@ -8958,7 +9133,7 @@ function renderRelatorios() {
     </div>${dicaSubs}`;
   }).join('') : `<p class="help-text">Nenhuma categoria com orçamento definido ainda — configure em Categorias &amp; Contas.</p>`;
 
-  const ranking = [...doPeriodo].filter(l => l.tipo==='despesa' && !isLancamentoTransferencia(l)).sort((a,b) => b.valor - a.valor).slice(0, 10);
+  const ranking = [...doPeriodo].filter(l => l.tipo==='despesa' && !l.ehOperacaoTecnica && !ehLancamentoPagamentoFatura(l) && !isLancamentoTransferencia(l)).sort((a,b) => b.valor - a.valor).slice(0, 10);
   document.getElementById('rel-ranking').innerHTML = ranking.length ? ranking.map(l => {
     const [a,m,d] = (l.data||'').split('-');
     return `<tr class="dash-clickable" onclick="abrirModalLancamento('${l.id}')" title="Abrir lançamento"><td>${d}/${m}/${a}</td><td>${formatarDescricaoComHashtags(l.descricao)}${badgesTagsHTML(l)}</td><td><span class="badge badge-cat">${escHtml(formatarCategoriaExibicao(l.categoria))}</span></td><td style="text-align:right">${toBRL(l.valor)}</td></tr>`;
@@ -10389,8 +10564,16 @@ async function processarRestauracaoBackup(textoJson) {
         try {
           const pastaBackupAtual = STATE.config?.pastaBackup;
           STATE = Object.assign(STATE, dados);
+          if (!dados.memoriaCategorias || typeof dados.memoriaCategorias !== 'object') {
+            STATE.memoriaCategorias = {};
+          }
+          if (!dados.tombstonesCerebro || typeof dados.tombstonesCerebro !== 'object') {
+            STATE.tombstonesCerebro = { categorias: {}, regras: {}, memoria: {} };
+          }
           if (!Array.isArray(STATE.receitasFixas)) STATE.receitasFixas = [];
           normalizarRegrasCategoria();
+          if (typeof normalizarMemoriaCategorias === 'function') normalizarMemoriaCategorias();
+          if (typeof normalizarTombstonesCerebro === 'function') normalizarTombstonesCerebro();
           if (pastaBackupAtual && !STATE.config.pastaBackup) {
             STATE.config.pastaBackup = pastaBackupAtual;
           }
@@ -10934,7 +11117,10 @@ function mesclarLinhasNaBase(linhas, mapa, modoSincronizacaoTotal) {
       ehReembolsavel,
       reembolsoDevedor,
       reembolsado,
-      conciliado
+      conciliado,
+      ehOperacaoTecnica: (antigo && antigo.ehOperacaoTecnica === true) ? true : undefined,
+      parPixCreditoId: (antigo && antigo.parPixCreditoId) || undefined,
+      pluggyMeta: (antigo && antigo.pluggyMeta) || undefined
     });
     novos++;
   });
@@ -10943,6 +11129,9 @@ function mesclarLinhasNaBase(linhas, mapa, modoSincronizacaoTotal) {
     ? [...novosDaPlanilha, ...baseAnterior]
     : [...STATE.lancamentos, ...novosDaPlanilha];
 
+  if (typeof neutralizarParesPixNoCredito === 'function') {
+    neutralizarParesPixNoCredito(STATE.lancamentos);
+  }
   corrigirFaturasPresas();
   recalcularLimitesCartoes();
 
@@ -11010,6 +11199,7 @@ function formatarMesExtenso(mesKey) {
 
 function obterPendenciasMesWizard(mesKey) {
   return (STATE.lancamentos || []).filter(l =>
+    !l.ehOperacaoTecnica &&
     !isLancamentoTransferencia(l) &&
     !estaPago(l) &&
     mesCompetenciaLancamento(l) === mesKey
@@ -11020,10 +11210,11 @@ function calcularBalancoRealMesWizard(mesKey) {
   let receitasEfetivadas = 0;
   let despesasEfetivadas = 0;
   (STATE.lancamentos || []).forEach(l => {
-    if (isLancamentoTransferencia(l) || l.ehMovimentoCofre) return;
+    if (l.ehOperacaoTecnica || isLancamentoTransferencia(l) || ehLancamentoPagamentoFatura(l) || l.ehMovimentoCofre) return;
     if (mesCompetenciaLancamento(l) !== mesKey) return;
     if (!estaPago(l)) return;
-    if (l.tipo === 'receita') receitasEfetivadas += (Number(l.valor) || 0);
+    if (ehEstornoCartao(l)) despesasEfetivadas -= (Number(l.valor) || 0);
+    else if (l.tipo === 'receita') receitasEfetivadas += (Number(l.valor) || 0);
     else despesasEfetivadas += (Number(l.valor) || 0);
   });
   receitasEfetivadas = Math.round(receitasEfetivadas * 100) / 100;
@@ -12291,6 +12482,34 @@ async function mesclarEstadoP2P(dadosExternos, silencioso = false) {
         assinsLocais.add(assin);
       });
       normalizarRegrasCategoria();
+    }
+
+    // 4.1 Merge Inteligente da Memória Silenciosa de Categorias (STATE.memoriaCategorias)
+    if (typeof normalizarMemoriaCategorias === 'function') normalizarMemoriaCategorias();
+    if (externo.memoriaCategorias && typeof externo.memoriaCategorias === 'object') {
+      if (!STATE.memoriaCategorias || typeof STATE.memoriaCategorias !== 'object') {
+        STATE.memoriaCategorias = {};
+      }
+      Object.entries(externo.memoriaCategorias).forEach(([chave, itemExt]) => {
+        if (!chave || !itemExt || typeof itemExt !== 'object' || !itemExt.categoria) return;
+        const atual = STATE.memoriaCategorias[chave];
+        if (!atual) {
+          STATE.memoriaCategorias[chave] = { ...itemExt };
+        } else {
+          const tsExt = String(itemExt.atualizadoEm || '');
+          const tsLoc = String(atual.atualizadoEm || '');
+          if (tsExt > tsLoc) {
+            STATE.memoriaCategorias[chave] = {
+              ...atual,
+              ...itemExt,
+              usos: Math.max(parseInt(atual.usos, 10) || 1, parseInt(itemExt.usos, 10) || 1)
+            };
+          } else {
+            atual.usos = Math.max(parseInt(atual.usos, 10) || 1, parseInt(itemExt.usos, 10) || 1);
+          }
+        }
+      });
+      if (typeof normalizarMemoriaCategorias === 'function') normalizarMemoriaCategorias();
     }
 
     migrarCofresParaMetas();
@@ -13856,18 +14075,18 @@ function calcularPlanoQuitacaoFaturasRevisao(listaTransacoes, opcoes = {}) {
     ...((STATE && Array.isArray(STATE.cartoes)) ? STATE.cartoes : [])
   ];
 
-  // Inclui despesas de cartão já gravadas em STATE.lancamentos para melhorar o batimento de valores
+  // Inclui despesas e estornos de cartão já gravados em STATE.lancamentos para melhorar o batimento de valores
   (STATE.lancamentos || []).forEach((l) => {
-    if (!l || l.tipo !== 'despesa' || ehLancamentoPagamentoFatura(l) || !ehLancamentoCartao(l)) return;
+    if (!l || (l.tipo !== 'despesa' && !ehEstornoCartao(l)) || ehLancamentoPagamentoFatura(l) || !ehLancamentoCartao(l)) return;
     const nomeC = l.conta || l.cartaoNome;
     if (!nomeC) return;
     const cfg = obterConfigCartaoParaRevisao(nomeC);
     const grupo = obterOuCriarGrupoCartao(cfg.nomeCartao, cfg);
     const comp = calcularCompetenciaLancamentoCartao(l, cfg.cartao || { nome: cfg.nomeCartao, diaFechamento: cfg.diaFechamento });
-    registrarDespesaCartao(grupo, comp.ano, comp.mes, l.valor);
+    registrarDespesaCartao(grupo, comp.ano, comp.mes, valorAssinadoFaturaCartao(l));
   });
 
-  // Inclui despesas de cartão do lote atual em revisão/importação
+  // Inclui despesas e estornos de cartão do lote atual em revisão/importação
   (listaTransacoes || []).forEach((tx) => {
     if (!tx || tx.ehDuplicada) return;
     const contaResolvida = contasResolvidasPorTx ? contasResolvidasPorTx.get(tx) : null;
@@ -13884,11 +14103,12 @@ function calcularPlanoQuitacaoFaturasRevisao(listaTransacoes, opcoes = {}) {
 
     const ehTipoCartao = cfg.isCartao || normalizarTipoContaPluggy(tx.accountType, tx.origem === 'pluggy' ? 'PLUGGY' : 'OFX') === 'CREDIT';
     const ehPagCartao = Boolean(tx.ehPagamentoFaturaNoCartao || (ehTipoCartao && ehTransacaoPagamentoFaturaPluggy(tx.memo || tx.descricao, tx.rawCategory)));
-    if (!ehTipoCartao || !cfg.isCartao || tx.tipo !== 'despesa' || ehPagCartao || tx.selecionada === false) return;
+    if (!ehTipoCartao || !cfg.isCartao || ehPagCartao || tx.selecionada === false) return;
+    if (tx.tipo !== 'despesa' && tx.tipo !== 'receita') return;
 
     const grupo = obterOuCriarGrupoCartao(cfg.nomeCartao, cfg);
     const comp = competenciaFatura(tx.dataCompra || tx.data, cfg.diaFechamento);
-    registrarDespesaCartao(grupo, comp.ano, comp.mes, tx.valor);
+    registrarDespesaCartao(grupo, comp.ano, comp.mes, tx.tipo === 'receita' ? -(Number(tx.valor) || 0) : tx.valor);
   });
 
   const pagamentosDetectadosPorChave = new Map();
@@ -14078,7 +14298,7 @@ function detectarTransferenciasNoLoteImportacao(itensRevisao) {
   if (!Array.isArray(itensRevisao) || !itensRevisao.length) return;
 
   const elegiveis = itensRevisao.filter(
-    tx => tx && !tx.ehDuplicada && !tx.ehCartaoCredito && !tx.ehPagamentoFaturaDetectado && !tx.ehPagamentoFaturaNoCartao && !tx.isCashMovement && (Number(tx.valor) || 0) > 0
+    tx => tx && !tx.ehDuplicada && !tx.ehOperacaoTecnica && !tx.ehCartaoCredito && !tx.ehPagamentoFaturaDetectado && !tx.ehPagamentoFaturaNoCartao && !tx.isCashMovement && (Number(tx.valor) || 0) > 0
   );
   const pareadosNoLote = new Set();
 
@@ -14407,21 +14627,42 @@ function processarNovasTransacoes(transacoesBrutas, origem = 'OFX', opcoesExtras
         uniqueId = `${chaveBase}_${ocorrencia}`;
       }
 
-      const catFonte = raw.category || (raw.merchant && raw.merchant.category) || '';
+      const catFonte = raw.category || (raw.pluggyMeta && raw.pluggyMeta.pluggyCategory) || (raw.merchant && raw.merchant.category) || '';
       const statusPluggy = String(raw.status || 'POSTED').toUpperCase();
       const ehPagamentoFaturaDetectado = ehTransacaoPagamentoFaturaPluggy(memo, catFonte);
       const ehPagamentoFaturaNoCartao = ehCartaoCredito && ehPagamentoFaturaDetectado;
       const isCashMovement = ehMovimentacaoDinheiroFisicoImportacao(memo, catFonte);
+      const pluggyMetaCompacto = typeof compactarPluggyMeta === 'function'
+        ? compactarPluggyMeta(raw.pluggyMeta || raw, trnType)
+        : undefined;
+      const ehRepassePixCredito = !ehCartaoCredito && !ehPagamentoFaturaDetectado
+        && typeof ehOperacaoTecnicaPixCredito === 'function'
+        && ehOperacaoTecnicaPixCredito({ tipo, trnType, accountType, ehCartaoCredito, descricao: memo, descricaoOriginal: memo, memo });
 
-      const resClassPluggy = (!ehPagamentoFaturaDetectado && typeof autoClassificarLancamento === 'function')
+      const resClassPluggy = (!ehPagamentoFaturaDetectado && !ehRepassePixCredito && typeof autoClassificarLancamento === 'function')
         ? autoClassificarLancamento(
-            { tipo, data: dataISO, descricao: memo, descricaoOriginal: memo, valor, conta: accountName, accountId, rawCategory: String(catFonte || '') },
-            { indiceMemoria: indiceMemoriaLote, rawCategory: String(catFonte || '') }
+            {
+              tipo,
+              data: dataISO,
+              descricao: memo,
+              descricaoOriginal: memo,
+              valor,
+              conta: accountName,
+              accountId,
+              accountType,
+              meioPagamento,
+              ehCartaoCredito,
+              rawCategory: String(catFonte || ''),
+              pluggyMeta: pluggyMetaCompacto
+            },
+            { indiceMemoria: indiceMemoriaLote, rawCategory: String(catFonte || ''), pluggyMeta: pluggyMetaCompacto }
           )
         : null;
       const categoria = ehPagamentoFaturaDetectado
         ? 'Transferência/Pagamento de Fatura'
-        : ((resClassPluggy && resClassPluggy.categoriaCompleta) || CATEGORIA_A_CLASSIFICAR);
+        : (ehRepassePixCredito
+          ? 'PIX no Crédito (Repasse)'
+          : ((resClassPluggy && resClassPluggy.categoriaCompleta) || CATEGORIA_A_CLASSIFICAR));
 
       normalizadas.push({
         id: uniqueId,
@@ -14439,11 +14680,15 @@ function processarNovasTransacoes(transacoesBrutas, origem = 'OFX', opcoesExtras
         descricao: memo,
         descricaoOriginal: memo,
         categoria,
-        classificacaoOrigem: ehPagamentoFaturaDetectado ? 'pluggy' : ((resClassPluggy && resClassPluggy.origem) || 'pendente'),
+        classificacaoOrigem: ehPagamentoFaturaDetectado
+          ? 'pluggy'
+          : (ehRepassePixCredito ? 'tecnico' : ((resClassPluggy && resClassPluggy.origem) || 'pendente')),
         classificacaoRegraId: (resClassPluggy && resClassPluggy.regraId) || null,
         tagSugerida: (resClassPluggy && resClassPluggy.tag) || '',
         apelidoSugerido: (resClassPluggy && resClassPluggy.apelidoDescricao) || '',
         rawCategory: String(catFonte || ''),
+        pluggyMeta: pluggyMetaCompacto,
+        ehOperacaoTecnica: ehRepassePixCredito ? true : undefined,
         accountId,
         accountName,
         accountType,
@@ -14600,6 +14845,9 @@ function processarNovasTransacoes(transacoesBrutas, origem = 'OFX', opcoesExtras
     }
   });
 
+  if (typeof neutralizarParesPixNoCredito === 'function') {
+    neutralizarParesPixNoCredito(transacoesProcessadas, STATE.lancamentos);
+  }
   detectarTransferenciasNoLoteImportacao(transacoesProcessadas);
 
   abrirModalRevisaoImportacao(contaDestino, transacoesProcessadas, {
@@ -15138,6 +15386,12 @@ function aoAlterarCategoriaRevisaoOFX(idx, novaCategoria) {
   tx.categoria = novaCategoria || CATEGORIA_A_CLASSIFICAR;
   tx.classificacaoOrigem = 'manual';
   tx.classificacaoRegraId = null;
+  if (typeof registrarAprendizadoSilencioso === 'function') {
+    const aprendeu = registrarAprendizadoSilencioso(tx, tx.categoria, {
+      tag: tx.tagSugerida || ''
+    });
+    if (aprendeu) persistirStateNoLocalStorage();
+  }
   const badgeWrap = document.querySelector(`[data-ofx-origem-idx="${idx}"]`);
   if (badgeWrap && typeof badgeOrigemClassificacaoHTML === 'function') {
     badgeWrap.innerHTML = badgeOrigemClassificacaoHTML('manual');
@@ -15194,14 +15448,15 @@ function renderListaRevisaoOFX() {
       : '';
 
     let badgeFaturaPreview = '';
-    if ((ehCredito || cfgCartaoPreview.isCartao) && cfgCartaoPreview.isCartao && !ehTransf && tipoLinhaAtual === 'despesa' && !tx.ehPagamentoFaturaNoCartao) {
+    if ((ehCredito || cfgCartaoPreview.isCartao) && cfgCartaoPreview.isCartao && !ehTransf && (tipoLinhaAtual === 'despesa' || tipoLinhaAtual === 'receita') && !tx.ehPagamentoFaturaNoCartao) {
       const compTx = competenciaFatura(tx.dataCompra || tx.data, cfgCartaoPreview.diaFechamento);
       const chavePrev = normalizarChaveFaturaLower(cfgCartaoPreview.nomeCartao, compTx.ano, compTx.mes);
       const quitadaPrev = planoPreview.porChaveLower.has(chavePrev);
       const labelComp = `${String(compTx.mes).padStart(2, '0')}/${compTx.ano}`;
+      const sufixoEstorno = tipoLinhaAtual === 'receita' ? ' · Estorno' : '';
       badgeFaturaPreview = quitadaPrev
-        ? `<span class="badge badge-pago" style="font-size:10px" title="Será importada como Fatura Paga"><i class="ti ti-circle-check"></i> Fatura ${escHtml(labelComp)} · Paga</span>`
-        : `<span class="badge badge-pendente" style="font-size:10px" title="Ficará em aberto em Cartões &amp; Faturas"><i class="ti ti-clock"></i> Fatura ${escHtml(labelComp)} · Aberta</span>`;
+        ? `<span class="badge badge-pago" style="font-size:10px" title="Será importada na Fatura Paga"><i class="ti ti-circle-check"></i> Fatura ${escHtml(labelComp)}${sufixoEstorno} · Paga</span>`
+        : `<span class="badge badge-pendente" style="font-size:10px" title="Entrará na competência em aberto em Cartões &amp; Faturas"><i class="ti ti-clock"></i> Fatura ${escHtml(labelComp)}${sufixoEstorno} · Aberta</span>`;
     }
 
     const badgeStatus = tx.ehDuplicada
@@ -15209,7 +15464,8 @@ function renderListaRevisaoOFX() {
       : '<span class="badge badge-pago" style="font-size:10px">Novo</span>';
 
     const optsContaLinha = construirOptionsContasECartoesRevisaoHTML(destinoAtual, tx.accountType, tx.accountName);
-    const optsCat = construirOptionsCategoriasOFX(tipoLinhaAtual === 'receita' ? 'receita' : 'despesa', tx.categoria);
+    const ehEstornoRevisao = (ehCredito || cfgCartaoPreview.isCartao) && tipoLinhaAtual === 'receita' && !tx.ehPagamentoFaturaNoCartao;
+    const optsCat = construirOptionsCategoriasOFX(ehEstornoRevisao ? 'despesa' : (tipoLinhaAtual === 'receita' ? 'receita' : 'despesa'), tx.categoria);
     const contraparteAtual = tx.contaContraparte || '';
     const optsContraparte = ehTransf ? construirOptionsContraparteTransferenciaHTML(contraparteAtual, destinoAtual) : '';
     const rotuloContraparte = direcaoLinha === 'despesa' ? 'Para (Conta Destino):' : 'De (Conta Origem):';
@@ -15741,6 +15997,10 @@ async function confirmarESalvarRevisaoImportacao() {
     const descFinalLanc = apelidoFinal || desc;
     const descOrigSalvar = apelidoFinal ? descBrutaOrig : (tx.descricaoOriginal && tx.descricaoOriginal !== desc ? tx.descricaoOriginal : undefined);
 
+    const pluggyMetaSalvar = typeof compactarPluggyMeta === 'function'
+      ? compactarPluggyMeta(tx.pluggyMeta, tx.trnType || (tipoFinal === 'receita' ? 'CREDIT' : 'DEBIT'))
+      : (tx.pluggyMeta || undefined);
+
     const novoLanc = {
       id: uid(),
       fitid: uniqueId,
@@ -15757,7 +16017,7 @@ async function confirmarESalvarRevisaoImportacao() {
       dataCompra: ehCartao ? dataLanc : undefined,
       descricao: descFinalLanc,
       descricaoOriginal: descOrigSalvar,
-      categoria: categoriaFinal,
+      categoria: tx.ehOperacaoTecnica ? 'PIX no Crédito (Repasse)' : categoriaFinal,
       conta: contaDestinoTx.nome,
       cartaoId: ehCartao ? (contaDestinoTx.id || undefined) : undefined,
       cartaoNome: ehCartao ? contaDestinoTx.nome : undefined,
@@ -15766,14 +16026,27 @@ async function confirmarESalvarRevisaoImportacao() {
       status: ehCartao ? (tipoFinal === 'receita' ? 'Liquidado' : 'Pendente') : (pagoContaBase ? 'Pago/Efetivado' : 'Pendente'),
       conciliado: true,
       sincronizado: false,
-      tags: tagsCombinadas.length ? tagsCombinadas : undefined
+      tags: tagsCombinadas.length ? tagsCombinadas : undefined,
+      pluggyMeta: pluggyMetaSalvar,
+      ehOperacaoTecnica: tx.ehOperacaoTecnica === true ? true : undefined,
+      parPixCreditoId: tx.parPixCreditoId || undefined
     };
+    if (tx.classificacaoOrigem === 'manual' && !ehLancamentoProtegidoAutoCat(novoLanc) && typeof registrarAprendizadoSilencioso === 'function') {
+      registrarAprendizadoSilencioso(novoLanc, novoLanc.categoria, {
+        tag: (tagsCombinadas && tagsCombinadas[0]) || ''
+      });
+    }
     if (tx.classificacaoOrigem === 'regra' && tx.classificacaoRegraId && !ehLancamentoProtegidoAutoCat(novoLanc)) {
       const rUsada = (STATE.regrasCategoria || []).find(r => r && r.id === tx.classificacaoRegraId);
       if (rUsada) rUsada.usos = (parseInt(rUsada.usos, 10) || 0) + 1;
     }
 
-    if (ehCartao && novoLanc.tipo === 'despesa' && typeof competenciaFatura === 'function') {
+    if (ehCartao && (tx.ehPagamentoFaturaNoCartao || tx.ehPagamentoFaturaDetectado || ehTransacaoPagamentoFaturaPluggy(desc, tx.rawCategory || tx.categoria))) {
+      novoLanc.ehTransferencia = true;
+      novoLanc.ehPagamentoFatura = true;
+      novoLanc.categoria = 'Transferência/Pagamento de Fatura';
+      novoLanc.status = 'Pago/Efetivado';
+    } else if (ehCartao && (novoLanc.tipo === 'despesa' || novoLanc.tipo === 'receita') && typeof competenciaFatura === 'function') {
       const fechamento = parseInt(contaDestinoTx.diaFechamento, 10) || 1;
       const vencimento = parseInt(contaDestinoTx.diaVencimento, 10) || 10;
       const comp = competenciaFatura(dataLanc, fechamento);
@@ -15784,11 +16057,6 @@ async function confirmarESalvarRevisaoImportacao() {
       novoLanc.faturaPaga = false;
       novoLanc.pago = false;
       novoLanc.status = 'Pendente';
-    } else if (ehCartao && ehTransacaoPagamentoFaturaPluggy(desc, tx.rawCategory || tx.categoria)) {
-      novoLanc.ehTransferencia = true;
-      novoLanc.ehPagamentoFatura = true;
-      novoLanc.categoria = 'Transferência/Pagamento de Fatura';
-      novoLanc.status = 'Pago/Efetivado';
     } else if (!ehCartao && novoLanc.tipo === 'despesa' && (tx.ehPagamentoFaturaDetectado || ehTransacaoPagamentoFaturaPluggy(desc, tx.rawCategory || tx.categoria))) {
       novoLanc.ehPagamentoFatura = true;
       novoLanc.ehTransferencia = true;
@@ -15808,6 +16076,10 @@ async function confirmarESalvarRevisaoImportacao() {
     STATE.lancamentos.push(novoLanc);
     idsExistentesGlobal.add(uniqueId);
     adicionados += 1;
+  }
+
+  if (typeof neutralizarParesPixNoCredito === 'function') {
+    neutralizarParesPixNoCredito(STATE.lancamentos);
   }
 
   // Liquida automaticamente faturas de meses anteriores (quando marcado) e faturas com pagamento detectado
@@ -16422,6 +16694,9 @@ document.addEventListener('click', (e) => {
   verificarPatchNotes();
   atualizarStatusSync();
   atualizarUIBackup();
+  if (typeof inicializarSyncCerebroGitHub === 'function') {
+    inicializarSyncCerebroGitHub().catch(() => {});
+  }
   setTimeout(() => { executarBackupSilencioso(false).catch(() => {}); }, 1500);
   if (document.readyState === 'complete') {
     setTimeout(verificarViradaDeMesAutomatica, 250);
@@ -17001,35 +17276,512 @@ function iniciarDropzoneUniversal() {
  * ============================================================================ */
 
 const CATEGORIA_A_CLASSIFICAR = 'A Classificar';
+const CATEGORIA_PIX_CREDITO_REPASSE = 'PIX no Crédito (Repasse)';
+
+const CATEGORIAS_ESTRITAS_RECEITA_NORM = new Set([
+  'salario',
+  'salario mensal',
+  'freelance',
+  'renda extra',
+  'rendimentos',
+  'rendimento',
+  'dividendos',
+  'dividendo',
+  'dividendos / fiis',
+  'rendimentos renda fixa',
+  'investimentos - rendimento',
+  '13o',
+  '13º',
+  '13o & ferias',
+  '13º & ferias',
+  'decimo terceiro',
+  'ferias',
+  'bonus / plr',
+  'pro-labore',
+  'pro labore'
+]);
+
+const CATEGORIAS_ESTRITAS_DESPESA_NORM = new Set([
+  'moradia',
+  'alimentacao',
+  'transporte',
+  'saude',
+  'educacao',
+  'assinaturas',
+  'lazer',
+  'impostos',
+  'imposto',
+  'taxas',
+  'supermercado',
+  'mercado',
+  'farmacia',
+  'combustivel',
+  'restaurante',
+  'padaria',
+  'hospedagem'
+]);
+
+const STOPWORDS_TOKENS_AUTOCAT = new Set([
+  'ltda', 'sa', 'me', 'epp', 'eireli', 'mei', 'cia',
+  'lj', 'filial', 'loja', 'unidade',
+  'servicos', 'servico', 'comercio', 'comercial', 'produtos', 'produto',
+  'brasil', 'brasileira', 'tecnologia', 'pagamentos', 'pagamento', 'pagto',
+  'intermediacao', 'gerenciadora', 'administradora', 'instituicao', 'banco',
+  'pix', 'enviado', 'recebido', 'transferencia', 'transf',
+  'compra', 'debito', 'credito', 'cartao', 'parcela', 'parc', 'boleto',
+  'de', 'da', 'do', 'dos', 'das', 'para', 'por', 'com', 'sem', 'em', 'no', 'na', 'nos', 'nas', 'ao', 'aos', 'ou'
+]);
+
+const TOKENS_MARCA_ESPECIFICA_AUTOCAT = new Set([
+  'venancio', 'pacheco', 'drogasil', 'ultrafarma', 'panvel',
+  'uber', 'uberrides', 'ubereats', '99app', '99pop', '99tecnologia', 'cabify',
+  'ifood', 'rappi', 'aiqfome', 'zedelivery',
+  'guanabara', 'prezunic', 'hortifruti', 'carrefour', 'assai', 'atacadao', 'sonda',
+  'wellhub', 'gympass', 'totalpass', 'smartfit', 'bluefit',
+  'principia', 'udemy', 'alura', 'coursera', 'rocketseat', 'hotmart', 'kiwify',
+  'netflix', 'spotify', 'globoplay', 'deezer', 'openai', 'chatgpt', 'claude', 'adobe', 'canva', 'icloud',
+  'ipiranga', 'petrobras', 'veloe', 'riocard',
+  'unimed', 'sulamerica', 'fleury', 'delboni',
+  'cinemark', 'kinoplex', 'cinepolis', 'sympla', 'eventim',
+  'airbnb', 'booking', 'decolar', 'latam',
+  'naturgy', 'comgas', 'sabesp', 'cedae', 'enel'
+]);
 
 const DICIONARIO_PALAVRAS_CHAVE_BR = [
-  { re: /\b(uber|99app|99pop|99\s*taxi|cabify)\b/i, categoria: 'Transporte', subcategoria: 'Uber / 99 / Táxi', tipo: 'despesa' },
-  { re: /\b(ifood|rappi|zedelivery|ze\s*delivery|aiqfome)\b/i, categoria: 'Alimentação', subcategoria: 'Delivery / Lanche', tipo: 'despesa' },
-  { re: /\b(drogaria|farmacia|raia|drogasil|pacheco|ultrafarma|pague\s*menos|panvel)\b/i, categoria: 'Saúde', subcategoria: 'Farmácia', tipo: 'despesa' },
-  { re: /\b(posto|shell|ipiranga|petrobras|br\s*mania|combustivel|gasolina|etanol|ale\s*combust)\b/i, categoria: 'Transporte', subcategoria: 'Combustível', tipo: 'despesa' },
-  { re: /\b(mercado|supermercado|atacadao|assai|carrefour|pao\s*de\s*acucar|sonda|hortifruti|sacolao|extra\s*mercado|hipermercado|dia\s*supermercado)\b/i, categoria: 'Alimentação', subcategoria: 'Supermercado', tipo: 'despesa' },
-  { re: /\b(netflix|spotify|amazon\s*prime|prime\s*video|youtube|icloud|disney|hbo\s*max|max\s*stream|apple\s*com\s*bill|chatgpt|openai|globoplay|deezer)\b/i, categoria: 'Assinaturas', subcategoria: 'Streaming (Vídeo/Música)', tipo: 'despesa' },
-  { re: /\b(liquido\s*de\s*vencimento|salario|pagto\s*salario|folha\s*de\s*pagamento|decimo\s*terceiro|pro\s*labore|ferias)\b/i, categoria: 'Salário', subcategoria: 'Salário Mensal', tipo: 'receita' },
-  { re: /\b(remuneracao\s*aplicacao|rendimento|dividendo|dividendos|jcp|juros\s*sobre\s*capital|resgate\s*cdb|tesouro\s*direto)\b/i, categoria: 'Investimentos', subcategoria: 'Rendimentos Renda Fixa', tipo: 'receita' }
+  // 1. Impostos / Taxas / Órgãos Públicos
+  {
+    re: /\b(receita\s+federal|darf|prefeitura|sefaz|cartorio|correios|inss|simples\s+nacional|das\s+mei)\b/i,
+    candidatosMacros: ['Impostos', 'Taxas', 'Moradia'],
+    candidatosSubs: ['Impostos & Tributos', 'Taxas & Órgãos Públicos'],
+    tipo: 'despesa'
+  },
+  {
+    re: /\b(detran|ipva|licenciamento)\b/i,
+    candidatosMacros: ['Impostos', 'Transporte'],
+    candidatosSubs: ['Taxas & Órgãos Públicos', 'Impostos & Tributos', 'Manutenção / IPVA'],
+    tipo: 'despesa'
+  },
+  // 2. Moradia / Contas
+  {
+    re: /\b(light|enel|cedae|aguas\s+do\s+rio|naturgy|comgas|sabesp|cpfl|cemig|copel|sanepar|ultragaz)\b/i,
+    candidatosMacros: ['Moradia'],
+    candidatosSubs: ['Energia & Água'],
+    tipo: 'despesa'
+  },
+  {
+    re: /\b(vivo|claro|tim|oi\s+fibra|tim\s+fibra|claro\s+nxt)\b/i,
+    candidatosMacros: ['Moradia'],
+    candidatosSubs: ['Internet & TV'],
+    tipo: 'despesa'
+  },
+  {
+    re: /\b(condominio|aluguel|quintoandar|quinto\s+andar|iptu)\b/i,
+    candidatosMacros: ['Moradia', 'Impostos'],
+    candidatosSubs: ['Aluguel / Condomínio', 'Impostos & Tributos'],
+    tipo: 'despesa'
+  },
+  // 3. Alimentação > Supermercado & Padaria
+  {
+    re: /\b(guanabara|mundial|zona\s+sul|prezunic|hortifruti|carrefour|assai|atacadao|pao\s+de\s+acucar|mercado|supermercado|mini\s+mercado|minimercado|acougue|sacolao|sonda|hipermercado|dia\s+supermercado|extra\s+mercado)\b/i,
+    candidatosMacros: ['Supermercado', 'Mercado', 'Alimentação'],
+    candidatosSubs: ['Supermercado'],
+    tipo: 'despesa'
+  },
+  {
+    re: /\b(padaria|confeitaria|panificadora)\b/i,
+    candidatosMacros: ['Alimentação'],
+    candidatosSubs: ['Padaria & Café', 'Supermercado'],
+    tipo: 'despesa'
+  },
+  // 4. Alimentação > Restaurante / Delivery
+  {
+    re: /\b(ifood|ifd|rappi|aiqfome|zedelivery|ze\s+delivery)\b/i,
+    candidatosMacros: ['Alimentação'],
+    candidatosSubs: ['Delivery / Lanche', 'Restaurante'],
+    tipo: 'despesa'
+  },
+  {
+    re: /\b(pizzaria|lanchonete|lanchonet|restaurante|hamburgueria|burger|mcdonalds|mc\s+donalds|bk|starbucks|bar|churrascaria|padoca|cafe|cafeteria|bistro|outback)\b/i,
+    candidatosMacros: ['Alimentação'],
+    candidatosSubs: ['Restaurante', 'Padaria & Café'],
+    tipo: 'despesa'
+  },
+  // 5. Transporte
+  {
+    re: /\b(uber|uberrides|99app|99pop|99tecnologia|99\s*taxi|cabify)\b/i,
+    candidatosMacros: ['Transporte'],
+    candidatosSubs: ['Uber / 99 / Táxi'],
+    tipo: 'despesa'
+  },
+  {
+    re: /\b(riocard|metro|bilhete\s+unico|supervia|vlt|onibus)\b/i,
+    candidatosMacros: ['Transporte'],
+    candidatosSubs: ['Transporte Público'],
+    tipo: 'despesa'
+  },
+  {
+    re: /\b(posto|ipiranga|shell|petrobras|br\s*mania|combustivel|gasolina|etanol|ale\s+combustiveis)\b/i,
+    candidatosMacros: ['Transporte'],
+    candidatosSubs: ['Combustível'],
+    tipo: 'despesa'
+  },
+  {
+    re: /\b(estacionamento|estapar|sem\s+parar|veloe|conectcar|pedagio)\b/i,
+    candidatosMacros: ['Transporte'],
+    candidatosSubs: ['Manutenção / IPVA'],
+    tipo: 'despesa'
+  },
+  // 6. Saúde
+  {
+    re: /\b(venancio|pacheco|raia|drogasil|drogaria|farmacia|ultrafarma|pague\s+menos|panvel)\b/i,
+    candidatosMacros: ['Saúde'],
+    candidatosSubs: ['Farmácia'],
+    tipo: 'despesa'
+  },
+  {
+    re: /\b(wellhub|gympass|totalpass|smart\s*fit|bluefit|bodytech|academia)\b/i,
+    candidatosMacros: ['Saúde'],
+    candidatosSubs: ['Academia'],
+    tipo: 'despesa'
+  },
+  {
+    re: /\b(laboratorio|clinica|hospital|medico|dentista|odonto|fleury|delboni|bronstein)\b/i,
+    candidatosMacros: ['Saúde'],
+    candidatosSubs: ['Consultas & Exames'],
+    tipo: 'despesa'
+  },
+  {
+    re: /\b(unimed|amil|sulamerica|bradesco\s+saude|notredame|hapvida|assim\s+saude)\b/i,
+    candidatosMacros: ['Saúde'],
+    candidatosSubs: ['Plano de Saúde'],
+    tipo: 'despesa'
+  },
+  // 7. Educação
+  {
+    re: /\b(principia|faculdade|universidade|escola|curso|cursos|udemy|alura|coursera|rocketseat|hotmart|kiwify|duolingo)\b/i,
+    candidatosMacros: ['Educação'],
+    candidatosSubs: ['Cursos & Faculdade'],
+    tipo: 'despesa'
+  },
+  {
+    re: /\b(livraria|saraiva|leitura)\b/i,
+    candidatosMacros: ['Educação'],
+    candidatosSubs: ['Livros & Material'],
+    tipo: 'despesa'
+  },
+  // 8. Viagem / Hospedagem / Lazer (avaliado antes de termos curtos de streaming como "max")
+  {
+    re: /\b(hotel|hotelaria|pousada|resort|hostel|airbnb|booking|decolar|latam|gol\s+linhas|azul\s+linhas)\b/i,
+    candidatosMacros: ['Hospedagem', 'Viagem', 'Lazer'],
+    candidatosSubs: ['Viagens & Hospedagem'],
+    tipo: 'despesa'
+  },
+  {
+    re: /\b(cinema|kinoplex|cinemark|cinepolis|ingresso|sympla|eventim|teatro)\b/i,
+    candidatosMacros: ['Lazer'],
+    candidatosSubs: ['Passeios & Eventos'],
+    tipo: 'despesa'
+  },
+  // 9. Assinaturas / Digital
+  {
+    re: /\b(microsoft|ppro\s+microsoft|google\s+brasil|google\s+one|apple(?:\.|\s+)com|icloud|openai|chatgpt|claude|adobe|canva|github|notion)\b/i,
+    candidatosMacros: ['Assinaturas'],
+    candidatosSubs: ['Software & Nuvem', 'Streaming (Vídeo/Música)'],
+    tipo: 'despesa'
+  },
+  {
+    re: /\b(netflix|spotify|amazon\s+prime|prime\s+video|disney|hbo|max|youtube|globoplay|deezer|mubi|crunchyroll|paramount)\b/i,
+    candidatosMacros: ['Assinaturas'],
+    candidatosSubs: ['Streaming (Vídeo/Música)'],
+    tipo: 'despesa'
+  },
+  // 10. Receitas (estritamente quando tipo === 'receita')
+  {
+    re: /\b(liquido\s+de\s+vencimento|salario|folha\s+pagto|folha\s+de\s+pagamento|pagto\s+salario|decimo\s+terceiro|pro\s*labore|ferias)\b/i,
+    candidatosMacros: ['Salário'],
+    candidatosSubs: ['Salário Mensal'],
+    tipo: 'receita'
+  },
+  {
+    re: /\b(dividendo|dividendos|jcp|juros\s+sobre\s+capital)\b/i,
+    candidatosMacros: ['Investimentos'],
+    candidatosSubs: ['Dividendos / FIIs', 'Rendimentos Renda Fixa'],
+    tipo: 'receita'
+  },
+  {
+    re: /\b(remuneracao\s+aplicacao|rendimento|rendimentos|resgate\s+cdb|tesouro\s+direto)\b/i,
+    candidatosMacros: ['Investimentos'],
+    candidatosSubs: ['Rendimentos Renda Fixa'],
+    tipo: 'receita'
+  },
+  {
+    re: /\b(cashback|estorno)\b/i,
+    candidatosMacros: ['Renda Extra', 'Investimentos'],
+    candidatosSubs: ['Cashback & Estornos', 'Rendimentos Renda Fixa'],
+    tipo: 'receita'
+  }
 ];
 
 const MAPA_CATEGORIAS_PLUGGY_SEMANTICO = [
-  { re: /grocer|supermarket|supermercado|mercado/i, categoria: 'Alimentação', subcategoria: 'Supermercado' },
-  { re: /eating\s*out|restaurant|food|delivery|coffee|bakery|fast\s*food|alimenta|restaurante|padaria|lanche/i, categoria: 'Alimentação', subcategoria: 'Restaurante' },
-  { re: /transport|taxi|ride|uber|fuel|gas|parking|auto|toll|combust|pedagio/i, categoria: 'Transporte', subcategoria: '' },
-  { re: /subscript|streaming|software|digital|cloud|saas|assinatura/i, categoria: 'Assinaturas', subcategoria: '' },
-  { re: /health|pharmac|medical|doctor|dentist|hospital|gym|fitness|saude|farmacia|academia/i, categoria: 'Saúde', subcategoria: '' },
-  { re: /shopping|retail|clothing|electronics|store|compras|loja/i, categoria: 'Lazer', subcategoria: '' },
-  { re: /utilit|hous|rent|electric|water|internet|phone|telecom|moradia|aluguel|condominio|energia/i, categoria: 'Moradia', subcategoria: '' },
-  { re: /salary|payroll|wage|income|salario|remuneracao/i, categoria: 'Salário', subcategoria: '' },
-  { re: /invest|dividend|interest|yield|rendimento|fii|broker/i, categoria: 'Investimentos', subcategoria: '' },
-  { re: /educat|school|college|university|book|course|educacao|curso|livro|faculdade/i, categoria: 'Educação', subcategoria: '' },
-  { re: /entertain|leisure|movie|music|game|travel|hotel|lazer|viagem|passeio|cinema/i, categoria: 'Lazer', subcategoria: '' },
-  { re: /freelanc|service|consulting|consultoria/i, categoria: 'Freelance', subcategoria: '' }
+  { re: /\b(grocer\w*|supermarket\w*|supermercado\w*|mercado\w*)\b/i, candidatosMacros: ['Supermercado', 'Alimentação'], candidatosSubs: ['Supermercado'], tipo: 'despesa' },
+  { re: /\b(eating\s*out|restaurant\w*|food|delivery|coffee|bakery|fast\s*food|alimenta\w*|restaurante\w*|padaria\w*|lanche\w*)\b/i, candidatosMacros: ['Alimentação'], candidatosSubs: ['Restaurante'], tipo: 'despesa' },
+  { re: /\b(taxi|ride\w*|uber|99app)\b/i, candidatosMacros: ['Transporte'], candidatosSubs: ['Uber / 99 / Táxi'], tipo: 'despesa' },
+  { re: /\b(fuel|gas\s*station|combust\w*|gasolina)\b/i, candidatosMacros: ['Transporte'], candidatosSubs: ['Combustível'], tipo: 'despesa' },
+  { re: /\b(transport\w*|parking|automotive|toll|pedagio|estacionamento)\b/i, candidatosMacros: ['Transporte'], candidatosSubs: [''], tipo: 'despesa' },
+  { re: /\b(subscript\w*|streaming|software|digital\s*services|cloud|saas|assinatura\w*)\b/i, candidatosMacros: ['Assinaturas'], candidatosSubs: [''], tipo: 'despesa' },
+  { re: /\b(pharmac\w*|drugstore|farmacia\w*|drogaria\w*)\b/i, candidatosMacros: ['Saúde'], candidatosSubs: ['Farmácia'], tipo: 'despesa' },
+  { re: /\b(gym|fitness|academia|wellness)\b/i, candidatosMacros: ['Saúde'], candidatosSubs: ['Academia'], tipo: 'despesa' },
+  { re: /\b(health\w*|medical|doctor|dentist|hospital|clinic\w*|saude)\b/i, candidatosMacros: ['Saúde'], candidatosSubs: ['Consultas & Exames'], tipo: 'despesa' },
+  { re: /\b(shopping|retail|clothing|apparel|electronics|department\s*store|compras|vestuario|eletronicos)\b/i, candidatosMacros: ['Compras', 'Vestuário', 'Eletrônicos', 'Lazer'], candidatosSubs: [''], tipo: 'despesa' },
+  { re: /\b(utilit\w*|housing|rent|electric\w*|water|internet|phone|telecom\w*|moradia|aluguel|condominio|energia)\b/i, candidatosMacros: ['Moradia'], candidatosSubs: [''], tipo: 'despesa' },
+  { re: /\b(tax|taxes|government|imposto\w*|tributo\w*)\b/i, candidatosMacros: ['Impostos', 'Moradia'], candidatosSubs: ['Impostos & Tributos'], tipo: 'despesa' },
+  { re: /\b(educat\w*|school|college|university|bookstore|course\w*|educacao|curso\w*|livro\w*|faculdade)\b/i, candidatosMacros: ['Educação'], candidatosSubs: ['Cursos & Faculdade'], tipo: 'despesa' },
+  { re: /\b(hotel\w*|lodging|accommodation|airline\w*|travel|viagem|hospedagem)\b/i, candidatosMacros: ['Hospedagem', 'Viagem', 'Lazer'], candidatosSubs: ['Viagens & Hospedagem'], tipo: 'despesa' },
+  { re: /\b(entertain\w*|leisure|movie\w*|cinema|music|game\w*|lazer|passeio\w*)\b/i, candidatosMacros: ['Lazer'], candidatosSubs: ['Passeios & Eventos'], tipo: 'despesa' },
+  { re: /\b(salary|payroll|wage\w*|salario|remuneracao)\b/i, candidatosMacros: ['Salário'], candidatosSubs: ['Salário Mensal'], tipo: 'receita' },
+  { re: /\b(dividend\w*|interest|yield|rendimento\w*|investment\s*income)\b/i, candidatosMacros: ['Investimentos'], candidatosSubs: ['Rendimentos Renda Fixa'], tipo: 'receita' },
+  { re: /\b(freelanc\w*|consulting\s*income|honorarios)\b/i, candidatosMacros: ['Freelance'], candidatosSubs: ['Projetos'], tipo: 'receita' }
 ];
+
+function extrairTipoDocContraparteLocal(docField) {
+  if (!docField) return null;
+  if (typeof docField === 'object') {
+    const tipoExp = String(docField.type || '').trim().toUpperCase();
+    if (tipoExp === 'CPF') return 'CPF';
+    if (tipoExp === 'CNPJ') return 'CNPJ';
+    const digitosObj = String(docField.value || docField.number || '').replace(/\D/g, '');
+    if (digitosObj.length === 11) return 'CPF';
+    if (digitosObj.length === 14) return 'CNPJ';
+    return null;
+  }
+  const digitos = String(docField).replace(/\D/g, '');
+  if (digitos.length === 11) return 'CPF';
+  if (digitos.length === 14) return 'CNPJ';
+  return null;
+}
+
+function compactarPluggyMeta(rawMetaOuTx, trnTypeOpt) {
+  if (!rawMetaOuTx || typeof rawMetaOuTx !== 'object') return undefined;
+
+  // Se já for um objeto pluggyMeta compacto
+  const temChaveMetaDireta = (
+    'cnae' in rawMetaOuTx ||
+    'merchantName' in rawMetaOuTx ||
+    'merchantCnpj' in rawMetaOuTx ||
+    'pluggyCategory' in rawMetaOuTx ||
+    'pluggyCategoryId' in rawMetaOuTx ||
+    'paymentMethod' in rawMetaOuTx ||
+    'contraparteTipo' in rawMetaOuTx
+  );
+
+  let cnae = null;
+  let merchantName = null;
+  let merchantCnpj = null;
+  let pluggyCategory = null;
+  let pluggyCategoryId = null;
+  let paymentMethod = null;
+  let contraparteTipo = null;
+
+  if (temChaveMetaDireta) {
+    cnae = rawMetaOuTx.cnae || null;
+    merchantName = rawMetaOuTx.merchantName || null;
+    merchantCnpj = rawMetaOuTx.merchantCnpj || null;
+    pluggyCategory = rawMetaOuTx.pluggyCategory || null;
+    pluggyCategoryId = rawMetaOuTx.pluggyCategoryId || null;
+    paymentMethod = rawMetaOuTx.paymentMethod || null;
+    contraparteTipo = rawMetaOuTx.contraparteTipo || null;
+  } else {
+    const m = (rawMetaOuTx.merchant && typeof rawMetaOuTx.merchant === 'object') ? rawMetaOuTx.merchant : null;
+    const p = (rawMetaOuTx.paymentData && typeof rawMetaOuTx.paymentData === 'object') ? rawMetaOuTx.paymentData : null;
+    const tipoStr = String(trnTypeOpt || rawMetaOuTx.type || rawMetaOuTx.trnType || '').toUpperCase();
+    const ehSaida = tipoStr === 'DEBIT' || tipoStr === 'DESPESA' || (tipoStr !== 'CREDIT' && tipoStr !== 'RECEITA' && Number(rawMetaOuTx.amount) < 0);
+    const docRaw = ehSaida
+      ? (p && p.receiver ? p.receiver.documentNumber : null)
+      : (p && p.payer ? p.payer.documentNumber : null);
+
+    cnae = m && m.cnae ? String(m.cnae).trim() : null;
+    merchantName = m && (m.businessName || m.name) ? String(m.businessName || m.name).trim() : null;
+    merchantCnpj = m && m.cnpj ? String(m.cnpj).trim() : null;
+    pluggyCategory = rawMetaOuTx.category ? String(rawMetaOuTx.category).trim() : null;
+    pluggyCategoryId = rawMetaOuTx.categoryId ? String(rawMetaOuTx.categoryId).trim() : null;
+    paymentMethod = p && p.paymentMethod ? String(p.paymentMethod).trim() : null;
+    contraparteTipo = extrairTipoDocContraparteLocal(docRaw);
+  }
+
+  const out = {};
+  if (cnae && String(cnae).trim()) out.cnae = String(cnae).trim();
+  if (merchantName && String(merchantName).trim()) out.merchantName = String(merchantName).trim();
+  if (merchantCnpj && String(merchantCnpj).trim()) out.merchantCnpj = String(merchantCnpj).trim();
+  if (pluggyCategory && String(pluggyCategory).trim()) out.pluggyCategory = String(pluggyCategory).trim();
+  if (pluggyCategoryId && String(pluggyCategoryId).trim()) out.pluggyCategoryId = String(pluggyCategoryId).trim();
+  if (paymentMethod && String(paymentMethod).trim()) out.paymentMethod = String(paymentMethod).trim();
+  if (contraparteTipo === 'CPF' || contraparteTipo === 'CNPJ') out.contraparteTipo = contraparteTipo;
+
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
+function ehItemCartaoParaRuidoTecnico(l) {
+  if (!l || typeof l !== 'object') return false;
+  if (l.ehCartaoCredito === true || l.meioPagamento === 'cartao') return true;
+  if (String(l.accountType || '').toUpperCase() === 'CREDIT') return true;
+  if (typeof ehLancamentoCartao === 'function' && ehLancamentoCartao(l)) return true;
+  return false;
+}
+
+function ehOperacaoTecnicaPixCredito(lanc) {
+  if (!lanc || typeof lanc !== 'object') return false;
+  if (ehItemCartaoParaRuidoTecnico(lanc)) return false;
+  const dir = lanc.direcaoOriginal || lanc.tipo || (String(lanc.trnType || '').toUpperCase() === 'CREDIT' ? 'receita' : 'despesa');
+  if (dir !== 'receita') return false;
+
+  const textos = [
+    lanc.descricaoOriginal,
+    lanc.descricao,
+    lanc.memo
+  ].filter(Boolean).map(t => normalizarTextoSemAcento(t));
+
+  return textos.some(txt =>
+    txt.includes('valor adicionado na conta por cartao de credito') ||
+    txt.includes('valor adicionado para pix no credito')
+  );
+}
+
+function obterChaveContaBancariaPixCredito(item) {
+  if (!item || typeof item !== 'object') return '';
+  const nomeBruto = item.contaDestino || item.conta || item.accountName || '';
+  const limpo = typeof extrairNomeLimpoDestinoImportacao === 'function'
+    ? extrairNomeLimpoDestinoImportacao(nomeBruto)
+    : String(nomeBruto || '').trim();
+  if (limpo) return normalizarTextoSemAcento(limpo);
+  if (item.accountId) return `id:${String(item.accountId).trim().toLowerCase()}`;
+  return '';
+}
+
+function ehSaidaPixCandidataRepasseCredito(item) {
+  if (!item || typeof item !== 'object') return false;
+  if (item.ehDuplicada || item.ehMovimentoCofre) return false;
+  if (ehItemCartaoParaRuidoTecnico(item)) return false;
+  if (item.ehPagamentoFatura || item.ehPagamentoFaturaDetectado) return false;
+  if (typeof ehLancamentoPagamentoFatura === 'function' && ehLancamentoPagamentoFatura(item)) return false;
+  if (item.tipoRevisao === 'transferencia') return false;
+  if (typeof isLancamentoTransferencia === 'function' && isLancamentoTransferencia(item)) return false;
+
+  const dir = item.direcaoOriginal || item.tipo || (String(item.trnType || '').toUpperCase() === 'DEBIT' ? 'despesa' : 'receita');
+  if (dir !== 'despesa') return false;
+
+  const metodoMeta = String(item.pluggyMeta && item.pluggyMeta.paymentMethod || '').toUpperCase();
+  if (metodoMeta === 'PIX') return true;
+
+  const descNorm = normalizarTextoSemAcento(obterDescricaoBaseAutoCat(item) + ' ' + (item.descricao || '') + ' ' + (item.memo || ''));
+  return /\b(?:pix\s+enviado|transferencia\s+enviada|transf\.?\s+enviada|pagamento\s+pix|pagto\.?\s+pix|pix)\b/i.test(descNorm);
+}
+
+function neutralizarParesPixNoCredito(listaAlvo, listaContextoOpt) {
+  const primaria = Array.isArray(listaAlvo) ? listaAlvo : [];
+  const secundaria = Array.isArray(listaContextoOpt) ? listaContextoOpt : [];
+  const vistos = new Set();
+  const todos = [];
+
+  [...primaria, ...secundaria].forEach(it => {
+    if (!it || typeof it !== 'object' || it.ehDuplicada || vistos.has(it)) return;
+    vistos.add(it);
+    todos.push(it);
+  });
+
+  if (!todos.length) return { neutralizados: 0, paresFormados: 0 };
+
+  const porId = new Map();
+  todos.forEach(it => {
+    if (it.id) porId.set(String(it.id), it);
+  });
+
+  let neutralizados = 0;
+  let paresFormados = 0;
+  const saidasJaPareadas = new Set();
+
+  // Preserva vínculos existentes válidos
+  todos.forEach(it => {
+    if (it.ehOperacaoTecnica && it.parPixCreditoId) {
+      const dir = it.direcaoOriginal || it.tipo;
+      if (dir === 'despesa') saidasJaPareadas.add(it);
+    }
+  });
+
+  todos.forEach(cred => {
+    if (!ehOperacaoTecnicaPixCredito(cred)) return;
+
+    const jaEraTecnico = cred.ehOperacaoTecnica === true && cred.categoria === CATEGORIA_PIX_CREDITO_REPASSE;
+    cred.ehOperacaoTecnica = true;
+    cred.categoria = CATEGORIA_PIX_CREDITO_REPASSE;
+    if ('classificacaoOrigem' in cred) cred.classificacaoOrigem = 'tecnico';
+    if ('sincronizado' in cred && !jaEraTecnico) cred.sincronizado = false;
+    if (!jaEraTecnico) neutralizados += 1;
+
+    // Se já possui par válido vinculado, mantém
+    if (cred.parPixCreditoId && porId.has(String(cred.parPixCreditoId))) {
+      const parExistente = porId.get(String(cred.parPixCreditoId));
+      if (parExistente && parExistente !== cred) {
+        const parJaEra = parExistente.ehOperacaoTecnica === true && parExistente.categoria === CATEGORIA_PIX_CREDITO_REPASSE;
+        parExistente.ehOperacaoTecnica = true;
+        parExistente.categoria = CATEGORIA_PIX_CREDITO_REPASSE;
+        if ('classificacaoOrigem' in parExistente) parExistente.classificacaoOrigem = 'tecnico';
+        if (!parJaEra) {
+          if ('sincronizado' in parExistente) parExistente.sincronizado = false;
+          neutralizados += 1;
+        }
+        saidasJaPareadas.add(parExistente);
+        return;
+      }
+    }
+
+    const contaCred = obterChaveContaBancariaPixCredito(cred);
+    const valorCred = Math.abs(Number(cred.valor) || 0);
+    if (valorCred <= 0) return;
+
+    let melhorSaida = null;
+    let menorDiffDias = Infinity;
+
+    for (let i = 0; i < todos.length; i += 1) {
+      const cand = todos[i];
+      if (cand === cred || cand.ehOperacaoTecnica || saidasJaPareadas.has(cand)) continue;
+      if (!ehSaidaPixCandidataRepasseCredito(cand)) continue;
+
+      const valorCand = Math.abs(Number(cand.valor) || 0);
+      if (Math.abs(valorCred - valorCand) >= 0.005) continue;
+
+      const contaCand = obterChaveContaBancariaPixCredito(cand);
+      if (contaCred && contaCand && contaCred !== contaCand) continue;
+      if ((contaCred && !contaCand) || (!contaCred && contaCand)) continue;
+
+      const diffDias = calcularDiferencaDiasISOUtc(cred.data, cand.data);
+      if (diffDias <= 1 && diffDias < menorDiffDias) {
+        menorDiffDias = diffDias;
+        melhorSaida = cand;
+        if (diffDias === 0) break;
+      }
+    }
+
+    if (melhorSaida) {
+      melhorSaida.ehOperacaoTecnica = true;
+      melhorSaida.categoria = CATEGORIA_PIX_CREDITO_REPASSE;
+      if ('classificacaoOrigem' in melhorSaida) melhorSaida.classificacaoOrigem = 'tecnico';
+      if ('sincronizado' in melhorSaida) melhorSaida.sincronizado = false;
+      if (cred.id && melhorSaida.id) {
+        cred.parPixCreditoId = melhorSaida.id;
+        melhorSaida.parPixCreditoId = cred.id;
+      }
+      saidasJaPareadas.add(melhorSaida);
+      neutralizados += 1;
+      paresFormados += 1;
+    }
+  });
+
+  return { neutralizados, paresFormados };
+}
 
 function ehLancamentoProtegidoAutoCat(l) {
   if (!l || typeof l !== 'object') return true;
+  if (l.ehOperacaoTecnica === true) return true;
   if (l.ehMovimentoCofre === true) return true;
   if (typeof ehLancamentoPagamentoFatura === 'function' && ehLancamentoPagamentoFatura(l)) return true;
   if (l.ehPagamentoFatura === true || l.ehPagamentoFaturaDetectado === true) return true;
@@ -17047,7 +17799,67 @@ function ehCategoriaValidaParaAprendizado(cat) {
   const norm = normalizarTextoSemAcento(cat);
   if (!norm) return false;
   if (norm === 'a classificar' || norm === 'outros' || norm === 'importado' || norm === 'sem categoria') return false;
+  if (norm === 'pix no credito (repasse)') return false;
   if (norm === 'transferencia' || norm.startsWith('transferencia ->') || norm.includes('pagamento de fatura')) return false;
+  return true;
+}
+
+function obterTipoEfetivoAutoCat(lanc) {
+  if (!lanc || typeof lanc !== 'object') return 'despesa';
+  if (typeof ehEstornoCartao === 'function' && ehEstornoCartao(lanc)) return 'despesa';
+  return lanc.tipo === 'receita' ? 'receita' : 'despesa';
+}
+
+function categoriaCompativelComTipo(categoriaNome, tipoLancamento, lancOpt) {
+  const raw = String(categoriaNome || '').trim();
+  if (!raw) return false;
+  let tipoNorm = 'despesa';
+  if (lancOpt && typeof lancOpt === 'object') {
+    tipoNorm = obterTipoEfetivoAutoCat(lancOpt);
+  } else if (tipoLancamento && typeof tipoLancamento === 'object') {
+    tipoNorm = obterTipoEfetivoAutoCat(tipoLancamento);
+  } else {
+    tipoNorm = tipoLancamento === 'receita' ? 'receita' : 'despesa';
+  }
+  const parsed = extrairMacroESubcategoria(raw);
+  const macroNorm = normalizarTextoSemAcento(parsed.macro);
+  const subNorm = parsed.temSub ? normalizarTextoSemAcento(parsed.sub) : '';
+  const completoNorm = normalizarTextoSemAcento(raw);
+
+  if (!macroNorm) return false;
+  if (macroNorm === 'a classificar' || macroNorm === 'outros') return true;
+  if (completoNorm === 'pix no credito (repasse)') return false;
+
+  // 1) Trava de segurança semântica estrita
+  if (tipoNorm === 'despesa') {
+    if (
+      CATEGORIAS_ESTRITAS_RECEITA_NORM.has(macroNorm) ||
+      (subNorm && CATEGORIAS_ESTRITAS_RECEITA_NORM.has(subNorm)) ||
+      CATEGORIAS_ESTRITAS_RECEITA_NORM.has(completoNorm)
+    ) {
+      return false;
+    }
+  } else if (tipoNorm === 'receita') {
+    if (
+      CATEGORIAS_ESTRITAS_DESPESA_NORM.has(macroNorm) ||
+      (subNorm && CATEGORIAS_ESTRITAS_DESPESA_NORM.has(subNorm)) ||
+      CATEGORIAS_ESTRITAS_DESPESA_NORM.has(completoNorm)
+    ) {
+      return false;
+    }
+  }
+
+  // 2) Consulta à definição em STATE.categorias (respeitando casos como "Outros" que existe nos dois tipos)
+  const catsMesmoNome = (STATE.categorias || []).filter(
+    c => c && c.nome && normalizarTextoSemAcento(c.nome) === macroNorm
+  );
+  if (catsMesmoNome.length > 0) {
+    const algumCompativel = catsMesmoNome.some(
+      c => !c.tipo || c.tipo === tipoNorm || c.tipo === 'ambos' || c.tipo === 'todos'
+    );
+    if (!algumCompativel) return false;
+  }
+
   return true;
 }
 
@@ -17068,24 +17880,193 @@ function resolverCategoriaExistenteNoState(nomeMacro, subcategoriaDesejada, tipo
   normalizarHierarquiaCategorias();
   const cats = Array.isArray(STATE.categorias) ? STATE.categorias : [];
   const alvoNorm = normalizarTextoSemAcento(nomeMacro);
-  if (!alvoNorm) return { categoria: CATEGORIA_A_CLASSIFICAR, subcategoria: '', categoriaCompleta: CATEGORIA_A_CLASSIFICAR };
+  if (!alvoNorm) return null;
 
-  let encontrada = cats.find(c => c && c.nome && (!tipo || c.tipo === tipo) && normalizarTextoSemAcento(c.nome) === alvoNorm)
-    || cats.find(c => c && c.nome && (!tipo || c.tipo === tipo) && (normalizarTextoSemAcento(c.nome).includes(alvoNorm) || alvoNorm.includes(normalizarTextoSemAcento(c.nome))))
-    || cats.find(c => c && c.nome && normalizarTextoSemAcento(c.nome) === alvoNorm);
+  const tipoNorm = (tipo === 'receita' || tipo === 'despesa') ? tipo : '';
+  const compativelState = (c) => {
+    if (!c || !c.nome) return false;
+    if (tipoNorm && c.tipo && c.tipo !== tipoNorm && c.tipo !== 'ambos' && c.tipo !== 'todos') return false;
+    return tipoNorm ? categoriaCompativelComTipo(c.nome, tipoNorm) : true;
+  };
 
-  const macroFinal = encontrada ? encontrada.nome : nomeMacro;
-  let subFinal = '';
-  if (subcategoriaDesejada && encontrada && Array.isArray(encontrada.subcategorias)) {
-    const subAlvo = normalizarTextoSemAcento(subcategoriaDesejada);
-    const subMatch = encontrada.subcategorias.find(s => normalizarTextoSemAcento(s) === subAlvo)
-      || encontrada.subcategorias.find(s => normalizarTextoSemAcento(s).includes(subAlvo) || subAlvo.includes(normalizarTextoSemAcento(s)));
-    if (subMatch) subFinal = subMatch;
+  const encontrada = cats.find(c => compativelState(c) && normalizarTextoSemAcento(c.nome) === alvoNorm)
+    || cats.find(c => compativelState(c) && (normalizarTextoSemAcento(c.nome).includes(alvoNorm) || alvoNorm.includes(normalizarTextoSemAcento(c.nome))));
+
+  if (!encontrada) {
+    if (tipoNorm && !categoriaCompativelComTipo(nomeMacro, tipoNorm)) return null;
+    // Se STATE.categorias tiver categorias do tipo solicitado e nenhuma casou, evita inventar categoria inexistente
+    const temCatsDoTipo = cats.some(c => compativelState(c) && normalizarTextoSemAcento(c.nome) !== 'outros');
+    if (temCatsDoTipo) return null;
+    return {
+      categoria: nomeMacro,
+      subcategoria: '',
+      categoriaCompleta: montarCategoriaCompletaAutoCat(nomeMacro, '')
+    };
   }
+
+  const macroFinal = encontrada.nome;
+  let subFinal = '';
+  if (subcategoriaDesejada && Array.isArray(encontrada.subcategorias)) {
+    const subAlvo = normalizarTextoSemAcento(subcategoriaDesejada);
+    if (subAlvo) {
+      const subMatch = encontrada.subcategorias.find(s => normalizarTextoSemAcento(s) === subAlvo)
+        || encontrada.subcategorias.find(s => normalizarTextoSemAcento(s).includes(subAlvo) || subAlvo.includes(normalizarTextoSemAcento(s)));
+      if (subMatch) subFinal = subMatch;
+    }
+  }
+  const categoriaCompleta = montarCategoriaCompletaAutoCat(macroFinal, subFinal);
+  if (tipoNorm && !categoriaCompativelComTipo(categoriaCompleta, tipoNorm)) return null;
+
   return {
     categoria: macroFinal,
     subcategoria: subFinal,
-    categoriaCompleta: montarCategoriaCompletaAutoCat(macroFinal, subFinal)
+    categoriaCompleta
+  };
+}
+
+function resolverCandidatosCategoriaState(candidatosMacros, candidatosSubs, tipo) {
+  const macros = Array.isArray(candidatosMacros) ? candidatosMacros : [candidatosMacros];
+  const subs = Array.isArray(candidatosSubs) ? candidatosSubs : (candidatosSubs ? [candidatosSubs] : ['']);
+  const tipoNorm = tipo === 'receita' ? 'receita' : 'despesa';
+
+  // Prioriza correspondência exata de macro cadastrada em STATE.categorias
+  normalizarHierarquiaCategorias();
+  const cats = Array.isArray(STATE.categorias) ? STATE.categorias : [];
+
+  for (let i = 0; i < macros.length; i += 1) {
+    const mNome = String(macros[i] || '').trim();
+    if (!mNome) continue;
+    const mNorm = normalizarTextoSemAcento(mNome);
+    const existeExata = cats.find(c =>
+      c && c.nome &&
+      (!c.tipo || c.tipo === tipoNorm || c.tipo === 'ambos' || c.tipo === 'todos') &&
+      normalizarTextoSemAcento(c.nome) === mNorm &&
+      categoriaCompativelComTipo(c.nome, tipoNorm)
+    );
+    if (existeExata) {
+      let subEscolhida = '';
+      if (Array.isArray(existeExata.subcategorias) && existeExata.subcategorias.length > 0) {
+        for (let j = 0; j < subs.length; j += 1) {
+          const sDesejada = normalizarTextoSemAcento(subs[j]);
+          if (!sDesejada) continue;
+          const matchSub = existeExata.subcategorias.find(s => normalizarTextoSemAcento(s) === sDesejada)
+            || existeExata.subcategorias.find(s => normalizarTextoSemAcento(s).includes(sDesejada) || sDesejada.includes(normalizarTextoSemAcento(s)));
+          if (matchSub) {
+            subEscolhida = matchSub;
+            break;
+          }
+        }
+      }
+      const catComp = montarCategoriaCompletaAutoCat(existeExata.nome, subEscolhida);
+      if (categoriaCompativelComTipo(catComp, tipoNorm)) {
+        return { categoria: existeExata.nome, subcategoria: subEscolhida, categoriaCompleta: catComp };
+      }
+    }
+  }
+
+  // Fallback flexível nos candidatos
+  for (let i = 0; i < macros.length; i += 1) {
+    const mNome = String(macros[i] || '').trim();
+    if (!mNome) continue;
+    const resolvido = resolverCategoriaExistenteNoState(mNome, subs[0] || '', tipoNorm);
+    if (resolvido && !ehCategoriaGenericaOuPendente(resolvido.categoriaCompleta) && categoriaCompativelComTipo(resolvido.categoriaCompleta, tipoNorm)) {
+      return resolvido;
+    }
+  }
+  return null;
+}
+
+function classificarPorCNAE(cnae, tipo) {
+  const tipoNorm = tipo === 'receita' ? 'receita' : 'despesa';
+  if (tipoNorm !== 'despesa') return null;
+
+  const digitos = String(cnae || '').replace(/\D/g, '');
+  if (digitos.length < 4) return null;
+  const p4 = digitos.slice(0, 4);
+  const n4 = parseInt(p4, 10);
+  if (!Number.isFinite(n4)) return null;
+
+  // 4711, 4712, 4722, 4724 -> Supermercado / Mercado / Alimentação
+  if (p4 === '4711' || p4 === '4712' || p4 === '4722' || p4 === '4724') {
+    return resolverCandidatosCategoriaState(['Supermercado', 'Mercado', 'Alimentação'], ['Supermercado', 'Mercado'], tipoNorm);
+  }
+  // 4721 -> Padaria / Confeitaria / Alimentação
+  if (p4 === '4721') {
+    return resolverCandidatosCategoriaState(['Padaria', 'Confeitaria', 'Alimentação'], ['Padaria & Café', 'Supermercado'], tipoNorm);
+  }
+  // 5611, 5612, 5620 -> Restaurante / Delivery / Alimentação
+  if (p4 === '5611' || p4 === '5612' || p4 === '5620') {
+    return resolverCandidatosCategoriaState(['Restaurante', 'Delivery', 'Alimentação'], ['Restaurante', 'Delivery / Lanche'], tipoNorm);
+  }
+  // 4771 -> Farmácia / Saúde
+  if (p4 === '4771') {
+    return resolverCandidatosCategoriaState(['Farmácia', 'Saúde'], ['Farmácia'], tipoNorm);
+  }
+  // 9313 -> Saúde (Academia)
+  if (p4 === '9313') {
+    return resolverCandidatosCategoriaState(['Saúde'], ['Academia', 'Consultas & Exames'], tipoNorm);
+  }
+  // 8610 a 8690 -> Saúde (Clínicas, Exames)
+  if (n4 >= 8610 && n4 <= 8690) {
+    return resolverCandidatosCategoriaState(['Saúde'], ['Consultas & Exames'], tipoNorm);
+  }
+  // 4731 -> Combustível / Transporte
+  if (p4 === '4731') {
+    return resolverCandidatosCategoriaState(['Combustível', 'Transporte'], ['Combustível'], tipoNorm);
+  }
+  // 4921 a 4929 -> Transporte
+  if (n4 >= 4921 && n4 <= 4929) {
+    return resolverCandidatosCategoriaState(['Transporte'], ['Transporte Público', 'Uber / 99 / Táxi'], tipoNorm);
+  }
+  // 5223 -> Estacionamento / Transporte
+  if (p4 === '5223') {
+    return resolverCandidatosCategoriaState(['Estacionamento', 'Transporte'], ['Manutenção / IPVA'], tipoNorm);
+  }
+  // 5510, 5590, 5111, 7911 -> Hospedagem / Viagem / Lazer
+  if (p4 === '5510' || p4 === '5590' || p4 === '5111' || p4 === '7911') {
+    return resolverCandidatosCategoriaState(['Hospedagem', 'Viagem', 'Lazer'], ['Viagens & Hospedagem'], tipoNorm);
+  }
+  // 8511 a 8599 -> Educação
+  if (n4 >= 8511 && n4 <= 8599) {
+    return resolverCandidatosCategoriaState(['Educação'], ['Cursos & Faculdade'], tipoNorm);
+  }
+  // 3514, 3600 -> Moradia / Energia / Água
+  if (p4 === '3514' || p4 === '3600') {
+    return resolverCandidatosCategoriaState(['Moradia'], ['Energia & Água'], tipoNorm);
+  }
+  // 6110, 6120 -> Moradia / Internet / Telefonia
+  if (p4 === '6110' || p4 === '6120') {
+    return resolverCandidatosCategoriaState(['Moradia'], ['Internet & TV'], tipoNorm);
+  }
+  // 4781, 4782, 4751 a 4759 -> Compras / Vestuário / Eletrônicos / Lazer
+  if (p4 === '4781' || p4 === '4782' || (n4 >= 4751 && n4 <= 4759)) {
+    return resolverCandidatosCategoriaState(['Compras', 'Vestuário', 'Eletrônicos', 'Lazer'], ['Compras', 'Vestuário', 'Eletrônicos'], tipoNorm);
+  }
+
+  return null;
+}
+
+function resolverCategoriaTerceirosCPF(tipo) {
+  normalizarHierarquiaCategorias();
+  const tipoNorm = tipo === 'receita' ? 'receita' : 'despesa';
+  const nomesAlvo = new Set([
+    'pessoas / terceiros',
+    'pessoas e terceiros',
+    'transferencias a terceiros',
+    'terceiros',
+    'pessoas'
+  ]);
+  const encontrada = (STATE.categorias || []).find(c =>
+    c && c.nome &&
+    (!c.tipo || c.tipo === tipoNorm || c.tipo === 'ambos' || c.tipo === 'todos') &&
+    nomesAlvo.has(normalizarTextoSemAcento(c.nome)) &&
+    categoriaCompativelComTipo(c.nome, tipoNorm)
+  );
+  if (!encontrada) return null;
+  return {
+    categoria: encontrada.nome,
+    subcategoria: '',
+    categoriaCompleta: encontrada.nome
   };
 }
 
@@ -17097,10 +18078,10 @@ function normalizarDescricaoBancaria(texto) {
   s = s.replace(/\b\d{2}\.\d{3}\.\d{3}\/\d{4}-\d{2}\b/g, ' ');
   s = s.replace(/\b\d{3}\.\d{3}\.\d{3}-\d{2}\b/g, ' ');
 
-  // Remove prefixos de adquirentes e intermediadores bancários (pag*, ifd*, mp*, ec*, dl*, int*, etc.)
-  s = s.replace(/(^|[\s|])(?:pag|ifd|mp|ec|dl|int|pg|mercpago|sumup|stone|cielo|rede|getnet)\s*\*\s*/gi, ' ');
+  // Remove prefixos de adquirentes e intermediadores bancários (pag*, ifd*, mp*, ec*, dl*, int*, ppro*, etc.)
+  s = s.replace(/(^|[\s|])(?:pag|ifd|mp|ec|dl|int|pg|ppro|ebn|dlocal|mercpago|sumup|stone|cielo|rede|getnet)\s*\*\s*/gi, ' ');
 
-  // Remove prefixos/ruídos bancários comuns no Brasil
+  // Remove prefixos/ruídos bancários comuns no Brasil (incluindo estornos/créditos em cartão)
   const prefixosRuido = [
     /\btransferencia\s+enviada\s*\|?/gi,
     /\btransferencia\s+recebida\s*\|?/gi,
@@ -17113,9 +18094,17 @@ function normalizarDescricaoBancaria(texto) {
     /\bcompra\s+(?:no\s+)?debito\b/gi,
     /\bcompra\s+(?:no\s+)?credito\b/gi,
     /\bdebito\s+automatico\b/gi,
-    /\bpagamento\s+de\s+boleto\b/gi
+    /\bpagamento\s+de\s+boleto\b/gi,
+    /\bestorno(?:\s+de(?:\s+compra)?)?\b/gi,
+    /\bcredito\s+de(?:\s+compra)?\b/gi,
+    /\breembolso\s+de\b/gi,
+    /\bdevolucao\s+de\b/gi,
+    /\bcancelamento\s+de\b/gi
   ];
   prefixosRuido.forEach(re => { s = s.replace(re, ' '); });
+
+  // Remove prefixos de adquirentes que ficaram expostos após retirar aspas/prefixo de estorno (ex: Crédito de "DL *UberRides")
+  s = s.replace(/(^|[\s|"'])(?:pag|ifd|mp|ec|dl|int|pg|ppro|ebn|dlocal|mercpago|sumup|stone|cielo|rede|getnet)\s*\*\s*/gi, ' ');
 
   // Remove indicadores de parcela (parc 1/3, parcela 01/12, 01/12) e datas soltas (dd/mm, dd/mm/aaaa)
   s = s.replace(/\bparc(?:ela)?\.?\s*\d{1,2}\s*[/\\-]\s*\d{1,2}\b/gi, ' ');
@@ -17134,6 +18123,243 @@ function normalizarDescricaoBancaria(texto) {
   if (semSiglaInicial.length >= 2) s = semSiglaInicial;
 
   return s;
+}
+
+function extrairTokensRelevantes(texto) {
+  const base = normalizarDescricaoBancaria(texto) || normalizarTextoSemAcento(texto);
+  if (!base) return [];
+
+  // Remove códigos de loja/filial (v152, fl171, lj02, fil01, un03) antes de tokenizar
+  const limpoFiliais = base
+    .replace(/\b(?:v|fl|lj|fil|un|ag|pdv|pos|aut|nsu)\d+\b/gi, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  if (!limpoFiliais) return [];
+
+  const vistos = new Set();
+  const tokens = [];
+  const partes = limpoFiliais.split(' ');
+
+  for (let i = 0; i < partes.length; i += 1) {
+    const tok = partes[i].trim();
+    if (!tok || tok.length < 3) continue;
+    if (/^\d+$/.test(tok)) continue; // ignora números curtos/isolados
+    if (/^(?:v|fl|lj|fil|un|f|l)\d+$/i.test(tok)) continue;
+    if (STOPWORDS_TOKENS_AUTOCAT.has(tok)) continue;
+    if (!vistos.has(tok)) {
+      vistos.add(tok);
+      tokens.push(tok);
+    }
+  }
+
+  return tokens;
+}
+
+function normalizarMemoriaCategorias() {
+  if (!STATE.memoriaCategorias || typeof STATE.memoriaCategorias !== 'object' || Array.isArray(STATE.memoriaCategorias)) {
+    STATE.memoriaCategorias = {};
+    return STATE.memoriaCategorias;
+  }
+
+  const limpo = {};
+  Object.entries(STATE.memoriaCategorias).forEach(([chaveBruta, val]) => {
+    if (!chaveBruta || !val || typeof val !== 'object') return;
+    const sepIdx = chaveBruta.indexOf('::');
+    if (sepIdx <= 0) return;
+    const tipo = chaveBruta.slice(0, sepIdx) === 'receita' ? 'receita' : 'despesa';
+    const nucleo = normalizarDescricaoBancaria(chaveBruta.slice(sepIdx + 2)) || normalizarTextoSemAcento(chaveBruta.slice(sepIdx + 2));
+    if (!nucleo || nucleo.length < 2) return;
+
+    const parsed = extrairMacroESubcategoria(val.categoria || '');
+    const macro = val.subcategoria ? (parsed.temSub ? parsed.macro : String(val.categoria || '').trim()) : parsed.macro;
+    const sub = val.subcategoria ? String(val.subcategoria).trim() : (parsed.temSub ? parsed.sub : '');
+    const catCompleta = montarCategoriaCompletaAutoCat(macro, sub);
+
+    if (!ehCategoriaValidaParaAprendizado(catCompleta)) return;
+    if (!categoriaCompativelComTipo(catCompleta, tipo)) return;
+
+    const chaveNorm = `${tipo}::${nucleo}`;
+    const itemNorm = {
+      categoria: macro,
+      subcategoria: sub,
+      tag: String(val.tag || '').trim().replace(/^#+/, ''),
+      usos: Math.max(1, parseInt(val.usos, 10) || 1),
+      atualizadoEm: String(val.atualizadoEm || new Date().toISOString())
+    };
+    if (val.origem) itemNorm.origem = String(val.origem).trim();
+    limpo[chaveNorm] = itemNorm;
+  });
+
+  STATE.memoriaCategorias = limpo;
+  return STATE.memoriaCategorias;
+}
+
+function hidratarMemoriaDoHistorico() {
+  if (!STATE.memoriaCategorias || typeof STATE.memoriaCategorias !== 'object' || Array.isArray(STATE.memoriaCategorias)) {
+    STATE.memoriaCategorias = {};
+  }
+  const tombMemoria = (STATE.tombstonesCerebro && STATE.tombstonesCerebro.memoria && typeof STATE.tombstonesCerebro.memoria === 'object')
+    ? STATE.tombstonesCerebro.memoria
+    : {};
+
+  const grupos = new Map();
+
+  (STATE.lancamentos || []).forEach(l => {
+    if (!l || typeof l !== 'object') return;
+    if (l.ehMovimentoCofre || l.ehOperacaoTecnica) return;
+    if (isLancamentoTransferencia(l)) return;
+    if (ehLancamentoPagamentoFatura(l)) return;
+    if (!l.categoria || ehCategoriaGenericaOuPendente(l.categoria)) return;
+
+    const tipoEfetivo = ehEstornoCartao(l) ? 'despesa' : l.tipo;
+    if (tipoEfetivo !== 'despesa' && tipoEfetivo !== 'receita') return;
+    if (!categoriaCompativelComTipo(l.categoria, tipoEfetivo)) return;
+
+    const nucleo = normalizarDescricaoBancaria(l.descricaoOriginal || l.descricao);
+    if (!nucleo || nucleo.length < 3) return;
+
+    const parsed = extrairMacroESubcategoria(l.categoria);
+    const categoria = String(parsed.macro || '').trim();
+    const subcategoria = parsed.temSub ? String(parsed.sub || '').trim() : '';
+    if (!categoria) return;
+
+    const dataStr = String(l.data || '').trim();
+    const dataISO = /^\d{4}-\d{2}-\d{2}/.test(dataStr) ? dataStr.slice(0, 10) : '';
+
+    const chave = `${tipoEfetivo}::${nucleo}`;
+    let grupo = grupos.get(chave);
+    if (!grupo) {
+      grupo = { combos: new Map(), ultimaData: '' };
+      grupos.set(chave, grupo);
+    }
+    if (dataISO && dataISO > grupo.ultimaData) grupo.ultimaData = dataISO;
+
+    const comboKey = `${normalizarTextoSemAcento(categoria)}|${normalizarTextoSemAcento(subcategoria)}`;
+    let combo = grupo.combos.get(comboKey);
+    if (!combo) {
+      combo = { categoria, subcategoria, usos: 0, ultimaData: '' };
+      grupo.combos.set(comboKey, combo);
+    }
+    combo.usos += 1;
+    if (dataISO >= combo.ultimaData) {
+      combo.ultimaData = dataISO;
+      combo.categoria = categoria;
+      combo.subcategoria = subcategoria;
+    }
+  });
+
+  let novasChaves = 0;
+
+  grupos.forEach((grupo, chave) => {
+    if (Object.prototype.hasOwnProperty.call(STATE.memoriaCategorias, chave)) return;
+
+    let dominante = null;
+    grupo.combos.forEach(combo => {
+      if (
+        !dominante ||
+        combo.usos > dominante.usos ||
+        (combo.usos === dominante.usos && combo.ultimaData > dominante.ultimaData)
+      ) {
+        dominante = combo;
+      }
+    });
+    if (!dominante) return;
+
+    const ultimaData = dominante.ultimaData || grupo.ultimaData || '1970-01-01';
+    const atualizadoEm = `${ultimaData}T12:00:00.000Z`;
+    const tombISO = String(tombMemoria[chave] || '');
+    if (tombISO && tombISO > ultimaData) return;
+
+    STATE.memoriaCategorias[chave] = {
+      categoria: dominante.categoria,
+      subcategoria: dominante.subcategoria,
+      tag: '',
+      usos: Math.max(1, dominante.usos),
+      origem: 'historico',
+      atualizadoEm
+    };
+    novasChaves += 1;
+  });
+
+  return novasChaves;
+}
+
+function registrarAprendizadoSilencioso(lanc, novaCategoriaCompleta, opcoes = {}) {
+  if (!lanc || ehLancamentoProtegidoAutoCat(lanc)) return false;
+  const tipo = obterTipoEfetivoAutoCat(lanc);
+  const parsed = extrairMacroESubcategoria(novaCategoriaCompleta || lanc.categoria || '');
+  const catCompleta = montarCategoriaCompletaAutoCat(parsed.macro, parsed.temSub ? parsed.sub : '');
+
+  if (!ehCategoriaValidaParaAprendizado(catCompleta)) return false;
+  if (!categoriaCompativelComTipo(catCompleta, tipo, lanc)) return false;
+
+  const descBase = obterDescricaoBaseAutoCat(lanc);
+  const nucleo = normalizarDescricaoBancaria(descBase);
+  if (!nucleo || nucleo.length < 2) return false;
+
+  if (!STATE.memoriaCategorias || typeof STATE.memoriaCategorias !== 'object' || Array.isArray(STATE.memoriaCategorias)) {
+    STATE.memoriaCategorias = {};
+  }
+
+  const chave = `${tipo}::${nucleo}`;
+  const anterior = STATE.memoriaCategorias[chave];
+  const tagLimpa = String(
+    opcoes.tag !== undefined
+      ? opcoes.tag
+      : ((Array.isArray(lanc.tags) && lanc.tags[0]) || (anterior && anterior.tag) || '')
+  ).trim().replace(/^#+/, '');
+  const inc = Math.max(1, parseInt(opcoes.incrementoUsos, 10) || 1);
+
+  const agoraISO = new Date().toISOString();
+  STATE.memoriaCategorias[chave] = {
+    categoria: parsed.macro,
+    subcategoria: parsed.temSub ? parsed.sub : '',
+    tag: tagLimpa,
+    usos: (anterior ? (parseInt(anterior.usos, 10) || 0) : 0) + inc,
+    atualizadoEm: agoraISO
+  };
+  if (typeof limparTombstoneCerebro === 'function') {
+    limparTombstoneCerebro('memoria', chave);
+  }
+  if (opcoes.agendarSync !== false && typeof agendarSyncCerebroGitHub === 'function') {
+    agendarSyncCerebroGitHub('memoria');
+  }
+
+  return true;
+}
+
+function consultarMemoriaSilenciosa(tipo, nucleo, merchantNameOpt) {
+  if (!STATE.memoriaCategorias || typeof STATE.memoriaCategorias !== 'object') return null;
+  const candidatosNucleo = [];
+  if (nucleo && nucleo.length >= 2) candidatosNucleo.push(nucleo);
+  if (merchantNameOpt) {
+    const nucMerch = normalizarDescricaoBancaria(merchantNameOpt);
+    if (nucMerch && nucMerch.length >= 2 && nucMerch !== nucleo) candidatosNucleo.push(nucMerch);
+  }
+
+  for (let i = 0; i < candidatosNucleo.length; i += 1) {
+    const chave = `${tipo}::${candidatosNucleo[i]}`;
+    const mem = STATE.memoriaCategorias[chave];
+    if (!mem || !mem.categoria) continue;
+    const catComp = montarCategoriaCompletaAutoCat(mem.categoria, mem.subcategoria);
+    if (!ehCategoriaValidaParaAprendizado(catComp)) continue;
+    if (!categoriaCompativelComTipo(catComp, tipo)) continue;
+
+    const resolvido = resolverCategoriaExistenteNoState(mem.categoria, mem.subcategoria, tipo);
+    if (resolvido && categoriaCompativelComTipo(resolvido.categoriaCompleta, tipo)) {
+      return {
+        categoria: resolvido.categoria,
+        subcategoria: resolvido.subcategoria || '',
+        categoriaCompleta: resolvido.categoriaCompleta,
+        tag: String(mem.tag || '').trim().replace(/^#+/, ''),
+        apelidoDescricao: '',
+        origem: 'memoria',
+        regraId: null
+      };
+    }
+  }
+  return null;
 }
 
 function normalizarRegrasCategoria() {
@@ -17181,6 +18407,11 @@ function normalizarRegrasCategoria() {
       const vMax = (r.valorMax !== null && r.valorMax !== undefined && r.valorMax !== '' && Number.isFinite(Number(r.valorMax))) ? Number(r.valorMax) : null;
       const prio = Number.isFinite(Number(r.prioridade)) ? Number(r.prioridade) : 100;
       const tagLimpa = String(r.tag || '').trim().replace(/^#+/, '');
+      const contaIdNorm = String(r.contaId || '').trim();
+      const contaNomeResolvido = typeof resolverNomeContaParaRegra === 'function'
+        ? resolverNomeContaParaRegra(contaIdNorm, r.contaNome)
+        : String(r.contaNome || '').trim();
+      const criadaEmStr = String(r.criadaEm || new Date().toISOString());
       return {
         id: String(r.id || uid()),
         ativa: r.ativa !== false,
@@ -17188,14 +18419,16 @@ function normalizarRegrasCategoria() {
         padrao: String(r.padrao).trim(),
         modoMatch: modo,
         tipo,
-        contaId: String(r.contaId || '').trim(),
+        contaId: contaIdNorm,
+        contaNome: contaNomeResolvido,
         valorMin: vMin,
         valorMax: vMax,
         categoria: macro,
         subcategoria: sub,
         tag: tagLimpa,
         apelidoDescricao: String(r.apelidoDescricao || '').trim(),
-        criadaEm: String(r.criadaEm || new Date().toISOString()),
+        criadaEm: criadaEmStr,
+        atualizadoEm: String(r.atualizadoEm || criadaEmStr),
         usos: Math.max(0, parseInt(r.usos, 10) || 0)
       };
     });
@@ -17241,10 +18474,26 @@ function contaCorrespondeRegraAutoCat(regraContaId, lanc) {
   return false;
 }
 
+function regraCompativelComTravaDeTipo(regra, tipoLancamento) {
+  if (!regra) return false;
+  const catCompleta = montarCategoriaCompletaAutoCat(regra.categoria, regra.subcategoria);
+  if (tipoLancamento === 'despesa') {
+    // Categorias estritamente de Receita NUNCA podem ser atribuídas a uma despesa
+    return categoriaCompativelComTipo(catCompleta, 'despesa');
+  }
+  if (tipoLancamento === 'receita') {
+    // Exceção explícita permitida apenas quando a regra manual foi criada especificamente com tipo: 'receita'
+    if (regra.tipo === 'receita') return true;
+    return categoriaCompativelComTipo(catCompleta, 'receita');
+  }
+  return true;
+}
+
 function avaliarRegraNoLancamento(regra, lanc, descBrutaNormOpt, nucleoOpt) {
   if (!regra || !lanc || ehLancamentoProtegidoAutoCat(lanc)) return false;
-  const tipoLanc = lanc.tipo === 'receita' ? 'receita' : 'despesa';
+  const tipoLanc = obterTipoEfetivoAutoCat(lanc);
   if (regra.tipo && regra.tipo !== 'todos' && regra.tipo !== tipoLanc) return false;
+  if (!regraCompativelComTravaDeTipo(regra, tipoLanc)) return false;
   if (!contaCorrespondeRegraAutoCat(regra.contaId, lanc)) return false;
 
   const valor = Math.abs(Number(lanc.valor) || 0);
@@ -17277,12 +18526,16 @@ function construirIndiceMemoriaHistorica(lancamentos) {
     const l = lista[i];
     if (!l || ehLancamentoProtegidoAutoCat(l)) continue;
     if (ehCategoriaGenericaOuPendente(l.categoria)) continue;
-    const nucleo = normalizarDescricaoBancaria(obterDescricaoBaseAutoCat(l));
-    if (!nucleo || nucleo.length < 3) continue;
-    const tipo = l.tipo === 'receita' ? 'receita' : 'despesa';
-    const chave = `${tipo}|${nucleo}`;
+    const tipo = obterTipoEfetivoAutoCat(l);
     const parsed = extrairMacroESubcategoria(l.categoria);
     const catKey = montarCategoriaCompletaAutoCat(parsed.macro, parsed.temSub ? parsed.sub : '');
+    if (!ehCategoriaValidaParaAprendizado(catKey)) continue;
+    if (!categoriaCompativelComTipo(catKey, tipo, l)) continue;
+
+    const descBase = obterDescricaoBaseAutoCat(l);
+    const nucleo = normalizarDescricaoBancaria(descBase);
+    if (!nucleo || nucleo.length < 3) continue;
+    const chave = `${tipo}|${nucleo}`;
     const dataStr = String(l.data || '');
 
     let bucket = contagemPorChave.get(chave);
@@ -17296,6 +18549,8 @@ function construirIndiceMemoriaHistorica(lancamentos) {
       if (dataStr > prev.lastDate) prev.lastDate = dataStr;
     } else {
       bucket.set(catKey, {
+        tipo,
+        nucleo,
         categoria: parsed.macro,
         subcategoria: parsed.temSub ? parsed.sub : '',
         categoriaCompleta: catKey,
@@ -17306,6 +18561,11 @@ function construirIndiceMemoriaHistorica(lancamentos) {
   }
 
   const indice = new Map();
+  const porTipoToken = {
+    despesa: new Map(),
+    receita: new Map()
+  };
+
   contagemPorChave.forEach((bucket, chave) => {
     let melhor = null;
     bucket.forEach((entry) => {
@@ -17313,42 +18573,179 @@ function construirIndiceMemoriaHistorica(lancamentos) {
         melhor = entry;
       }
     });
-    if (melhor) indice.set(chave, melhor);
+    if (!melhor) return;
+
+    const tokens = extrairTokensRelevantes(melhor.nucleo);
+    melhor.tokens = tokens;
+    melhor.tokensSet = new Set(tokens);
+    indice.set(chave, melhor);
+
+    if (tokens.length > 0) {
+      const mapaTokensTipo = porTipoToken[melhor.tipo];
+      tokens.forEach(tok => {
+        let arr = mapaTokensTipo.get(tok);
+        if (!arr) {
+          arr = [];
+          mapaTokensTipo.set(tok, arr);
+        }
+        arr.push(melhor);
+      });
+    }
   });
+
+  indice.porTipoToken = porTipoToken;
   return indice;
+}
+
+function buscarMemoriaHistoricaPorTokens(textoOuNucleo, tipo, indice) {
+  if (!indice || !indice.porTipoToken) return null;
+  const tokensAlvo = extrairTokensRelevantes(textoOuNucleo);
+  if (!tokensAlvo.length) return null;
+
+  const tokensAlvoSet = new Set(tokensAlvo);
+  const mapaTokensTipo = indice.porTipoToken[tipo];
+  if (!mapaTokensTipo || mapaTokensTipo.size === 0) return null;
+
+  const candidatosVistos = new Set();
+  for (let i = 0; i < tokensAlvo.length; i += 1) {
+    const listaCands = mapaTokensTipo.get(tokensAlvo[i]);
+    if (!listaCands) continue;
+    for (let j = 0; j < listaCands.length; j += 1) {
+      candidatosVistos.add(listaCands[j]);
+    }
+  }
+  if (!candidatosVistos.size) return null;
+
+  const votosPorCategoria = new Map();
+  candidatosVistos.forEach(cand => {
+    if (!cand || !cand.tokensSet || cand.tokensSet.size === 0) return;
+    if (!categoriaCompativelComTipo(cand.categoriaCompleta, tipo)) return;
+
+    let inter = 0;
+    let compartilhaMarca = false;
+    tokensAlvoSet.forEach(tok => {
+      if (cand.tokensSet.has(tok)) {
+        inter += 1;
+        if (TOKENS_MARCA_ESPECIFICA_AUTOCAT.has(tok)) compartilhaMarca = true;
+      }
+    });
+    if (inter === 0) return;
+
+    const uniao = tokensAlvoSet.size + cand.tokensSet.size - inter;
+    const jaccard = uniao > 0 ? (inter / uniao) : 0;
+    if (jaccard < 0.55 && !compartilhaMarca) return;
+
+    const catKey = cand.categoriaCompleta;
+    const peso = cand.count || 1;
+    const prev = votosPorCategoria.get(catKey);
+    if (prev) {
+      prev.totalCount += peso;
+      if (jaccard > prev.maxJaccard) prev.maxJaccard = jaccard;
+      if (cand.lastDate > prev.lastDate) prev.lastDate = cand.lastDate;
+    } else {
+      votosPorCategoria.set(catKey, {
+        categoria: cand.categoria,
+        subcategoria: cand.subcategoria || '',
+        categoriaCompleta: catKey,
+        totalCount: peso,
+        maxJaccard: jaccard,
+        lastDate: cand.lastDate || ''
+      });
+    }
+  });
+
+  let vencedor = null;
+  votosPorCategoria.forEach(v => {
+    if (
+      !vencedor ||
+      v.totalCount > vencedor.totalCount ||
+      (v.totalCount === vencedor.totalCount && v.maxJaccard > vencedor.maxJaccard) ||
+      (v.totalCount === vencedor.totalCount && v.maxJaccard === vencedor.maxJaccard && v.lastDate > vencedor.lastDate)
+    ) {
+      vencedor = v;
+    }
+  });
+
+  if (!vencedor || !categoriaCompativelComTipo(vencedor.categoriaCompleta, tipo)) return null;
+  return {
+    categoria: vencedor.categoria,
+    subcategoria: vencedor.subcategoria || '',
+    categoriaCompleta: vencedor.categoriaCompleta,
+    tag: '',
+    apelidoDescricao: '',
+    origem: 'memoria',
+    regraId: null
+  };
 }
 
 function mapearCategoriaPluggyFlexivel(rawCategory, tipo) {
   const catRaw = String(rawCategory || '').trim();
   if (!catRaw) return null;
   const catNorm = normalizarTextoSemAcento(catRaw);
-  if (!catNorm || catNorm.includes('transfer') || catNorm === 'other' || catNorm === 'outros') return null;
+  if (
+    !catNorm ||
+    catNorm.includes('transfer') ||
+    catNorm === 'other' ||
+    catNorm === 'others' ||
+    catNorm === 'outros' ||
+    catNorm === 'services' ||
+    catNorm === 'service' ||
+    catNorm === 'servicos'
+  ) {
+    return null;
+  }
 
-  // Correspondência direta com categorias reais do STATE
+  const tipoNorm = tipo === 'receita' ? 'receita' : 'despesa';
+
+  // Correspondência direta com categorias reais e compatíveis do STATE
   const exata = (STATE.categorias || []).find(
-    c => c && c.nome && (!tipo || c.tipo === tipo) && normalizarTextoSemAcento(c.nome) === catNorm
+    c => c && c.nome &&
+      (!c.tipo || c.tipo === tipoNorm) &&
+      normalizarTextoSemAcento(c.nome) === catNorm &&
+      categoriaCompativelComTipo(c.nome, tipoNorm)
   );
   if (exata) {
     return { categoria: exata.nome, subcategoria: '', categoriaCompleta: exata.nome };
   }
 
   for (const item of MAPA_CATEGORIAS_PLUGGY_SEMANTICO) {
+    if (item.tipo && item.tipo !== tipoNorm) continue;
     if (item.re.test(catNorm)) {
-      return resolverCategoriaExistenteNoState(item.categoria, item.subcategoria, tipo);
+      const resolvido = resolverCandidatosCategoriaState(item.candidatosMacros, item.candidatosSubs, tipoNorm);
+      if (resolvido && categoriaCompativelComTipo(resolvido.categoriaCompleta, tipoNorm)) {
+        return resolvido;
+      }
     }
   }
   return null;
 }
 
+function escaparRegexAutoCat(str) {
+  return String(str || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
 function autoClassificarLancamento(lanc, opcoes = {}) {
   if (!lanc || typeof lanc !== 'object') return null;
+  if (ehOperacaoTecnicaPixCredito(lanc)) {
+    return {
+      categoria: CATEGORIA_PIX_CREDITO_REPASSE,
+      subcategoria: '',
+      categoriaCompleta: CATEGORIA_PIX_CREDITO_REPASSE,
+      tag: '',
+      apelidoDescricao: '',
+      origem: 'tecnico',
+      regraId: null
+    };
+  }
   if (ehLancamentoProtegidoAutoCat(lanc)) return null;
 
   normalizarRegrasCategoria();
   const descBruta = obterDescricaoBaseAutoCat(lanc);
   const descBrutaNorm = normalizarTextoSemAcento(descBruta);
   const nucleo = normalizarDescricaoBancaria(descBruta);
-  const tipo = lanc.tipo === 'receita' ? 'receita' : 'despesa';
+  const tipo = obterTipoEfetivoAutoCat(lanc);
+  const metaPluggy = opcoes.pluggyMeta || lanc.pluggyMeta || null;
+  const merchantName = metaPluggy && metaPluggy.merchantName ? String(metaPluggy.merchantName).trim() : '';
 
   // CAMADA 1 — Regras do Usuário (STATE.regrasCategoria)
   const regrasAtivas = ordenarRegrasCategoriaParaAvaliacao(
@@ -17370,28 +18767,82 @@ function autoClassificarLancamento(lanc, opcoes = {}) {
     }
   }
 
-  // CAMADA 2 — Memória Histórica Automática (mesmo núcleo >= 3 chars e mesmo tipo)
+  // CAMADA 2A — Aprendizado Silencioso Automático (STATE.memoriaCategorias)
+  if (!opcoes.pularMemoria) {
+    const matchSilencioso = consultarMemoriaSilenciosa(tipo, nucleo, merchantName);
+    if (matchSilencioso) return matchSilencioso;
+  }
+
+  // CAMADA 2B — Memória Histórica (match exato de núcleo + similaridade de tokens Jaccard >= 0.55 / marca específica)
   if (!opcoes.pularMemoria && nucleo.length >= 3) {
     const indice = opcoes.indiceMemoria || construirIndiceMemoriaHistorica();
-    const matchMem = indice.get(`${tipo}|${nucleo}`);
-    if (matchMem) {
+    const matchMemExata = indice.get(`${tipo}|${nucleo}`);
+    if (matchMemExata && categoriaCompativelComTipo(matchMemExata.categoriaCompleta, tipo)) {
       return {
-        categoria: matchMem.categoria,
-        subcategoria: matchMem.subcategoria || '',
-        categoriaCompleta: matchMem.categoriaCompleta,
+        categoria: matchMemExata.categoria,
+        subcategoria: matchMemExata.subcategoria || '',
+        categoriaCompleta: matchMemExata.categoriaCompleta,
         tag: '',
         apelidoDescricao: '',
         origem: 'memoria',
         regraId: null
       };
     }
+
+    const matchTokens = buscarMemoriaHistoricaPorTokens(nucleo, tipo, indice)
+      || (merchantName ? buscarMemoriaHistoricaPorTokens(merchantName, tipo, indice) : null);
+    if (matchTokens) return matchTokens;
   }
 
-  // CAMADA 3 — Dicionário Pluggy + Palavras-Chave BR
-  const rawCategory = opcoes.rawCategory !== undefined ? opcoes.rawCategory : (lanc.rawCategory || '');
+  // TRATAMENTO DE PIX ENTRE PESSOAS FÍSICAS (CPF):
+  // Se não bateu em regra do usuário nem na memória histórica, evita falsos positivos comerciais
+  if (metaPluggy && metaPluggy.contraparteTipo === 'CPF') {
+    const catTerceiros = resolverCategoriaTerceirosCPF(tipo);
+    if (catTerceiros) {
+      return {
+        categoria: catTerceiros.categoria,
+        subcategoria: catTerceiros.subcategoria || '',
+        categoriaCompleta: catTerceiros.categoriaCompleta,
+        tag: 'pessoa',
+        apelidoDescricao: '',
+        origem: 'pluggy',
+        regraId: null
+      };
+    }
+    return {
+      categoria: CATEGORIA_A_CLASSIFICAR,
+      subcategoria: '',
+      categoriaCompleta: CATEGORIA_A_CLASSIFICAR,
+      tag: 'pessoa',
+      apelidoDescricao: '',
+      origem: 'pendente',
+      regraId: null
+    };
+  }
+
+  // CAMADA 3A — Classificação por CNAE Brasileiro (Pluggy v2 merchant.cnae)
+  if (metaPluggy && metaPluggy.cnae) {
+    const matchCNAE = classificarPorCNAE(metaPluggy.cnae, tipo);
+    if (matchCNAE && categoriaCompativelComTipo(matchCNAE.categoriaCompleta, tipo)) {
+      return {
+        categoria: matchCNAE.categoria,
+        subcategoria: matchCNAE.subcategoria || '',
+        categoriaCompleta: matchCNAE.categoriaCompleta,
+        tag: '',
+        apelidoDescricao: '',
+        origem: 'cnae',
+        regraId: null
+      };
+    }
+  }
+
+  // CAMADA 3B — Categoria Semântica Pluggy (com Trava Estrita de Tipo)
+  const rawCategory = opcoes.rawCategory !== undefined
+    ? opcoes.rawCategory
+    : (lanc.rawCategory || (metaPluggy && metaPluggy.pluggyCategory) || '');
   if (rawCategory) {
     const matchPluggy = mapearCategoriaPluggyFlexivel(rawCategory, tipo);
-    if (matchPluggy) {
+    if (matchPluggy && categoriaCompativelComTipo(matchPluggy.categoriaCompleta, tipo)) {
       return {
         categoria: matchPluggy.categoria,
         subcategoria: matchPluggy.subcategoria || '',
@@ -17404,43 +18855,56 @@ function autoClassificarLancamento(lanc, opcoes = {}) {
     }
   }
 
+  // CAMADA 3C — Dicionário Brasileiro Ampliado (fronteira estrita de palavra \b + Trava de Tipo)
+  const merchantNorm = merchantName ? normalizarTextoSemAcento(merchantName) : '';
   for (let i = 0; i < DICIONARIO_PALAVRAS_CHAVE_BR.length; i += 1) {
     const item = DICIONARIO_PALAVRAS_CHAVE_BR[i];
     if (item.tipo && item.tipo !== tipo) continue;
-    if (item.re.test(descBrutaNorm) || (nucleo && item.re.test(nucleo))) {
-      const resolvido = resolverCategoriaExistenteNoState(item.categoria, item.subcategoria, tipo);
-      return {
-        categoria: resolvido.categoria,
-        subcategoria: resolvido.subcategoria || '',
-        categoriaCompleta: resolvido.categoriaCompleta,
-        tag: '',
-        apelidoDescricao: '',
-        origem: 'dicionario',
-        regraId: null
-      };
+    const bateuTexto = item.re.test(descBrutaNorm)
+      || (Boolean(nucleo) && item.re.test(nucleo))
+      || (Boolean(merchantNorm) && item.re.test(merchantNorm));
+    if (bateuTexto) {
+      const resolvido = resolverCandidatosCategoriaState(item.candidatosMacros, item.candidatosSubs, tipo);
+      if (resolvido && categoriaCompativelComTipo(resolvido.categoriaCompleta, tipo)) {
+        return {
+          categoria: resolvido.categoria,
+          subcategoria: resolvido.subcategoria || '',
+          categoriaCompleta: resolvido.categoriaCompleta,
+          tag: '',
+          apelidoDescricao: '',
+          origem: 'dicionario',
+          regraId: null
+        };
+      }
     }
   }
 
-  // Fallback complementar no dicionário estendido REGRAS_CATEGORIAS
+  // Fallback complementar no dicionário REGRAS_CATEGORIAS usando fronteira estrita de palavra (\b) + Trava de Tipo
   if (typeof REGRAS_CATEGORIAS === 'object' && REGRAS_CATEGORIAS) {
-    const textoUpper = normalizarTextoBuscaOFX(descBruta);
     const entradas = Object.entries(REGRAS_CATEGORIAS).filter(([cat]) => (
       tipo === 'receita' ? CATEGORIAS_OFX_RECEITA.has(cat) : !CATEGORIAS_OFX_RECEITA.has(cat)
     ));
     for (const [cat, palavras] of entradas) {
+      if (!categoriaCompativelComTipo(cat, tipo)) continue;
       for (const kwRaw of (palavras || [])) {
-        const kw = normalizarTextoBuscaOFX(kwRaw);
-        if (kw && textoUpper.includes(kw)) {
+        const kwNorm = normalizarTextoSemAcento(kwRaw).trim();
+        if (!kwNorm || kwNorm.length < 3) continue;
+        // Evita termos curtos ambíguos legados sem contexto
+        if (kwNorm === 'extra' || kwNorm === 'rico' || kwNorm === 'clear') continue;
+        const reKw = new RegExp(`\\b${escaparRegexAutoCat(kwNorm)}\\b`, 'i');
+        if (reKw.test(descBrutaNorm) || (nucleo && reKw.test(nucleo)) || (merchantNorm && reKw.test(merchantNorm))) {
           const resolvido = resolverCategoriaExistenteNoState(cat, '', tipo);
-          return {
-            categoria: resolvido.categoria,
-            subcategoria: resolvido.subcategoria || '',
-            categoriaCompleta: resolvido.categoriaCompleta,
-            tag: '',
-            apelidoDescricao: '',
-            origem: 'dicionario',
-            regraId: null
-          };
+          if (resolvido && categoriaCompativelComTipo(resolvido.categoriaCompleta, tipo)) {
+            return {
+              categoria: resolvido.categoria,
+              subcategoria: resolvido.subcategoria || '',
+              categoriaCompleta: resolvido.categoriaCompleta,
+              tag: '',
+              apelidoDescricao: '',
+              origem: 'dicionario',
+              regraId: null
+            };
+          }
         }
       }
     }
@@ -17499,8 +18963,10 @@ function badgeOrigemClassificacaoHTML(origem) {
   const mapa = {
     regra: { cls: 'badge-origem-regra', icone: 'ti-sparkles', label: 'Regra' },
     memoria: { cls: 'badge-origem-memoria', icone: 'ti-brain', label: 'Memória' },
+    cnae: { cls: 'badge-origem-pluggy', icone: 'ti-building-store', label: 'CNAE' },
     pluggy: { cls: 'badge-origem-pluggy', icone: 'ti-plug-connected', label: 'Pluggy' },
-    dicionario: { cls: 'badge-origem-dicionario', icone: 'ti-book-2', label: 'Pluggy' },
+    dicionario: { cls: 'badge-origem-dicionario', icone: 'ti-book-2', label: 'Dicionário' },
+    tecnico: { cls: 'badge-origem-pluggy', icone: 'ti-arrows-exchange', label: 'Repasse PIX' },
     pendente: { cls: 'badge-origem-pendente', icone: 'ti-inbox', label: 'A Classificar' },
     manual: { cls: 'badge-origem-manual', icone: 'ti-hand-click', label: 'Manual' }
   };
@@ -17508,11 +18974,11 @@ function badgeOrigemClassificacaoHTML(origem) {
   return `<span class="badge-origem-cat ${info.cls}"><i class="ti ${info.icone}" style="font-size:10px"></i> ${info.label}</span>`;
 }
 
-/* ---- 4.1 APRENDIZADO COM 1 CLIQUE (TOAST INTELIGENTE) ---- */
+/* ---- 4.1 APRENDIZADO SILENCIOSO + TOAST DE LOTE RETROATIVO / APELIDO ---- */
 let _aprendizadoRegraContexto = null;
 let _aprendizadoRegraTimer = null;
 
-function criarOuAtualizarRegraAutomatica({ padrao, modoMatch = 'contem', tipo = 'todos', contaId = '', valorMin = null, valorMax = null, categoria, subcategoria = '', tag = '', apelidoDescricao = '', prioridade = 100 }) {
+function criarOuAtualizarRegraAutomatica({ padrao, modoMatch = 'contem', tipo = 'todos', contaId = '', contaNome = '', valorMin = null, valorMax = null, categoria, subcategoria = '', tag = '', apelidoDescricao = '', prioridade = 100 }) {
   normalizarRegrasCategoria();
   const padraoLimpo = String(padrao || '').trim();
   const parsed = extrairMacroESubcategoria(categoria);
@@ -17520,13 +18986,19 @@ function criarOuAtualizarRegraAutomatica({ padrao, modoMatch = 'contem', tipo = 
   const sub = subcategoria ? String(subcategoria).trim() : (parsed.temSub ? parsed.sub : '');
   if (!padraoLimpo || !macro) return null;
 
+  const contaIdLimpo = String(contaId || '').trim();
+  const contaNomeResolvido = typeof resolverNomeContaParaRegra === 'function'
+    ? resolverNomeContaParaRegra(contaIdLimpo, contaNome)
+    : String(contaNome || '').trim();
+  const agoraISO = new Date().toISOString();
+
   const padraoNorm = normalizarTextoSemAcento(padraoLimpo);
   const existente = STATE.regrasCategoria.find(r =>
     r &&
     normalizarTextoSemAcento(r.padrao) === padraoNorm &&
     (r.modoMatch || 'contem') === modoMatch &&
     (r.tipo || 'todos') === tipo &&
-    String(r.contaId || '') === String(contaId || '') &&
+    String(r.contaId || '') === contaIdLimpo &&
     r.valorMin === valorMin &&
     r.valorMax === valorMax
   );
@@ -17535,8 +19007,12 @@ function criarOuAtualizarRegraAutomatica({ padrao, modoMatch = 'contem', tipo = 
     existente.ativa = true;
     existente.categoria = macro;
     existente.subcategoria = sub;
+    if (contaNomeResolvido) existente.contaNome = contaNomeResolvido;
     if (tag) existente.tag = String(tag).trim().replace(/^#+/, '');
     if (apelidoDescricao) existente.apelidoDescricao = String(apelidoDescricao).trim();
+    existente.atualizadoEm = agoraISO;
+    if (typeof limparTombstoneCerebro === 'function') limparTombstoneCerebro('regras', existente.id);
+    if (typeof agendarSyncCerebroGitHub === 'function') agendarSyncCerebroGitHub('regra');
     return { regra: existente, criada: false };
   }
 
@@ -17547,17 +19023,20 @@ function criarOuAtualizarRegraAutomatica({ padrao, modoMatch = 'contem', tipo = 
     padrao: padraoLimpo,
     modoMatch,
     tipo,
-    contaId: String(contaId || '').trim(),
+    contaId: contaIdLimpo,
+    contaNome: contaNomeResolvido,
     valorMin,
     valorMax,
     categoria: macro,
     subcategoria: sub,
     tag: String(tag || '').trim().replace(/^#+/, ''),
     apelidoDescricao: String(apelidoDescricao || '').trim(),
-    criadaEm: new Date().toISOString(),
+    criadaEm: agoraISO,
+    atualizadoEm: agoraISO,
     usos: 0
   };
   STATE.regrasCategoria.push(nova);
+  if (typeof agendarSyncCerebroGitHub === 'function') agendarSyncCerebroGitHub('regra');
   return { regra: nova, criada: true };
 }
 
@@ -17573,11 +19052,21 @@ function oferecerAprendizadoRegra(lanc, novaCategoriaCompleta, opcoes = {}) {
   if (!lanc || ehLancamentoProtegidoAutoCat(lanc)) return;
   if (!ehCategoriaValidaParaAprendizado(novaCategoriaCompleta)) return;
 
+  const tipo = obterTipoEfetivoAutoCat(lanc);
+  if (!categoriaCompativelComTipo(novaCategoriaCompleta, tipo, lanc)) return;
+
+  // 1) Aprendizado silencioso imediato em STATE.memoriaCategorias (sem depender de clique no toast)
+  const gravouMemoria = registrarAprendizadoSilencioso(lanc, novaCategoriaCompleta, {
+    tag: (Array.isArray(lanc.tags) && lanc.tags[0]) || ''
+  });
+  if (gravouMemoria) {
+    try { persistirStateNoLocalStorage(); } catch (e) {}
+  }
+
   const descBase = obterDescricaoBaseAutoCat(lanc);
   const nucleo = normalizarDescricaoBancaria(descBase);
   if (!nucleo || nucleo.length < 2) return;
 
-  const tipo = lanc.tipo === 'receita' ? 'receita' : 'despesa';
   const parsed = extrairMacroESubcategoria(novaCategoriaCompleta);
   const catCompleta = montarCategoriaCompletaAutoCat(parsed.macro, parsed.temSub ? parsed.sub : '');
   const apelido = String(opcoes.apelidoSugerido || '').trim();
@@ -17586,14 +19075,16 @@ function oferecerAprendizadoRegra(lanc, novaCategoriaCompleta, opcoes = {}) {
   const similaresIds = (STATE.lancamentos || [])
     .filter(x => {
       if (!x || x.id === lanc.id || ehLancamentoProtegidoAutoCat(x)) return false;
-      if ((x.tipo === 'receita' ? 'receita' : 'despesa') !== tipo) return false;
+      if (obterTipoEfetivoAutoCat(x) !== tipo) return false;
       const nucX = normalizarDescricaoBancaria(obterDescricaoBaseAutoCat(x));
       if (nucX !== nucleo) return false;
       return x.categoria !== catCompleta || (apelido && x.descricao !== apelido);
     })
     .map(x => x.id);
 
-  // Evita sugerir se já existe regra idêntica ativa e não há similares pendentes
+  // Mantém o toast de 1 clique APENAS quando houver aplicação retroativa em lote (+N antigos) ou apelido de descrição
+  if (similaresIds.length === 0 && !apelido) return;
+
   normalizarRegrasCategoria();
   const jaTemRegraIdentica = STATE.regrasCategoria.some(r =>
     r.ativa &&
@@ -17620,16 +19111,21 @@ function oferecerAprendizadoRegra(lanc, novaCategoriaCompleta, opcoes = {}) {
   if (!el || !msgEl || !actEl) return;
 
   const catExib = formatarCategoriaExibicao(catCompleta);
-  msgEl.innerHTML = `Sempre classificar <strong>"${escHtml(nucleo)}"</strong> como <strong>"${escHtml(catExib)}"</strong>?`;
-
   const qtd = similaresIds.length;
+
+  msgEl.innerHTML = qtd > 0
+    ? `Aprendido para <strong>"${escHtml(nucleo)}"</strong> → <strong>"${escHtml(catExib)}"</strong>. Deseja aplicar também nos antigos?`
+    : `Salvar regra com apelido <strong>"${escHtml(apelido)}"</strong> para <strong>"${escHtml(nucleo)}"</strong>?`;
+
   actEl.innerHTML = `
-    <button type="button" class="btn btn-sm btn-primary" onclick="confirmarAprendizadoRegra(false)">
-      <i class="ti ti-sparkles"></i> Criar regra
-    </button>
     ${qtd > 0 ? `
-      <button type="button" class="btn btn-sm" style="border-color:var(--accent);color:var(--accent-text)" onclick="confirmarAprendizadoRegra(true)">
-        <i class="ti ti-bolt"></i> Criar e aplicar em +${qtd} antigos
+      <button type="button" class="btn btn-sm btn-primary" onclick="confirmarAprendizadoRegra(true)">
+        <i class="ti ti-bolt"></i> Aplicar também em +${qtd} lançamento(s) antigo(s)
+      </button>
+    ` : ''}
+    ${apelido ? `
+      <button type="button" class="btn btn-sm${qtd === 0 ? ' btn-primary' : ''}" onclick="confirmarAprendizadoRegra(false)">
+        <i class="ti ti-sparkles"></i> Salvar regra com apelido
       </button>
     ` : ''}
   `;
@@ -17673,7 +19169,7 @@ async function confirmarAprendizadoRegra(aplicarAntigos) {
     let mudouRevisao = false;
     transacoesPendentes.forEach(tx => {
       if (!tx || ehLancamentoProtegidoAutoCat(tx)) return;
-      if ((tx.tipo === 'receita' ? 'receita' : 'despesa') !== ctx.tipo) return;
+      if (obterTipoEfetivoAutoCat(tx) !== ctx.tipo) return;
       if (normalizarDescricaoBancaria(obterDescricaoBaseAutoCat(tx)) === ctx.nucleo) {
         tx.categoria = ctx.categoriaCompleta;
         tx.classificacaoOrigem = 'regra';
@@ -17725,7 +19221,7 @@ function agruparLancamentosParaTriagem() {
   pendentes.forEach(l => {
     const descBase = obterDescricaoBaseAutoCat(l);
     const nucleo = normalizarDescricaoBancaria(descBase) || normalizarTextoSemAcento(descBase) || 'sem descricao';
-    const tipo = l.tipo === 'receita' ? 'receita' : 'despesa';
+    const tipo = obterTipoEfetivoAutoCat(l);
     const chave = `${tipo}|${nucleo}`;
     let grupo = mapa.get(chave);
     if (!grupo) {
@@ -17764,6 +19260,16 @@ function renderModalTriagemCategorias() {
     ? `Mostrando ${_gruposTriagemAtuais.length} grupo(s) ordenados por maior frequência.`
     : 'Tudo classificado! Nenhum lançamento pendente na Caixa de Entrada.';
   if (btnTodos) btnTodos.disabled = _gruposTriagemAtuais.length === 0;
+  const btnAutoTriagem = document.getElementById('btn-triagem-autoclassificar');
+  if (btnAutoTriagem) {
+    const temConflitoOuRuido = (STATE.lancamentos || []).some(l => {
+      if (!l || l.ehMovimentoCofre) return false;
+      if (!l.ehOperacaoTecnica && ehOperacaoTecnicaPixCredito(l)) return true;
+      if (ehLancamentoProtegidoAutoCat(l) || ehCategoriaGenericaOuPendente(l.categoria)) return false;
+      return !categoriaCompativelComTipo(l.categoria, obterTipoEfetivoAutoCat(l), l);
+    });
+    btnAutoTriagem.disabled = _gruposTriagemAtuais.length === 0 && !temConflitoOuRuido;
+  }
   if (!listaEl) return;
 
   if (!_gruposTriagemAtuais.length) {
@@ -17864,6 +19370,14 @@ function executarAplicacaoGrupoTriagemInterno(idx) {
     if (ok) atualizados += 1;
   });
 
+  if (atualizados > 0 && ehCategoriaValidaParaAprendizado(catCompleta)) {
+    registrarAprendizadoSilencioso(
+      { tipo: grupo.tipo, descricao: grupo.nucleo, descricaoOriginal: grupo.exemploDescricao },
+      catCompleta,
+      { tag: tagVal, incrementoUsos: atualizados }
+    );
+  }
+
   return { aplicado: true, qtd: atualizados, regraCriada: Boolean(regraCriadaId) };
 }
 
@@ -17931,7 +19445,10 @@ function renderRegrasCategoriaConfig() {
     const catExib = formatarCategoriaExibicao(montarCategoriaCompletaAutoCat(r.categoria, r.subcategoria));
     const extrasCond = [];
     if (r.tipo && r.tipo !== 'todos') extrasCond.push(labelTipo[r.tipo] || r.tipo);
-    if (r.contaId) extrasCond.push(`Conta: ${r.contaId}`);
+    if (r.contaId || r.contaNome) {
+      const labelConta = r.contaNome || (typeof resolverNomeContaParaRegra === 'function' ? resolverNomeContaParaRegra(r.contaId, '') : r.contaId) || r.contaId;
+      extrasCond.push(`Conta: ${labelConta}`);
+    }
     if (r.valorMin !== null || r.valorMax !== null) {
       const minS = r.valorMin !== null ? toBRL(r.valorMin) : 'R$ 0,00';
       const maxS = r.valorMax !== null ? toBRL(r.valorMax) : '∞';
@@ -17996,14 +19513,26 @@ function abrirModalRegraCategoria(regraId) {
   const selConta = document.getElementById('regra-modal-conta');
   if (selConta) {
     selConta.innerHTML = '<option value="">Todas as contas</option>'
-      + (STATE.contas || []).map(c => `<option value="${escHtml(c.nome)}">${escHtml(c.nome)}</option>`).join('');
+      + (STATE.contas || []).map(c => `<option value="${escHtml(c.id || c.nome)}" data-conta-nome="${escHtml(c.nome)}">${escHtml(c.nome)}</option>`).join('');
   }
 
   document.getElementById('regra-modal-id').value = regra ? regra.id : '';
   document.getElementById('regra-modal-padrao').value = regra ? regra.padrao : '';
   document.getElementById('regra-modal-modo').value = regra ? regra.modoMatch : 'contem';
   document.getElementById('regra-modal-tipo').value = regra ? regra.tipo : 'todos';
-  if (selConta) selConta.value = regra ? (regra.contaId || '') : '';
+  if (selConta) {
+    let valorSelConta = '';
+    if (regra && (regra.contaId || regra.contaNome)) {
+      const matchC = (STATE.contas || []).find(c =>
+        c && (
+          (regra.contaId && (String(c.id || '') === String(regra.contaId) || String(c.nome || '').toLowerCase() === String(regra.contaId).toLowerCase())) ||
+          (regra.contaNome && String(c.nome || '').toLowerCase() === String(regra.contaNome).toLowerCase())
+        )
+      );
+      valorSelConta = matchC ? String(matchC.id || matchC.nome) : String(regra.contaId || '');
+    }
+    selConta.value = valorSelConta;
+  }
   document.getElementById('regra-modal-vmin').value = (regra && regra.valorMin !== null) ? toBRL(regra.valorMin) : '';
   document.getElementById('regra-modal-vmax').value = (regra && regra.valorMax !== null) ? toBRL(regra.valorMax) : '';
   document.getElementById('regra-modal-prioridade').value = regra ? String(regra.prioridade) : '100';
@@ -18021,7 +19550,11 @@ function lerRascunhoRegraModal() {
   const padrao = String(document.getElementById('regra-modal-padrao')?.value || '').trim();
   const modoMatch = document.getElementById('regra-modal-modo')?.value || 'contem';
   const tipo = document.getElementById('regra-modal-tipo')?.value || 'todos';
-  const contaId = String(document.getElementById('regra-modal-conta')?.value || '').trim();
+  const selContaEl = document.getElementById('regra-modal-conta');
+  const contaId = String(selContaEl?.value || '').trim();
+  const contaNome = typeof resolverNomeContaParaRegra === 'function'
+    ? resolverNomeContaParaRegra(contaId, '')
+    : (selContaEl && selContaEl.selectedOptions && selContaEl.selectedOptions[0] ? String(selContaEl.selectedOptions[0].dataset?.contaNome || '').trim() : '');
   const rawMin = String(document.getElementById('regra-modal-vmin')?.value || '').trim();
   const rawMax = String(document.getElementById('regra-modal-vmax')?.value || '').trim();
   const valorMin = rawMin ? moedaToNumber(rawMin) : null;
@@ -18039,6 +19572,7 @@ function lerRascunhoRegraModal() {
     modoMatch,
     tipo,
     contaId,
+    contaNome,
     valorMin: (rawMin && Number.isFinite(valorMin)) ? valorMin : null,
     valorMax: (rawMax && Number.isFinite(valorMax)) ? valorMax : null,
     prioridade,
@@ -18097,19 +19631,23 @@ async function salvarRegraCategoriaModal() {
     return;
   }
 
+  const agoraISO = new Date().toISOString();
   if (dados.id) {
     const idx = STATE.regrasCategoria.findIndex(r => r && r.id === dados.id);
     if (idx >= 0) {
       STATE.regrasCategoria[idx] = {
         ...STATE.regrasCategoria[idx],
-        ...dados
+        ...dados,
+        atualizadoEm: agoraISO
       };
+      if (typeof limparTombstoneCerebro === 'function') limparTombstoneCerebro('regras', dados.id);
     }
   } else {
     STATE.regrasCategoria.push({
       ...dados,
       id: uid(),
-      criadaEm: new Date().toISOString(),
+      criadaEm: agoraISO,
+      atualizadoEm: agoraISO,
       usos: 0
     });
   }
@@ -18117,6 +19655,7 @@ async function salvarRegraCategoriaModal() {
   await salvarDados();
   fecharModal('modal-regra-categoria');
   renderRegrasCategoriaConfig();
+  if (typeof agendarSyncCerebroGitHub === 'function') agendarSyncCerebroGitHub('regra');
   toast('Regra de auto-categorização salva!', 'ok');
 }
 
@@ -18125,25 +19664,140 @@ async function alternarRegraCategoriaAtiva(regraId, ativa) {
   const r = STATE.regrasCategoria.find(x => x && x.id === regraId);
   if (!r) return;
   r.ativa = Boolean(ativa);
+  r.atualizadoEm = new Date().toISOString();
   await salvarDados();
   renderRegrasCategoriaConfig();
+  if (typeof agendarSyncCerebroGitHub === 'function') agendarSyncCerebroGitHub('regra');
 }
 
 async function excluirRegraCategoria(regraId) {
   normalizarRegrasCategoria();
+  const removida = STATE.regrasCategoria.find(r => r && r.id === regraId);
+  if (removida && typeof registrarTombstoneCerebro === 'function') {
+    registrarTombstoneCerebro('regras', removida.id);
+  }
   STATE.regrasCategoria = STATE.regrasCategoria.filter(r => r && r.id !== regraId);
   await salvarDados();
   renderRegrasCategoriaConfig();
+  if (typeof agendarSyncCerebroGitHub === 'function') agendarSyncCerebroGitHub('regra');
   toast('Regra excluída.', 'ok');
+}
+
+function lancamentoCobertoPorRegraReceitaExplicita(lanc, regrasAtivas) {
+  if (!lanc || lanc.tipo !== 'receita' || ehEstornoCartao(lanc)) return false;
+  const catAtual = montarCategoriaCompletaAutoCat(lanc.categoria, '');
+  const descBruta = obterDescricaoBaseAutoCat(lanc);
+  const descNorm = normalizarTextoSemAcento(descBruta);
+  const nuc = normalizarDescricaoBancaria(descBruta);
+
+  return (regrasAtivas || []).some(r => {
+    if (!r || !r.ativa || r.tipo !== 'receita') return false;
+    if (!avaliarRegraNoLancamento(r, lanc, descNorm, nuc)) return false;
+    return montarCategoriaCompletaAutoCat(r.categoria, r.subcategoria) === catAtual;
+  });
+}
+
+function executarPipelineAutoCategorizacaoEmLote({ escopo = 'pendentes', simular = false } = {}) {
+  normalizarRegrasCategoria();
+  normalizarMemoriaCategorias();
+  if (!simular && typeof normalizarLancamentosCartaoExistentes === 'function') {
+    normalizarLancamentosCartaoExistentes();
+  }
+
+  const regrasAtivas = ordenarRegrasCategoriaParaAvaliacao(
+    (STATE.regrasCategoria || []).filter(r => r && r.ativa)
+  );
+  const listaOriginal = Array.isArray(STATE.lancamentos) ? STATE.lancamentos : [];
+  const listaTrabalho = simular
+    ? listaOriginal.map(l => (l && typeof l === 'object' ? { ...l, tags: Array.isArray(l.tags) ? [...l.tags] : undefined } : l))
+    : listaOriginal;
+
+  // Etapa 1: Tratamento prévio de ruídos operacionais (PIX no Crédito + par de saída na conta)
+  const resRuido = neutralizarParesPixNoCredito(listaTrabalho);
+  const repassesNeutralizados = resRuido.neutralizados || 0;
+
+  // Etapa 2: Saneamento de violações da Trava Estrita de Tipo (ex.: despesas em "Freelance" ou estornos de cartão em categorias de receita)
+  const violadores = [];
+  for (let i = 0; i < listaTrabalho.length; i += 1) {
+    const l = listaTrabalho[i];
+    if (!l || ehLancamentoProtegidoAutoCat(l)) continue;
+    if (ehCategoriaGenericaOuPendente(l.categoria)) continue;
+    const tipoEfetivo = obterTipoEfetivoAutoCat(l);
+    if (!categoriaCompativelComTipo(l.categoria, tipoEfetivo, l)) {
+      if (lancamentoCobertoPorRegraReceitaExplicita(l, regrasAtivas)) continue;
+      violadores.push({ item: l, catAntiga: l.categoria });
+      // Limpa temporariamente para não contaminar o índice de memória histórica
+      l.categoria = CATEGORIA_A_CLASSIFICAR;
+    }
+  }
+
+  let indiceMemoria = construirIndiceMemoriaHistorica(listaTrabalho);
+  let conflitosCorrigidos = 0;
+  let classificados = 0;
+  let tagsSugeridasAplicadas = 0;
+  const processadosSaneamento = new Set();
+
+  for (let i = 0; i < violadores.length; i += 1) {
+    const { item: l } = violadores[i];
+    processadosSaneamento.add(l);
+    const res = autoClassificarLancamento(l, { indiceMemoria, regras: regrasAtivas });
+    if (res && res.origem !== 'pendente' && !ehCategoriaGenericaOuPendente(res.categoriaCompleta)) {
+      aplicarResultadoAutoCatNoLancamento(l, res, { incrementarUso: !simular });
+      classificados += 1;
+    } else {
+      l.categoria = CATEGORIA_A_CLASSIFICAR;
+      if (res && res.tag) mesclarTagNoLancamento(l, res.tag);
+      if (!simular) l.sincronizado = false;
+    }
+    conflitosCorrigidos += 1;
+  }
+
+  if (violadores.length > 0) {
+    indiceMemoria = construirIndiceMemoriaHistorica(listaTrabalho);
+  }
+
+  // Etapa 3: Funil completo (Regras -> Memória Silenciosa -> Memória por Tokens -> CNAE/Pluggy -> Dicionário BR)
+  let elegiveis = violadores.length;
+  for (let i = 0; i < listaTrabalho.length; i += 1) {
+    const l = listaTrabalho[i];
+    if (!l || ehLancamentoProtegidoAutoCat(l) || processadosSaneamento.has(l)) continue;
+    if (escopo === 'pendentes' && !ehCategoriaGenericaOuPendente(l.categoria)) continue;
+
+    elegiveis += 1;
+    const res = autoClassificarLancamento(l, { indiceMemoria, regras: regrasAtivas });
+    if (!res) continue;
+
+    if (res.origem !== 'pendente' && !ehCategoriaGenericaOuPendente(res.categoriaCompleta)) {
+      const ok = aplicarResultadoAutoCatNoLancamento(l, res, { incrementarUso: !simular });
+      if (ok) classificados += 1;
+    } else if (res.tag) {
+      if (mesclarTagNoLancamento(l, res.tag)) {
+        if (!simular) l.sincronizado = false;
+        tagsSugeridasAplicadas += 1;
+      }
+    }
+  }
+
+  return {
+    elegiveis,
+    classificados,
+    repassesNeutralizados,
+    conflitosCorrigidos,
+    tagsSugeridasAplicadas,
+    alterouAlgo: (classificados + repassesNeutralizados + conflitosCorrigidos + tagsSugeridasAplicadas) > 0
+  };
+}
+
+function formatarToastResumoAutoCat(res) {
+  if (!res || !res.alterouAlgo) {
+    return 'Nenhum lançamento pendente precisou de alteração automática.';
+  }
+  return `${res.classificados} lançamentos classificados automaticamente · ${res.repassesNeutralizados} repasses de PIX no Crédito neutralizados · ${res.conflitosCorrigidos} conflitos de tipo corrigidos`;
 }
 
 function abrirModalReprocessarRegras() {
   normalizarRegrasCategoria();
-  const ativas = STATE.regrasCategoria.filter(r => r && r.ativa);
-  if (!ativas.length) {
-    toast('Ative ou crie pelo menos uma regra antes de reprocessar.', 'err');
-    return;
-  }
+  normalizarMemoriaCategorias();
   atualizarContagemReprocessarRegras();
   abrirModal('modal-reprocessar-regras');
 }
@@ -18157,69 +19811,1082 @@ function atualizarContagemReprocessarRegras() {
   const infoEl = document.getElementById('reprocessar-preview-info');
   if (!infoEl) return;
   const escopo = obterEscopoReprocessamentoSelecionado();
-  const regrasAtivas = ordenarRegrasCategoriaParaAvaliacao((STATE.regrasCategoria || []).filter(r => r && r.ativa));
-  let elegiveis = 0;
-  let comMatch = 0;
-
-  (STATE.lancamentos || []).forEach(l => {
-    if (!l || ehLancamentoProtegidoAutoCat(l)) return;
-    if (escopo === 'pendentes' && !ehCategoriaGenericaOuPendente(l.categoria)) return;
-    elegiveis += 1;
-    const descBruta = obterDescricaoBaseAutoCat(l);
-    const descNorm = normalizarTextoSemAcento(descBruta);
-    const nuc = normalizarDescricaoBancaria(descBruta);
-    if (regrasAtivas.some(r => avaliarRegraNoLancamento(r, l, descNorm, nuc))) {
-      comMatch += 1;
-    }
-  });
-
-  infoEl.textContent = `${comMatch} de ${elegiveis} lançamento(s) elegível(is) serão atualizados pelas regras ativas.`;
+  const prev = executarPipelineAutoCategorizacaoEmLote({ escopo, simular: true });
+  infoEl.textContent = `${prev.classificados} lançamento(s) serão classificados · ${prev.repassesNeutralizados} repasse(s) PIX no Crédito neutralizado(s) · ${prev.conflitosCorrigidos} conflito(s) de tipo corrigido(s) (${prev.elegiveis} analisado(s)).`;
 }
 
 async function executarReprocessamentoRegras() {
-  normalizarRegrasCategoria();
   const escopo = obterEscopoReprocessamentoSelecionado();
-  const regrasAtivas = ordenarRegrasCategoriaParaAvaliacao(STATE.regrasCategoria.filter(r => r && r.ativa));
-  if (!regrasAtivas.length) {
-    toast('Nenhuma regra ativa para reprocessar.', 'err');
-    return;
+  const res = executarPipelineAutoCategorizacaoEmLote({ escopo, simular: false });
+
+  fecharModal('modal-reprocessar-regras');
+  if (res.alterouAlgo) {
+    await salvarDados();
+    renderRegrasCategoriaConfig();
+    if (document.getElementById('modal-triagem-categorias')?.classList.contains('open')) {
+      renderModalTriagemCategorias();
+    }
+    renderPaginaAtiva();
+    atualizarContagemTriagem();
+    sincronizarEmSegundoPlano();
+  }
+  toast(formatarToastResumoAutoCat(res), 'ok');
+  return res;
+}
+
+async function autoClassificarPendentesTriagem() {
+  const res = executarPipelineAutoCategorizacaoEmLote({ escopo: 'pendentes', simular: false });
+  if (res.alterouAlgo) {
+    await salvarDados();
+    renderModalTriagemCategorias();
+    renderPaginaAtiva();
+    if (typeof renderRegrasCategoriaConfig === 'function') renderRegrasCategoriaConfig();
+    atualizarContagemTriagem();
+    sincronizarEmSegundoPlano();
+  } else {
+    renderModalTriagemCategorias();
+  }
+  toast(formatarToastResumoAutoCat(res), 'ok');
+  return res;
+}
+
+/* ============================================================================
+ * CÉREBRO DE CATEGORIAS NA NUVEM (SINCRONIZAÇÃO BIDIRECIONAL VIA GITHUB GIST PRIVADO)
+ * ============================================================================ */
+
+let syncCerebroEmAndamento = false;
+let _timerDebounceSyncCerebro = null;
+let _syncCerebroPendenteAposAtual = false;
+let _estadoSyncCerebroUI = {
+  configurado: false,
+  status: 'nao_configurado', // 'nao_configurado' | 'sincronizando' | 'conectado' | 'erro'
+  gistId: null,
+  tokenMascarado: null,
+  ultimoSync: null,
+  erro: null
+};
+
+function normalizarMapaTombstoneSecao(mapaBruto) {
+  const limpo = {};
+  if (!mapaBruto || typeof mapaBruto !== 'object' || Array.isArray(mapaBruto)) return limpo;
+  Object.entries(mapaBruto).forEach(([k, v]) => {
+    const chave = String(k || '').trim();
+    if (!chave) return;
+    if (typeof v === 'string' && v.trim()) {
+      limpo[chave] = v.trim();
+    } else if (v && typeof v === 'object' && typeof v.excluidoEm === 'string' && v.excluidoEm.trim()) {
+      limpo[chave] = v.excluidoEm.trim();
+    }
+  });
+  return limpo;
+}
+
+function normalizarTombstonesCerebro(tombstonesOpt) {
+  const origem = tombstonesOpt !== undefined ? tombstonesOpt : STATE.tombstonesCerebro;
+  const norm = {
+    categorias: normalizarMapaTombstoneSecao(origem && origem.categorias),
+    regras: normalizarMapaTombstoneSecao(origem && origem.regras),
+    memoria: normalizarMapaTombstoneSecao(origem && origem.memoria)
+  };
+  if (tombstonesOpt === undefined) {
+    STATE.tombstonesCerebro = norm;
+  }
+  return norm;
+}
+
+function chaveTombstoneCategoria(tipo, nome) {
+  const tipoNorm = tipo === 'receita' ? 'receita' : 'despesa';
+  return `${tipoNorm}::${normalizarTextoSemAcento(nome)}`;
+}
+
+function chaveTombstoneSubcategoria(tipo, nomeMacro, nomeSub) {
+  const tipoNorm = tipo === 'receita' ? 'receita' : 'despesa';
+  return `${tipoNorm}::${normalizarTextoSemAcento(nomeMacro)}::${normalizarTextoSemAcento(nomeSub)}`;
+}
+
+function registrarTombstoneCerebro(secao, chave, tsISO) {
+  if (!secao || !chave) return;
+  const tombs = normalizarTombstonesCerebro();
+  if (!tombs[secao]) return;
+  tombs[secao][String(chave).trim()] = tsISO || new Date().toISOString();
+}
+
+function limparTombstoneCerebro(secao, chave) {
+  if (!secao || !chave) return;
+  const tombs = normalizarTombstonesCerebro();
+  if (tombs[secao] && Object.prototype.hasOwnProperty.call(tombs[secao], String(chave).trim())) {
+    delete tombs[secao][String(chave).trim()];
+  }
+}
+
+async function excluirMemoriaCategoria(chave) {
+  normalizarMemoriaCategorias();
+  const chaveLimpa = String(chave || '').trim();
+  if (!chaveLimpa) return false;
+  if (STATE.memoriaCategorias && Object.prototype.hasOwnProperty.call(STATE.memoriaCategorias, chaveLimpa)) {
+    delete STATE.memoriaCategorias[chaveLimpa];
+  }
+  registrarTombstoneCerebro('memoria', chaveLimpa);
+  await salvarDados();
+  agendarSyncCerebroGitHub('memoria');
+  return true;
+}
+
+function resolverNomeContaParaRegra(contaIdOuNome, contaNomeFallback = '') {
+  const valor = String(contaIdOuNome || '').trim();
+  const fallback = String(contaNomeFallback || '').trim();
+  if (!valor) return fallback;
+  const valorLow = valor.toLowerCase();
+  const todas = [...(STATE.contas || []), ...(STATE.cartoes || [])];
+  const achada = todas.find(c =>
+    c && (
+      (c.id && String(c.id).trim().toLowerCase() === valorLow) ||
+      (c.nome && String(c.nome).trim().toLowerCase() === valorLow)
+    )
+  );
+  if (achada && achada.nome) return String(achada.nome).trim();
+  return fallback || valor;
+}
+
+function resolverContaLocalParaRegraRemota(regra) {
+  if (!regra || typeof regra !== 'object') return { contaId: '', contaNome: '' };
+  const rawId = String(regra.contaId || '').trim();
+  const rawNome = String(regra.contaNome || '').trim();
+  if (!rawId && !rawNome) return { contaId: '', contaNome: '' };
+
+  const todas = [...(STATE.contas || []), ...(STATE.cartoes || [])];
+
+  // 1) Tenta casar pelo contaId diretamente (id ou nome)
+  if (rawId) {
+    const idLow = rawId.toLowerCase();
+    const porId = todas.find(c =>
+      c && (
+        (c.id && String(c.id).trim().toLowerCase() === idLow) ||
+        (c.nome && String(c.nome).trim().toLowerCase() === idLow)
+      )
+    );
+    if (porId) {
+      return {
+        contaId: String(porId.id || porId.nome).trim(),
+        contaNome: String(porId.nome || rawNome || rawId).trim()
+      };
+    }
   }
 
-  let atualizados = 0;
-  (STATE.lancamentos || []).forEach(l => {
-    if (!l || ehLancamentoProtegidoAutoCat(l)) return;
-    if (escopo === 'pendentes' && !ehCategoriaGenericaOuPendente(l.categoria)) return;
+  // 2) Se contaId não existir localmente, tenta remapear por contaNome (case-insensitive)
+  const alvoNome = (rawNome || rawId).toLowerCase();
+  if (alvoNome) {
+    const porNome = todas.find(c => c && c.nome && String(c.nome).trim().toLowerCase() === alvoNome);
+    if (porNome) {
+      return {
+        contaId: String(porNome.id || porNome.nome).trim(),
+        contaNome: String(porNome.nome).trim()
+      };
+    }
+  }
 
-    const descBruta = obterDescricaoBaseAutoCat(l);
-    const descNorm = normalizarTextoSemAcento(descBruta);
-    const nuc = normalizarDescricaoBancaria(descBruta);
+  return {
+    contaId: rawId,
+    contaNome: rawNome || rawId
+  };
+}
 
-    for (let i = 0; i < regrasAtivas.length; i += 1) {
-      const r = regrasAtivas[i];
-      if (avaliarRegraNoLancamento(r, l, descNorm, nuc)) {
-        const ok = aplicarResultadoAutoCatNoLancamento(l, {
-          categoria: r.categoria,
-          subcategoria: r.subcategoria,
-          categoriaCompleta: montarCategoriaCompletaAutoCat(r.categoria, r.subcategoria),
-          tag: r.tag,
-          apelidoDescricao: r.apelidoDescricao,
-          regraId: r.id
-        }, { incrementarUso: true });
-        if (ok) atualizados += 1;
-        break;
+function construirPayloadCerebroLocal() {
+  normalizarHierarquiaCategorias();
+  normalizarRegrasCategoria();
+  normalizarMemoriaCategorias();
+  const tombstones = normalizarTombstonesCerebro();
+
+  const categorias = (STATE.categorias || [])
+    .filter(c => c && c.nome)
+    .map(c => {
+      const obj = {
+        nome: String(c.nome).trim(),
+        tipo: c.tipo === 'receita' ? 'receita' : 'despesa',
+        subcategorias: Array.isArray(c.subcategorias) ? [...new Set(c.subcategorias.map(s => String(s || '').trim()).filter(Boolean))] : []
+      };
+      if (c.cor) obj.cor = String(c.cor);
+      if (c.icone) obj.icone = String(c.icone);
+      if (Number.isFinite(Number(c.orcamento)) && Number(c.orcamento) > 0) obj.orcamento = Number(c.orcamento);
+      if (c.atualizadoEm) obj.atualizadoEm = String(c.atualizadoEm);
+      return obj;
+    });
+
+  const regrasCategoria = (STATE.regrasCategoria || []).map(r => ({
+    ...r,
+    contaNome: resolverNomeContaParaRegra(r.contaId, r.contaNome),
+    atualizadoEm: String(r.atualizadoEm || r.criadaEm || '')
+  }));
+
+  const memoriaCategorias = {};
+  Object.entries(STATE.memoriaCategorias || {}).forEach(([chave, val]) => {
+    if (!chave || !val || typeof val !== 'object') return;
+    const itemMem = {
+      categoria: String(val.categoria || '').trim(),
+      subcategoria: String(val.subcategoria || '').trim(),
+      tag: String(val.tag || '').trim().replace(/^#+/, ''),
+      usos: Math.max(1, parseInt(val.usos, 10) || 1),
+      atualizadoEm: String(val.atualizadoEm || '')
+    };
+    if (val.origem) itemMem.origem = String(val.origem).trim();
+    memoriaCategorias[chave] = itemMem;
+  });
+
+  return {
+    schemaVersion: 1,
+    atualizadoEm: new Date().toISOString(),
+    categorias,
+    regrasCategoria,
+    memoriaCategorias,
+    tombstones: {
+      categorias: { ...tombstones.categorias },
+      regras: { ...tombstones.regras },
+      memoria: { ...tombstones.memoria }
+    }
+  };
+}
+
+function chaveSemanticaRegraCerebro(r) {
+  const padrao = normalizarTextoSemAcento(r && r.padrao);
+  const modo = (r && r.modoMatch) || 'contem';
+  const tipo = (r && r.tipo) || 'todos';
+  const cat = normalizarTextoSemAcento(montarCategoriaCompletaAutoCat(r && r.categoria, r && r.subcategoria));
+  return `${padrao}|${modo}|${tipo}|${cat}`;
+}
+
+function normalizarRegraParaMergeCerebro(r, ehRemota) {
+  if (!r || typeof r !== 'object' || !String(r.padrao || '').trim() || !String(r.categoria || '').trim()) return null;
+  const parsed = extrairMacroESubcategoria(r.categoria);
+  const macro = r.subcategoria ? (parsed.temSub ? parsed.macro : String(r.categoria).trim()) : parsed.macro;
+  const sub = r.subcategoria ? String(r.subcategoria).trim() : (parsed.temSub ? parsed.sub : '');
+  const modo = (r.modoMatch === 'exato' || r.modoMatch === 'comeca_com' || r.modoMatch === 'contem') ? r.modoMatch : 'contem';
+  const tipo = (r.tipo === 'despesa' || r.tipo === 'receita' || r.tipo === 'todos') ? r.tipo : 'todos';
+  const vMin = (r.valorMin !== null && r.valorMin !== undefined && r.valorMin !== '' && Number.isFinite(Number(r.valorMin))) ? Number(r.valorMin) : null;
+  const vMax = (r.valorMax !== null && r.valorMax !== undefined && r.valorMax !== '' && Number.isFinite(Number(r.valorMax))) ? Number(r.valorMax) : null;
+  const prio = Number.isFinite(Number(r.prioridade)) ? Number(r.prioridade) : 100;
+  const tagLimpa = String(r.tag || '').trim().replace(/^#+/, '');
+  const criadaEm = String(r.criadaEm || r.atualizadoEm || '');
+  const atualizadoEm = String(r.atualizadoEm || criadaEm || '');
+  const contaMapeada = ehRemota
+    ? resolverContaLocalParaRegraRemota(r)
+    : {
+        contaId: String(r.contaId || '').trim(),
+        contaNome: resolverNomeContaParaRegra(r.contaId, r.contaNome)
+      };
+
+  return {
+    id: String(r.id || uid()),
+    ativa: r.ativa !== false,
+    prioridade: prio,
+    padrao: String(r.padrao).trim(),
+    modoMatch: modo,
+    tipo,
+    contaId: contaMapeada.contaId,
+    contaNome: contaMapeada.contaNome,
+    valorMin: vMin,
+    valorMax: vMax,
+    categoria: macro,
+    subcategoria: sub,
+    tag: tagLimpa,
+    apelidoDescricao: String(r.apelidoDescricao || '').trim(),
+    criadaEm,
+    atualizadoEm,
+    usos: Math.max(0, parseInt(r.usos, 10) || 0)
+  };
+}
+
+function assinaturaCanonicaCerebro(payload, ignorarContaIdLocal = false) {
+  if (!payload || typeof payload !== 'object') return '';
+  const cats = (Array.isArray(payload.categorias) ? payload.categorias : [])
+    .filter(c => c && c.nome)
+    .map(c => ({
+      k: chaveTombstoneCategoria(c.tipo, c.nome),
+      nome: String(c.nome).trim(),
+      tipo: c.tipo === 'receita' ? 'receita' : 'despesa',
+      cor: c.cor || '',
+      icone: c.icone || '',
+      orcamento: Number.isFinite(Number(c.orcamento)) && Number(c.orcamento) > 0 ? Number(c.orcamento) : 0,
+      subs: [...new Set((Array.isArray(c.subcategorias) ? c.subcategorias : []).map(s => String(s || '').trim()).filter(Boolean))].sort((a, b) => a.localeCompare(b))
+    }))
+    .sort((a, b) => a.k.localeCompare(b.k));
+
+  const regras = (Array.isArray(payload.regrasCategoria) ? payload.regrasCategoria : [])
+    .filter(r => r && r.padrao && r.categoria)
+    .map(r => ({
+      id: String(r.id || ''),
+      ativa: r.ativa !== false,
+      prioridade: Number.isFinite(Number(r.prioridade)) ? Number(r.prioridade) : 100,
+      padrao: String(r.padrao).trim(),
+      modoMatch: r.modoMatch || 'contem',
+      tipo: r.tipo || 'todos',
+      conta: ignorarContaIdLocal
+        ? String(r.contaNome || r.contaId || '').trim().toLowerCase()
+        : `${String(r.contaId || '').trim()}|${String(r.contaNome || '').trim().toLowerCase()}`,
+      valorMin: r.valorMin ?? null,
+      valorMax: r.valorMax ?? null,
+      categoria: String(r.categoria).trim(),
+      subcategoria: String(r.subcategoria || '').trim(),
+      tag: String(r.tag || '').trim(),
+      apelidoDescricao: String(r.apelidoDescricao || '').trim(),
+      usos: Math.max(0, parseInt(r.usos, 10) || 0)
+    }))
+    .sort((a, b) => a.id.localeCompare(b.id) || a.padrao.localeCompare(b.padrao));
+
+  const memEntries = Object.entries(payload.memoriaCategorias || {})
+    .filter(([, v]) => v && typeof v === 'object' && v.categoria)
+    .map(([k, v]) => [k, {
+      categoria: String(v.categoria || '').trim(),
+      subcategoria: String(v.subcategoria || '').trim(),
+      tag: String(v.tag || '').trim(),
+      usos: Math.max(1, parseInt(v.usos, 10) || 1),
+      atualizadoEm: String(v.atualizadoEm || '')
+    }])
+    .sort((a, b) => a[0].localeCompare(b[0]));
+
+  const tombs = normalizarTombstonesCerebro(payload.tombstones || payload.tombstonesCerebro || {});
+  const tombsOrd = {
+    categorias: Object.entries(tombs.categorias).sort((a, b) => a[0].localeCompare(b[0])),
+    regras: Object.entries(tombs.regras).sort((a, b) => a[0].localeCompare(b[0])),
+    memoria: Object.entries(tombs.memoria).sort((a, b) => a[0].localeCompare(b[0]))
+  };
+
+  return JSON.stringify({ cats, regras, memEntries, tombsOrd });
+}
+
+function mesclarCerebroCategorias(localBruto, remotoBruto) {
+  const local = (localBruto && typeof localBruto === 'object')
+    ? localBruto
+    : { categorias: [], regrasCategoria: [], memoriaCategorias: {}, tombstones: {} };
+  const temRemoto = Boolean(remotoBruto && typeof remotoBruto === 'object');
+  const remoto = temRemoto
+    ? remotoBruto
+    : { categorias: [], regrasCategoria: [], memoriaCategorias: {}, tombstones: {} };
+
+  // 1) Mescla tombstones mantendo sempre o timestamp de exclusão mais recente
+  const tombsLoc = normalizarTombstonesCerebro(local.tombstones || local.tombstonesCerebro || {});
+  const tombsRem = normalizarTombstonesCerebro(remoto.tombstones || remoto.tombstonesCerebro || {});
+  const tombstones = { categorias: {}, regras: {}, memoria: {} };
+  ['categorias', 'regras', 'memoria'].forEach(secao => {
+    const todasChaves = new Set([...Object.keys(tombsLoc[secao]), ...Object.keys(tombsRem[secao])]);
+    todasChaves.forEach(k => {
+      const a = tombsLoc[secao][k] || '';
+      const b = tombsRem[secao][k] || '';
+      const vencedor = a >= b ? a : b;
+      if (vencedor) tombstones[secao][k] = vencedor;
+    });
+  });
+
+  // 2) Mescla Categorias (preservando macros e subcategorias de ambos os lados sem duplicatas + respeitando tombstones)
+  const mapaCatLocal = new Map();
+  (Array.isArray(local.categorias) ? local.categorias : []).forEach(c => {
+    if (!c || !c.nome) return;
+    const chave = chaveTombstoneCategoria(c.tipo, c.nome);
+    if (!mapaCatLocal.has(chave)) mapaCatLocal.set(chave, c);
+  });
+
+  const mapaCatRem = new Map();
+  (Array.isArray(remoto.categorias) ? remoto.categorias : []).forEach(c => {
+    if (!c || !c.nome) return;
+    const chave = chaveTombstoneCategoria(c.tipo, c.nome);
+    if (!mapaCatRem.has(chave)) mapaCatRem.set(chave, c);
+  });
+
+  const chavesCats = [...new Set([...mapaCatLocal.keys(), ...mapaCatRem.keys()])];
+  const categoriasMescladas = [];
+  let categoriasAtualizadas = 0;
+
+  chavesCats.forEach(chaveMacro => {
+    const cLoc = mapaCatLocal.get(chaveMacro) || null;
+    const cRem = mapaCatRem.get(chaveMacro) || null;
+    const tombMacro = tombstones.categorias[chaveMacro] || '';
+
+    const locSobrevive = Boolean(cLoc) && (!tombMacro || String(cLoc.atualizadoEm || '') > tombMacro);
+    const remSobrevive = Boolean(cRem) && (!tombMacro || String(cRem.atualizadoEm || '') > tombMacro);
+
+    if (!locSobrevive && !remSobrevive) {
+      if (cLoc && !locSobrevive && temRemoto) categoriasAtualizadas += 1;
+      return;
+    }
+
+    const vLoc = locSobrevive ? cLoc : null;
+    const vRem = remSobrevive ? cRem : null;
+    if (tombMacro) {
+      // Categoria foi recriada depois do tombstone
+      delete tombstones.categorias[chaveMacro];
+    }
+
+    const tsLoc = String((vLoc && vLoc.atualizadoEm) || '');
+    const tsRem = String((vRem && vRem.atualizadoEm) || '');
+    const remVenceEscalares = !vLoc || (Boolean(vRem) && tsRem > tsLoc);
+    const base = remVenceEscalares ? vRem : vLoc;
+    const outra = remVenceEscalares ? vLoc : vRem;
+
+    const nomeFinal = String(base.nome).trim();
+    const tipoFinal = base.tipo === 'receita' ? 'receita' : 'despesa';
+
+    // Mescla subcategorias por nome normalizado respeitando tombstones de subcategoria
+    const mapaSubs = new Map();
+    const avaliarSubsDe = (catFonte) => {
+      if (!catFonte || !Array.isArray(catFonte.subcategorias)) return;
+      const tsFonte = String(catFonte.atualizadoEm || '');
+      catFonte.subcategorias.forEach(subRaw => {
+        const subLimpa = String(subRaw || '').trim();
+        if (!subLimpa) return;
+        const subNorm = normalizarTextoSemAcento(subLimpa);
+        const chaveTombSub = chaveTombstoneSubcategoria(tipoFinal, nomeFinal, subLimpa);
+        const tombSub = tombstones.categorias[chaveTombSub] || '';
+        if (tombSub && tsFonte <= tombSub) return;
+        if (tombSub && tsFonte > tombSub) {
+          delete tombstones.categorias[chaveTombSub];
+        }
+        if (!mapaSubs.has(subNorm)) mapaSubs.set(subNorm, subLimpa);
+      });
+    };
+
+    // Ordem: lado vencedor primeiro para preservar capitalização mais recente
+    avaliarSubsDe(base);
+    avaliarSubsDe(outra);
+
+    const mesclada = {
+      nome: nomeFinal,
+      tipo: tipoFinal,
+      subcategorias: [...mapaSubs.values()]
+    };
+    const corFinal = base.cor || (outra && outra.cor) || undefined;
+    const iconeFinal = base.icone || (outra && outra.icone) || undefined;
+    let orcFinal;
+    if (base.orcamento !== undefined && base.orcamento !== null && Number(base.orcamento) > 0) {
+      orcFinal = Number(base.orcamento);
+    } else if (tsRem === tsLoc && outra && outra.orcamento !== undefined && outra.orcamento !== null && Number(outra.orcamento) > 0) {
+      orcFinal = Number(outra.orcamento);
+    }
+    if (corFinal) mesclada.cor = String(corFinal);
+    if (iconeFinal) mesclada.icone = String(iconeFinal);
+    if (Number.isFinite(orcFinal) && orcFinal > 0) mesclada.orcamento = orcFinal;
+    const tsFinalCat = tsRem >= tsLoc ? tsRem : tsLoc;
+    if (tsFinalCat) mesclada.atualizadoEm = tsFinalCat;
+
+    categoriasMescladas.push(mesclada);
+
+    if (vRem) {
+      if (!vLoc) {
+        categoriasAtualizadas += 1;
+      } else {
+        const subsLocSet = new Set((vLoc.subcategorias || []).map(s => normalizarTextoSemAcento(s)));
+        const mudouSub = mesclada.subcategorias.length !== subsLocSet.size
+          || mesclada.subcategorias.some(s => !subsLocSet.has(normalizarTextoSemAcento(s)));
+        const mudouMeta = (mesclada.cor || '') !== (vLoc.cor || '')
+          || (mesclada.icone || '') !== (vLoc.icone || '')
+          || (mesclada.orcamento || 0) !== (Number(vLoc.orcamento) || 0);
+        if (mudouSub || mudouMeta) categoriasAtualizadas += 1;
       }
     }
   });
 
-  fecharModal('modal-reprocessar-regras');
-  if (atualizados > 0) {
-    await salvarDados();
-    renderRegrasCategoriaConfig();
-    renderPaginaAtiva();
-    atualizarContagemTriagem();
-    sincronizarEmSegundoPlano();
-    toast(`Reprocessamento concluído: ${atualizados} lançamento(s) atualizado(s)!`, 'ok');
-  } else {
-    toast('Nenhum lançamento precisou ser alterado pelas regras ativas.', 'ok');
+  // 3) Mescla Regras de Auto-Categorização por ID + deduplicação semântica + remapeamento de contaId por contaNome
+  const regrasLocNorm = (Array.isArray(local.regrasCategoria) ? local.regrasCategoria : [])
+    .map(r => normalizarRegraParaMergeCerebro(r, false))
+    .filter(Boolean);
+  const regrasRemNorm = (Array.isArray(remoto.regrasCategoria) ? remoto.regrasCategoria : [])
+    .map(r => normalizarRegraParaMergeCerebro(r, true))
+    .filter(Boolean);
+
+  const porIdRegra = new Map();
+  const idsRegrasLocaisAntes = new Map();
+
+  regrasLocNorm.forEach(r => {
+    idsRegrasLocaisAntes.set(r.id, r);
+    const tomb = tombstones.regras[r.id] || '';
+    const ts = r.atualizadoEm || r.criadaEm || '';
+    if (tomb && ts < tomb) return;
+    if (tomb && ts > tomb) delete tombstones.regras[r.id];
+    porIdRegra.set(r.id, { regra: r, veioRemoto: false });
+  });
+
+  regrasRemNorm.forEach(rRem => {
+    const tomb = tombstones.regras[rRem.id] || '';
+    const tsRem = rRem.atualizadoEm || rRem.criadaEm || '';
+    if (tomb && tsRem < tomb) return;
+    if (tomb && tsRem > tomb) delete tombstones.regras[rRem.id];
+
+    const existente = porIdRegra.get(rRem.id);
+    if (!existente) {
+      porIdRegra.set(rRem.id, { regra: rRem, veioRemoto: true });
+    } else {
+      const rLoc = existente.regra;
+      const tsLoc = rLoc.atualizadoEm || rLoc.criadaEm || '';
+      const usosMax = Math.max(Number(rLoc.usos) || 0, Number(rRem.usos) || 0);
+      if (tsRem > tsLoc) {
+        porIdRegra.set(rRem.id, {
+          regra: { ...rRem, usos: usosMax },
+          veioRemoto: true
+        });
+      } else {
+        porIdRegra.set(rRem.id, {
+          regra: { ...rLoc, usos: usosMax, contaNome: rLoc.contaNome || rRem.contaNome || '' },
+          veioRemoto: usosMax > (Number(rLoc.usos) || 0)
+        });
+      }
+    }
+  });
+
+  // Deduplicação semântica (padrao + modoMatch + tipo + categoria/subcategoria)
+  const porSemantica = new Map();
+  porIdRegra.forEach(({ regra, veioRemoto }) => {
+    const chaveSem = chaveSemanticaRegraCerebro(regra);
+    const prev = porSemantica.get(chaveSem);
+    if (!prev) {
+      porSemantica.set(chaveSem, { regra, veioRemoto });
+      return;
+    }
+    const tsPrev = prev.regra.atualizadoEm || prev.regra.criadaEm || '';
+    const tsAtual = regra.atualizadoEm || regra.criadaEm || '';
+    const usosMax = Math.max(Number(prev.regra.usos) || 0, Number(regra.usos) || 0);
+    if (tsAtual > tsPrev) {
+      porSemantica.set(chaveSem, {
+        regra: { ...regra, usos: usosMax },
+        veioRemoto: veioRemoto || prev.veioRemoto
+      });
+    } else {
+      porSemantica.set(chaveSem, {
+        regra: { ...prev.regra, usos: usosMax },
+        veioRemoto: prev.veioRemoto || (usosMax > (Number(prev.regra.usos) || 0))
+      });
+    }
+  });
+
+  const regrasMescladas = [];
+  let regrasAtualizadas = 0;
+  porSemantica.forEach(({ regra, veioRemoto }) => {
+    regrasMescladas.push(regra);
+    if (veioRemoto) {
+      const ant = idsRegrasLocaisAntes.get(regra.id);
+      if (!ant || JSON.stringify({ ...ant, contaId: '' }) !== JSON.stringify({ ...regra, contaId: '' })) {
+        regrasAtualizadas += 1;
+      }
+    }
+  });
+  // Conta regras locais removidas via tombstone vindo do remoto
+  idsRegrasLocaisAntes.forEach((_rAnt, rid) => {
+    if (!regrasMescladas.some(r => r.id === rid) && tombsRem.regras[rid]) {
+      regrasAtualizadas += 1;
+    }
+  });
+
+  // 4) Mescla Memória Silenciosa (tipo::nucleo) por timestamp mais recente + tombstones
+  const memLoc = (local.memoriaCategorias && typeof local.memoriaCategorias === 'object') ? local.memoriaCategorias : {};
+  const memRem = (remoto.memoriaCategorias && typeof remoto.memoriaCategorias === 'object') ? remoto.memoriaCategorias : {};
+  const todasChavesMem = new Set([...Object.keys(memLoc), ...Object.keys(memRem)]);
+  const memoriaMesclada = {};
+  let memoriasAtualizadas = 0;
+
+  todasChavesMem.forEach(chave => {
+    const mLoc = (memLoc[chave] && typeof memLoc[chave] === 'object' && memLoc[chave].categoria) ? memLoc[chave] : null;
+    const mRem = (memRem[chave] && typeof memRem[chave] === 'object' && memRem[chave].categoria) ? memRem[chave] : null;
+    const tomb = tombstones.memoria[chave] || '';
+
+    const locValido = Boolean(mLoc) && (!tomb || String(mLoc.atualizadoEm || '') > tomb);
+    const remValido = Boolean(mRem) && (!tomb || String(mRem.atualizadoEm || '') > tomb);
+
+    if (!locValido && !remValido) {
+      if (mLoc && !locValido && tombsRem.memoria[chave]) memoriasAtualizadas += 1;
+      return;
+    }
+
+    if (tomb) delete tombstones.memoria[chave];
+
+    const vLoc = locValido ? mLoc : null;
+    const vRem = remValido ? mRem : null;
+    const tsLoc = String((vLoc && vLoc.atualizadoEm) || '');
+    const tsRem = String((vRem && vRem.atualizadoEm) || '');
+
+    if (vRem && (!vLoc || tsRem > tsLoc)) {
+      const usosMax = Math.max(parseInt(vLoc && vLoc.usos, 10) || 1, parseInt(vRem.usos, 10) || 1);
+      const itemMem = {
+        categoria: String(vRem.categoria || '').trim(),
+        subcategoria: String(vRem.subcategoria || '').trim(),
+        tag: String(vRem.tag || '').trim().replace(/^#+/, ''),
+        usos: usosMax,
+        atualizadoEm: tsRem || new Date().toISOString()
+      };
+      if (vRem.origem) itemMem.origem = String(vRem.origem).trim();
+      memoriaMesclada[chave] = itemMem;
+      if (
+        !vLoc ||
+        vLoc.categoria !== memoriaMesclada[chave].categoria ||
+        (vLoc.subcategoria || '') !== memoriaMesclada[chave].subcategoria ||
+        (vLoc.tag || '') !== memoriaMesclada[chave].tag
+      ) {
+        memoriasAtualizadas += 1;
+      }
+    } else if (vLoc) {
+      const usosMax = Math.max(parseInt(vLoc.usos, 10) || 1, parseInt(vRem && vRem.usos, 10) || 1);
+      const itemMem = {
+        categoria: String(vLoc.categoria || '').trim(),
+        subcategoria: String(vLoc.subcategoria || '').trim(),
+        tag: String(vLoc.tag || '').trim().replace(/^#+/, ''),
+        usos: usosMax,
+        atualizadoEm: tsLoc || new Date().toISOString()
+      };
+      if (vLoc.origem) itemMem.origem = String(vLoc.origem).trim();
+      memoriaMesclada[chave] = itemMem;
+    }
+  });
+
+  const mesclado = {
+    schemaVersion: 1,
+    atualizadoEm: new Date().toISOString(),
+    categorias: categoriasMescladas,
+    regrasCategoria: regrasMescladas,
+    memoriaCategorias: memoriaMesclada,
+    tombstones
+  };
+
+  const sigLocal = assinaturaCanonicaCerebro(local, false);
+  const sigMescladoLocal = assinaturaCanonicaCerebro(mesclado, false);
+  const sigRemoto = temRemoto ? assinaturaCanonicaCerebro(remoto, true) : '';
+  const sigMescladoRemoto = assinaturaCanonicaCerebro(mesclado, true);
+
+  const houveAlteracaoLocal = sigLocal !== sigMescladoLocal;
+  const houveAlteracaoRemota = !temRemoto || (sigRemoto !== sigMescladoRemoto);
+  const novidadesRecebidas = categoriasAtualizadas + regrasAtualizadas + memoriasAtualizadas;
+
+  return {
+    mesclado,
+    novidadesRecebidas,
+    categoriasAtualizadas,
+    regrasAtualizadas,
+    memoriasAtualizadas,
+    houveAlteracaoRemota,
+    houveAlteracaoLocal
+  };
+}
+
+function formatarHoraCurtaHHMM(isoOuDate) {
+  try {
+    const dt = isoOuDate ? new Date(isoOuDate) : new Date();
+    if (Number.isNaN(dt.getTime())) return '';
+    return `${String(dt.getHours()).padStart(2, '0')}:${String(dt.getMinutes()).padStart(2, '0')}`;
+  } catch (e) {
+    return '';
+  }
+}
+
+function atualizarUISyncCerebroGist() {
+  const badge = document.getElementById('gist-sync-status-badge');
+  const btnSync = document.getElementById('btn-gist-sync-agora');
+  const metaBar = document.getElementById('gist-sync-meta-bar');
+  const idDisplay = document.getElementById('gist-sync-id-display');
+  const tokDisplay = document.getElementById('gist-sync-token-display');
+  const btnCopiar = document.getElementById('btn-gist-copiar-id');
+
+  const st = _estadoSyncCerebroUI;
+  const ultimoISO = st.ultimoSync || (STATE.config && STATE.config.ultimoSyncCerebroGitHub) || null;
+  const horaFmt = ultimoISO ? formatarHoraCurtaHHMM(ultimoISO) : '';
+
+  if (badge) {
+    badge.className = 'badge gist-status-badge';
+    if (!st.configurado) {
+      badge.classList.add('gist-status-idle');
+      badge.textContent = 'Não configurado';
+      badge.title = 'Configure seu Personal Access Token no .env para ativar a sincronização.';
+    } else if (st.status === 'sincronizando') {
+      badge.classList.add('gist-status-syncing');
+      badge.textContent = 'Sincronizando...';
+      badge.title = 'Sincronizando categorias, regras e memória com o GitHub Gist Privado...';
+    } else if (st.status === 'erro') {
+      badge.classList.add('gist-status-err');
+      badge.textContent = 'Offline / Erro';
+      badge.title = st.erro || 'Falha na última sincronização com o GitHub Gist.';
+    } else {
+      badge.classList.add('gist-status-ok');
+      badge.textContent = horaFmt ? `Conectado · Sincronizado às ${horaFmt}` : 'Conectado';
+      badge.title = st.gistId ? `Gist privado conectado: ${st.gistId}` : 'Conectado ao GitHub (Gist será criado na primeira sincronização)';
+    }
+  }
+
+  if (btnSync) {
+    btnSync.disabled = !st.configurado || st.status === 'sincronizando';
+  }
+
+  if (metaBar) {
+    if (st.configurado) {
+      metaBar.classList.remove('oculto');
+      if (idDisplay) {
+        idDisplay.textContent = st.gistId || 'Aguardando 1ª sincronização';
+        idDisplay.title = st.gistId ? `Gist ID: ${st.gistId}` : 'O Gist privado será criado ou localizado automaticamente';
+      }
+      if (tokDisplay) {
+        tokDisplay.textContent = st.tokenMascarado ? `· Token: ${st.tokenMascarado}` : '';
+      }
+      if (btnCopiar) {
+        btnCopiar.disabled = !st.gistId;
+      }
+    } else {
+      metaBar.classList.add('oculto');
+    }
+  }
+}
+
+async function atualizarStatusGistDoBackend() {
+  if (!window.electronAPI || typeof window.electronAPI.gistStatus !== 'function') {
+    _estadoSyncCerebroUI.configurado = false;
+    _estadoSyncCerebroUI.status = 'nao_configurado';
+    atualizarUISyncCerebroGist();
+    return { ok: false, configurado: false, gistId: null, tokenMascarado: null };
+  }
+  try {
+    const res = await window.electronAPI.gistStatus();
+    _estadoSyncCerebroUI.configurado = Boolean(res && res.configurado);
+    _estadoSyncCerebroUI.gistId = (res && res.gistId) || null;
+    _estadoSyncCerebroUI.tokenMascarado = (res && res.tokenMascarado) || null;
+    if (!_estadoSyncCerebroUI.configurado) {
+      _estadoSyncCerebroUI.status = 'nao_configurado';
+      _estadoSyncCerebroUI.erro = null;
+    } else if (_estadoSyncCerebroUI.status === 'nao_configurado') {
+      _estadoSyncCerebroUI.status = 'conectado';
+    }
+    atualizarUISyncCerebroGist();
+    return res;
+  } catch (e) {
+    return { ok: false, configurado: false, gistId: null, tokenMascarado: null };
+  }
+}
+
+function oferecerReprocessamentoPosSyncCerebro(novidadesRecebidas, qtdPendentes) {
+  const el = document.getElementById('toast-aprendizado-regra');
+  const msgEl = document.getElementById('toast-aprendizado-msg');
+  const actEl = document.getElementById('toast-aprendizado-actions');
+  if (!el || !msgEl || !actEl) {
+    toast(`${novidadesRecebidas} regra(s)/categoria(s) recebida(s) do GitHub.`, 'ok');
+    return;
+  }
+
+  msgEl.innerHTML = `<strong>${novidadesRecebidas}</strong> regra(s)/categoria(s) recebida(s) do GitHub. Reprocessar <strong>${qtdPendentes}</strong> lançamento(s) pendente(s) agora?`;
+  actEl.innerHTML = `
+    <button type="button" class="btn btn-sm btn-primary" onclick="executarReprocessamentoPosSyncCerebro()">
+      <i class="ti ti-wand"></i> Reprocessar pendentes agora
+    </button>
+    <button type="button" class="btn btn-sm" onclick="fecharToastAprendizadoRegra()">Depois</button>
+  `;
+  el.classList.remove('oculto');
+  clearTimeout(_aprendizadoRegraTimer);
+  _aprendizadoRegraTimer = setTimeout(() => fecharToastAprendizadoRegra(), 15000);
+}
+
+async function executarReprocessamentoPosSyncCerebro() {
+  fecharToastAprendizadoRegra();
+  return autoClassificarPendentesTriagem();
+}
+
+async function sincronizarCerebroGitHub({ silencioso = false, motivo = 'manual' } = {}) {
+  if (!window.electronAPI || typeof window.electronAPI.gistPull !== 'function' || typeof window.electronAPI.gistPush !== 'function') {
+    if (!silencioso) toast('A sincronização via GitHub Gist (.env) está disponível no app desktop Electron.', 'err');
+    return { ok: false, naoSuportado: true };
+  }
+
+  if (syncCerebroEmAndamento) {
+    if (motivo !== 'startup') _syncCerebroPendenteAposAtual = true;
+    return { ok: false, emAndamento: true };
+  }
+
+  syncCerebroEmAndamento = true;
+  const statusAnterior = _estadoSyncCerebroUI.status;
+  _estadoSyncCerebroUI.status = 'sincronizando';
+  _estadoSyncCerebroUI.erro = null;
+  atualizarUISyncCerebroGist();
+
+  try {
+    const novasHidratadas = hidratarMemoriaDoHistorico();
+    if (novasHidratadas > 0) {
+      try { persistirStateNoLocalStorage(); } catch (e) {}
+    }
+
+    const pullRes = await window.electronAPI.gistPull();
+    if (!pullRes || pullRes.naoConfigurado) {
+      _estadoSyncCerebroUI.configurado = false;
+      _estadoSyncCerebroUI.status = 'nao_configurado';
+      _estadoSyncCerebroUI.gistId = null;
+      atualizarUISyncCerebroGist();
+      if (!silencioso) toast('Configure seu Personal Access Token do GitHub (.env) antes de sincronizar.', 'err');
+      return { ok: false, naoConfigurado: true };
+    }
+
+    if (!pullRes.ok) {
+      _estadoSyncCerebroUI.configurado = true;
+      _estadoSyncCerebroUI.status = 'erro';
+      _estadoSyncCerebroUI.erro = pullRes.erro || 'Falha ao consultar GitHub Gist.';
+      atualizarUISyncCerebroGist();
+      if (!silencioso) toast(pullRes.erro || 'Não foi possível sincronizar com o GitHub Gist.', 'err');
+      return pullRes;
+    }
+
+    _estadoSyncCerebroUI.configurado = true;
+    if (pullRes.gistId) _estadoSyncCerebroUI.gistId = pullRes.gistId;
+
+    const payloadLocal = construirPayloadCerebroLocal();
+    const payloadRemoto = (pullRes.encontrado && pullRes.payload && typeof pullRes.payload === 'object')
+      ? pullRes.payload
+      : null;
+
+    const mergeRes = mesclarCerebroCategorias(payloadLocal, payloadRemoto);
+
+    if (mergeRes.houveAlteracaoLocal) {
+      STATE.categorias = mergeRes.mesclado.categorias;
+      STATE.regrasCategoria = mergeRes.mesclado.regrasCategoria;
+      STATE.memoriaCategorias = mergeRes.mesclado.memoriaCategorias;
+      STATE.tombstonesCerebro = mergeRes.mesclado.tombstones;
+      normalizarHierarquiaCategorias();
+      normalizarRegrasCategoria();
+      normalizarMemoriaCategorias();
+      normalizarTombstonesCerebro();
+      await salvarDados();
+      if (typeof renderRegrasCategoriaConfig === 'function') renderRegrasCategoriaConfig();
+      if (document.getElementById('page-config')?.classList.contains('active')) renderConfig();
+      else renderPaginaAtiva();
+      if (typeof atualizarContagemTriagem === 'function') atualizarContagemTriagem();
+    }
+
+    let gistIdFinal = pullRes.gistId || _estadoSyncCerebroUI.gistId || null;
+    let pushEnviado = false;
+
+    if (!pullRes.encontrado || mergeRes.houveAlteracaoRemota) {
+      const payloadParaPush = {
+        ...mergeRes.mesclado,
+        schemaVersion: 1,
+        atualizadoEm: new Date().toISOString()
+      };
+      const pushRes = await window.electronAPI.gistPush(payloadParaPush);
+      if (!pushRes || !pushRes.ok) {
+        _estadoSyncCerebroUI.status = 'erro';
+        _estadoSyncCerebroUI.erro = (pushRes && pushRes.erro) || 'Falha ao enviar dados ao GitHub Gist.';
+        atualizarUISyncCerebroGist();
+        if (!silencioso) toast(_estadoSyncCerebroUI.erro, 'err');
+        return pushRes || { ok: false, erro: _estadoSyncCerebroUI.erro };
+      }
+      pushEnviado = true;
+      if (pushRes.gistId) gistIdFinal = pushRes.gistId;
+    }
+
+    const agoraISO = new Date().toISOString();
+    if (!STATE.config) STATE.config = {};
+    STATE.config.ultimoSyncCerebroGitHub = agoraISO;
+    try { persistirStateNoLocalStorage(); } catch (e) {}
+
+    _estadoSyncCerebroUI.gistId = gistIdFinal;
+    _estadoSyncCerebroUI.ultimoSync = agoraISO;
+    _estadoSyncCerebroUI.status = 'conectado';
+    _estadoSyncCerebroUI.erro = null;
+    atualizarUISyncCerebroGist();
+
+    const qtdPendentes = typeof obterLancamentosPendentesTriagem === 'function'
+      ? obterLancamentosPendentesTriagem().length
+      : 0;
+
+    if (mergeRes.novidadesRecebidas > 0 && qtdPendentes > 0) {
+      oferecerReprocessamentoPosSyncCerebro(mergeRes.novidadesRecebidas, qtdPendentes);
+    } else if (!silencioso) {
+      toast(
+        `Sincronizado · ${mergeRes.regrasAtualizadas} regra(s) e ${mergeRes.memoriasAtualizadas} memória(s) atualizadas`,
+        'ok'
+      );
+    }
+
+    return {
+      ok: true,
+      gistId: gistIdFinal,
+      pushEnviado,
+      ...mergeRes
+    };
+  } catch (err) {
+    _estadoSyncCerebroUI.status = statusAnterior === 'nao_configurado' ? 'nao_configurado' : 'erro';
+    _estadoSyncCerebroUI.erro = (err && err.message) || 'Erro inesperado na sincronização GitHub Gist.';
+    atualizarUISyncCerebroGist();
+    if (!silencioso) toast(_estadoSyncCerebroUI.erro, 'err');
+    return { ok: false, erro: _estadoSyncCerebroUI.erro };
+  } finally {
+    syncCerebroEmAndamento = false;
+    if (_syncCerebroPendenteAposAtual) {
+      _syncCerebroPendenteAposAtual = false;
+      agendarSyncCerebroGitHub('pendente');
+    }
+  }
+}
+
+function agendarSyncCerebroGitHub(motivo = 'auto') {
+  if (!window.electronAPI || typeof window.electronAPI.gistPull !== 'function') return;
+  if (!_estadoSyncCerebroUI.configurado) return;
+  clearTimeout(_timerDebounceSyncCerebro);
+  _timerDebounceSyncCerebro = setTimeout(() => {
+    _timerDebounceSyncCerebro = null;
+    if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+      _estadoSyncCerebroUI.status = 'erro';
+      _estadoSyncCerebroUI.erro = 'Sem conexão com a internet (sincronizará automaticamente ao reconectar).';
+      atualizarUISyncCerebroGist();
+      return;
+    }
+    sincronizarCerebroGitHub({ silencioso: true, motivo }).catch(() => {});
+  }, 5000);
+}
+
+async function inicializarSyncCerebroGitHub() {
+  const st = await atualizarStatusGistDoBackend();
+  if (!window._cofinGistOnlineBound && typeof window.addEventListener === 'function') {
+    window._cofinGistOnlineBound = true;
+    window.addEventListener('online', () => {
+      if (_estadoSyncCerebroUI.configurado) {
+        sincronizarCerebroGitHub({ silencioso: true, motivo: 'reconnect' }).catch(() => {});
+      }
+    });
+  }
+  if (st && st.configurado) {
+    // Executa em segundo plano sem travar a abertura do aplicativo
+    setTimeout(() => {
+      sincronizarCerebroGitHub({ silencioso: true, motivo: 'startup' }).catch(() => {});
+    }, 600);
+  }
+}
+
+async function abrirModalConfigGist() {
+  if (!window.electronAPI || typeof window.electronAPI.gistStatus !== 'function') {
+    toast('A configuração do GitHub Gist (.env) está disponível apenas no app desktop Electron.', 'err');
+    return;
+  }
+  const st = await atualizarStatusGistDoBackend();
+  const inpToken = document.getElementById('gist-modal-token');
+  const inpId = document.getElementById('gist-modal-id');
+  const hintTok = document.getElementById('gist-modal-token-hint');
+  const fb = document.getElementById('gist-modal-feedback');
+  const btnDesc = document.getElementById('btn-gist-desconectar');
+
+  if (inpToken) {
+    inpToken.value = '';
+    inpToken.placeholder = st && st.configurado && st.tokenMascarado
+      ? `Atual: ${st.tokenMascarado} (deixe vazio para manter)`
+      : 'ghp_... ou github_pat_...';
+  }
+  if (inpId) inpId.value = (st && st.gistId) || '';
+  if (hintTok) {
+    hintTok.innerHTML = st && st.configurado
+      ? 'Token já gravado com segurança no <code>.env</code>. Informe um novo token apenas se desejar substituí-lo.'
+      : 'Gere em GitHub → Settings → Developer settings → Personal access tokens marcando apenas a permissão <code>gist</code>.';
+  }
+  if (fb) {
+    fb.className = 'gist-modal-feedback oculto';
+    fb.textContent = '';
+  }
+  if (btnDesc) {
+    btnDesc.classList.toggle('oculto', !(st && st.configurado));
+  }
+  abrirModal('modal-config-gist');
+}
+
+async function salvarCredenciaisGistModal() {
+  if (!window.electronAPI || typeof window.electronAPI.gistSalvarCredenciais !== 'function') {
+    toast('IPC do GitHub Gist indisponível.', 'err');
+    return;
+  }
+  const inpToken = document.getElementById('gist-modal-token');
+  const inpId = document.getElementById('gist-modal-id');
+  const fb = document.getElementById('gist-modal-feedback');
+  const btnSalvar = document.getElementById('btn-gist-salvar');
+
+  const token = String(inpToken ? inpToken.value : '').trim();
+  const gistId = String(inpId ? inpId.value : '').trim();
+
+  if (!token && !_estadoSyncCerebroUI.configurado) {
+    if (fb) {
+      fb.className = 'gist-modal-feedback erro';
+      fb.textContent = 'Informe o Personal Access Token do GitHub (com escopo gist).';
+    }
+    return;
+  }
+
+  if (btnSalvar) {
+    btnSalvar.disabled = true;
+    btnSalvar.innerHTML = '<i class="ti ti-loader-2"></i> Validando...';
+  }
+  if (fb) {
+    fb.className = 'gist-modal-feedback';
+    fb.textContent = 'Validando token diretamente na API do GitHub...';
+  }
+
+  try {
+    const res = await window.electronAPI.gistSalvarCredenciais({ token, gistId });
+    if (!res || !res.ok) {
+      if (fb) {
+        fb.className = 'gist-modal-feedback erro';
+        fb.textContent = (res && res.erro) || 'Falha ao validar e salvar credenciais.';
+      }
+      return;
+    }
+
+    _estadoSyncCerebroUI.configurado = true;
+    _estadoSyncCerebroUI.gistId = res.gistId || null;
+    _estadoSyncCerebroUI.tokenMascarado = res.tokenMascarado || null;
+    _estadoSyncCerebroUI.status = 'conectado';
+    _estadoSyncCerebroUI.erro = null;
+    if (inpToken) inpToken.value = '';
+    atualizarUISyncCerebroGist();
+    fecharModal('modal-config-gist');
+    toast(
+      `GitHub conectado${res.usuario ? ` (@${res.usuario})` : ''}! Iniciando sincronização do Cérebro de Categorias...`,
+      'ok'
+    );
+    await sincronizarCerebroGitHub({ silencioso: false, motivo: 'config' });
+  } catch (err) {
+    if (fb) {
+      fb.className = 'gist-modal-feedback erro';
+      fb.textContent = (err && err.message) || 'Erro ao comunicar com o processo principal.';
+    }
+  } finally {
+    if (btnSalvar) {
+      btnSalvar.disabled = false;
+      btnSalvar.innerHTML = '<i class="ti ti-shield-check"></i> Validar e Salvar';
+    }
+  }
+}
+
+async function desconectarGistCerebro() {
+  if (!window.electronAPI || typeof window.electronAPI.gistRemoverCredenciais !== 'function') return;
+  clearTimeout(_timerDebounceSyncCerebro);
+  const res = await window.electronAPI.gistRemoverCredenciais();
+  if (!res || !res.ok) {
+    toast((res && res.erro) || 'Não foi possível desconectar o GitHub Gist.', 'err');
+    return;
+  }
+  _estadoSyncCerebroUI = {
+    configurado: false,
+    status: 'nao_configurado',
+    gistId: null,
+    tokenMascarado: null,
+    ultimoSync: null,
+    erro: null
+  };
+  atualizarUISyncCerebroGist();
+  fecharModal('modal-config-gist');
+  toast('GitHub Gist desconectado e credenciais removidas do arquivo .env.', 'ok');
+}
+
+async function copiarGistIdCerebro() {
+  const id = _estadoSyncCerebroUI && _estadoSyncCerebroUI.gistId;
+  if (!id) {
+    toast('Nenhum Gist ID conectado ainda.', 'info');
+    return;
+  }
+  try {
+    if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
+      await navigator.clipboard.writeText(id);
+    } else {
+      const ta = document.createElement('textarea');
+      ta.value = id;
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand('copy');
+      ta.remove();
+    }
+    toast(`Gist ID copiado: ${id}`, 'ok');
+  } catch (e) {
+    toast(`Gist ID: ${id}`, 'info');
   }
 }

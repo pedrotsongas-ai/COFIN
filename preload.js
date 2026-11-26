@@ -18,7 +18,12 @@ const ALLOWED_INVOKE_CHANNELS = new Set([
   'pluggy:openConnectInBrowser',
   'pluggy:fetchAccounts',
   'pluggy:fetchTransactions',
-  'pluggy:syncItem'
+  'pluggy:syncItem',
+  'gist:status',
+  'gist:salvarCredenciais',
+  'gist:removerCredenciais',
+  'gist:pull',
+  'gist:push'
 ]);
 
 const ALLOWED_SEND_CHANNELS = new Set([
@@ -99,7 +104,14 @@ const electronAPI = Object.freeze({
   sincronizarItemPluggy: (params) => invokeAllowlisted('pluggy:syncItem', params),
   pluggyFetchAccounts: (params) => invokeAllowlisted('pluggy:fetchAccounts', params),
   pluggyFetchTransactions: (params) => invokeAllowlisted('pluggy:fetchTransactions', params),
-  pluggySyncItem: (params) => invokeAllowlisted('pluggy:syncItem', params)
+  pluggySyncItem: (params) => invokeAllowlisted('pluggy:syncItem', params),
+
+  // Sincronização do Cérebro de Categorias (GitHub Gist Privado via .env)
+  gistStatus: () => invokeAllowlisted('gist:status'),
+  gistSalvarCredenciais: (params) => invokeAllowlisted('gist:salvarCredenciais', params),
+  gistRemoverCredenciais: () => invokeAllowlisted('gist:removerCredenciais'),
+  gistPull: () => invokeAllowlisted('gist:pull'),
+  gistPush: (payloadJson) => invokeAllowlisted('gist:push', payloadJson)
 });
 
 if (process.contextIsolated) {

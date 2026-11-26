@@ -2,13 +2,13 @@
   <img src="cofin-icon.svg" alt="COFIN Logo" width="84" height="84" />
   <h1>COFIN — Controle Financeiro Pessoal & Familiar</h1>
   <p>
-    <strong>Aplicativo Desktop Offline-First em Electron</strong> com Motor de Auto-Categorização em 4 Camadas com Aprendizado,
-    Open Finance Híbrido (Pluggy v2 + OFX Drag &amp; Drop), integração Make.com + OneDrive, sincronização familiar P2P em rede local,
-    OCR nativo, Shadow Vault e atualizações OTA via GitHub Releases.
+    <strong>Aplicativo Desktop Offline-First em Electron</strong> com Motor de Auto-Categorização v2 (CNAE + Aprendizado Silencioso),
+    Cérebro de Categorias na Nuvem via GitHub Gist Privado, Open Finance Híbrido (Pluggy v2 + OFX Drag &amp; Drop),
+    integração Make.com + OneDrive, sincronização familiar P2P em rede local, OCR nativo, Shadow Vault e atualizações OTA via GitHub Releases.
   </p>
 
   <p>
-    <img src="https://img.shields.io/badge/vers%C3%A3o-1.6.0-1A6FE0?style=for-the-badge" alt="Versão 1.6.0" />
+    <img src="https://img.shields.io/badge/vers%C3%A3o-1.7.0-1A6FE0?style=for-the-badge" alt="Versão 1.7.0" />
     <img src="https://img.shields.io/badge/Electron-32.0-47848F?style=for-the-badge&logo=electron&logoColor=white" alt="Electron 32" />
     <img src="https://img.shields.io/badge/Windows-NSIS%20Installer-0078D6?style=for-the-badge&logo=windows&logoColor=white" alt="Windows NSIS" />
     <img src="https://img.shields.io/badge/CI%2FCD-GitHub%20Actions-2088FF?style=for-the-badge&logo=github-actions&logoColor=white" alt="GitHub Actions" />
@@ -20,31 +20,39 @@
 
 ## Sumário
 
-1. [Novidades da v1.6.0](#1-novidades-da-v160)
+1. [Novidades da v1.7.0](#1-novidades-da-v170)
 2. [Instalação e Primeiros Passos](#2-instalação-e-primeiros-passos)
 3. [Guia Passo a Passo de Uso do Painel](#3-guia-passo-a-passo-de-uso-do-painel)
-4. [Motor de Auto-Categorização com Aprendizado](#4-motor-de-auto-categorização-com-aprendizado)
-5. [Como Conectar no Pluggy (Open Finance)](#5-como-conectar-no-pluggy-open-finance)
-6. [Como Conectar no Make.com (Gravação Automática em Planilha)](#6-como-conectar-no-makecom-gravação-automática-em-planilha)
-7. [Como Conectar no OneDrive (Leitura & Sincronização)](#7-como-conectar-no-onedrive-leitura--sincronização)
-8. [Drag & Drop para Extratos (.OFX) e Comprovantes (OCR)](#8-drag--drop-para-extratos-ofx-e-comprovantes-ocr)
-9. [Sincronização Familiar P2P, Shadow Vault e Segurança](#9-sincronização-familiar-p2p-shadow-vault-e-segurança)
-10. [Atalhos de Teclado](#10-atalhos-de-teclado)
-11. [Desenvolvimento, Build e Publicação OTA](#11-desenvolvimento-build-e-publicação-ota)
+4. [Motor de Auto-Categorização v2 com Aprendizado](#4-motor-de-auto-categorização-v2-com-aprendizado)
+5. [Cérebro de Categorias na Nuvem (GitHub Gist Privado)](#5-cérebro-de-categorias-na-nuvem-github-gist-privado)
+6. [Como Conectar no Pluggy (Open Finance)](#6-como-conectar-no-pluggy-open-finance)
+7. [Como Conectar no Make.com (Gravação Automática em Planilha)](#7-como-conectar-no-makecom-gravação-automática-em-planilha)
+8. [Como Conectar no OneDrive (Leitura & Sincronização)](#8-como-conectar-no-onedrive-leitura--sincronização)
+9. [Drag & Drop para Extratos (.OFX) e Comprovantes (OCR)](#9-drag--drop-para-extratos-ofx-e-comprovantes-ocr)
+10. [Sincronização Familiar P2P, Shadow Vault e Segurança](#10-sincronização-familiar-p2p-shadow-vault-e-segurança)
+11. [Atalhos de Teclado](#11-atalhos-de-teclado)
+12. [Desenvolvimento, Build e Publicação OTA](#12-desenvolvimento-build-e-publicação-ota)
 
 ---
 
-## 1. Novidades da v1.6.0
+## 1. Novidades da v1.7.0
 
-* **Drill-Down Interativo no Dashboard e Relatórios:** Clique em KPIs, Contas Bancárias, Cartões de Crédito, barras do gráfico de 6 meses, Top 3 Gastos, Anti-Metas, Pendentes e gráficos de Relatórios para ir direto à aba **Lançamentos** com os filtros já aplicados e banner de limpeza em 1 clique.
-* **Alternador "Por Data | Por Fatura" & Tag Discreta de Fatura:** A aba **Lançamentos** passa a filtrar pela data real (`l.data`) por padrão (em Tabela, Cards e Calendário), com opção rápida para auditar **Por Fatura** e selo discreto (ex.: `Fat. Dez/26`) em compras de cartão cobradas no mês seguinte.
-* **Precisão Total de Datas e Fuso Horário (Pluggy, OFX & Planilha):** Nova função única `extrairDataLocalISO` no backend (`main.js`) e frontend (`app.js`) tratando `DD/MM/YYYY`, formato OFX, ISO meia-noite UTC sem recuar o dia, compras noturnas em UTC-3 (`preservarDataBrutaPluggy`) e datas seriais do Excel, além de data editável no Modal de Revisão sincronizando `dataCompra` nos cartões.
-* **Layout Responsivo & Interface Flat Dark Precision:** Sidebar compactável em janelas estreitas (`<= 1024px`), cabeçalhos fluidos, tabelas responsivas, modais adaptáveis (`min(95vw, ...)`) e dark mode sóbrio de alta legibilidade — removendo flares radiais (`ambient-glow` / `empty-glow-orb`), spotlight `mousemove`, brilhos neon excessivos e `backdrop-filter` desnecessário em cards comuns.
-* **Modo Seleção em Lote & Barra Fixa no Viewport:** Correção da marcação visual de checkboxes (alto contraste `#10b981`), destaque claro nas linhas/cards selecionados em `#lanc-tbody`, estado `indeterminate` em "Selecionar todos" e barra flutuante de ações em lote fixa na base da janela.
+* **Cérebro de Categorias na Nuvem (GitHub Gist Privado):** Sincronização bidirecional automática de **Categorias/Subcategorias**, **Regras (`STATE.regrasCategoria`)** e **Memória Silenciosa (`STATE.memoriaCategorias`)** entre múltiplos computadores usando um Gist estritamente privado (`cofin-cerebro.json`). O Personal Access Token (`GITHUB_GIST_TOKEN`) e o `GITHUB_GIST_ID` ficam isolados no `.env` via IPC, com autodescoberta no 2º computador, tombstones para impedir ressurreição de itens excluídos, portabilidade automática de `contaId` por `contaNome`, debounce de 5 segundos e toast de reprocessamento em 1 clique.
+* **Hidratação Automática do Histórico (`hidratarMemoriaDoHistorico`):** Antes do merge/push com o GitHub Gist, o COFIN extrai de forma leve e idempotente os padrões já classificados em `STATE.lancamentos` para `STATE.memoriaCategorias` (com `origem: 'historico'`), preservando escolhas manuais explícitas e tombstones.
+* **Motor de Auto-Categorização v2 (Pluggy CNAE, CPF/CNPJ & Memória Silenciosa):** Aproveitamento dos metadados da API v2 da Pluggy (`cnae`, `merchantName`, `merchantCnpj`, `contraparteTipo`), **Trava Estrita de Tipo** (Receita vs. Despesa), **Memória Histórica por Tokens/Jaccard**, **Aprendizado Silencioso Automático**, **Dicionário Brasileiro ampliado** com fronteira de palavra (`\b`), neutralização prévia de repasses técnicos de **PIX no Crédito** e botão **Auto-Classificar Pendentes** na Triagem.
+* **Tratamento Correto de Estornos em Cartão de Crédito:** Créditos/estornos no cartão (`CREDIT` + `receita`) agora respeitam o dia de fechamento da fatura, abatem corretamente despesas, fatura e limite disponível (sem inflar receitas no mês), são auto-categorizados como despesa efetiva e recebem selo discreto `Estorno` + valor `+ R$` em verde.
 
 <details>
-<summary><strong>Ver novidades anteriores (v1.5.0)</strong></summary>
+<summary><strong>Ver novidades anteriores (v1.6.0 e v1.5.0)</strong></summary>
 
+### v1.6.0
+* **Drill-Down Interativo no Dashboard e Relatórios:** Clique em KPIs, Contas Bancárias, Cartões de Crédito, barras do gráfico de 6 meses, Top 3 Gastos, Anti-Metas, Pendentes e gráficos de Relatórios para ir direto à aba **Lançamentos** com os filtros já aplicados e banner de limpeza em 1 clique.
+* **Alternador "Por Data | Por Fatura" & Tag Discreta de Fatura:** A aba **Lançamentos** filtra pela data real (`l.data`) por padrão (em Tabela, Cards e Calendário), com opção rápida para auditar **Por Fatura** e selo discreto (ex.: `Fat. Dez/26`) em compras cobradas no mês seguinte.
+* **Precisão Total de Datas e Fuso Horário (Pluggy, OFX & Planilha):** Função única `extrairDataLocalISO` no backend (`main.js`) e frontend (`app.js`) tratando `DD/MM/YYYY`, formato OFX, ISO meia-noite UTC sem recuar o dia, compras noturnas em UTC-3 e datas seriais do Excel, além de data editável no Modal de Revisão sincronizando `dataCompra` nos cartões.
+* **Layout Responsivo & Interface Flat Dark Precision:** Sidebar compactável em janelas estreitas (`<= 1024px`), cabeçalhos fluidos, tabelas responsivas, modais adaptáveis (`min(95vw, ...)`) e dark mode sóbrio sem flares radiais nem spotlight `mousemove`.
+* **Modo Seleção em Lote & Barra Fixa no Viewport:** Checkboxes de alto contraste (`#10b981`), destaque claro nas linhas/cards selecionados em `#lanc-tbody`, estado `indeterminate` em "Selecionar todos" e barra flutuante de ações em lote fixa na base da janela.
+
+### v1.5.0
 * **Motor de Auto-Categorização em 4 Camadas:** Normalizador de descrições bancárias brasileiras + classificação em cascata (**Regras do Usuário → Memória Histórica → Pluggy / Dicionário BR → Fila "A Classificar"**), preservando sempre `descricaoOriginal`.
 * **Aprendizado em 1 Clique:** Toast inteligente após edição manual para criar regra automática e aplicá-la nos lançamentos antigos similares.
 * **Triagem Agrupada ("Caixa de Entrada"):** Botão **Triagem (N)** na aba **Lançamentos** agrupando pendências em *"A Classificar"* e *"Outros"* por estabelecimento + tipo para classificar em lote.
@@ -59,7 +67,7 @@
 
 ### Opção A — Instalador Windows (Recomendado)
 1. Acesse a aba **[Releases](https://github.com/pedrotsongas-ai/COFIN/releases)** do repositório.
-2. Baixe o instalador mais recente: **`COFIN-Setup-1.6.0.exe`**.
+2. Baixe o instalador mais recente: **`COFIN-Setup-1.7.0.exe`**.
 3. Execute o instalador e conclua o assistente. A partir daí, futuras atualizações chegam automaticamente via **Auto-Update OTA**.
 
 ### Opção B — Executar a partir do Código-Fonte
@@ -110,23 +118,40 @@ npm start
 
 ---
 
-## 4. Motor de Auto-Categorização com Aprendizado
+## 4. Motor de Auto-Categorização v2 com Aprendizado
 
-Ao importar transações (Pluggy, OFX ou Planilha na Nuvem), o COFIN executa automaticamente um **funil em 4 camadas** (nunca alterando transferências, pagamentos de fatura ou cofres):
+Ao importar transações (Pluggy, OFX ou Planilha na Nuvem), o COFIN neutraliza previamente ruídos operacionais (como o repasse de **PIX no Crédito** na conta corrente) e executa um **funil em 4 camadas** com **Trava Estrita de Tipo** (nunca classificando uma despesa em categoria de receita ou vice-versa, exceto estornos de cartão tratados como despesa efetiva):
 
-1. **Camada 1 — Regras do Usuário (`STATE.regrasCategoria`):** Avalia regras ativas por **prioridade** e especificidade (`Exato` > `Começa com` > `Contém`), checando tipo, conta, faixa de valor, descrição bruta e o núcleo normalizado (sem ruídos como `PIX ENVIADO`, `PAG*`, `IFD*`, datas ou CNPJs). Pode aplicar **categoria/subcategoria**, **tag automática** e **apelido de descrição** (preservando sempre `descricaoOriginal`).
-2. **Camada 2 — Memória Histórica Automática:** Se nenhuma regra bater, o motor busca no seu histórico já classificado transações com o mesmo núcleo normalizado e mesmo tipo, herdando a categoria mais frequente/recente.
-3. **Camada 3 — Dicionário Pluggy + Palavras-Chave BR:** Mapeia categorias nativas do Open Finance (*Groceries*, *Eating out*, *Transport*, *Subscriptions*, *Healthcare*, *Salary*, *Investments*...) e termos comuns no Brasil (*Uber*, *iFood*, *Drogasil*, *Posto Shell*, *Carrefour*, *Netflix*...) para as suas categorias cadastradas.
-4. **Camada 4 — Fila `"A Classificar"`:** O que não for reconhecido vai para a fila **A Classificar** (badge âmbar), evitando misturar itens desconhecidos em *"Outros"*.
+1. **Camada 1 — Regras do Usuário (`STATE.regrasCategoria`):** Avalia regras ativas por **prioridade** e especificidade (`Exato` > `Começa com` > `Contém`), checando tipo, conta, faixa de valor, descrição bruta e núcleo normalizado. Pode aplicar **categoria/subcategoria**, **tag automática** e **apelido de descrição** (preservando sempre `descricaoOriginal`).
+2. **Camada 2 — Memória Silenciosa & Memória Histórica por Tokens (`STATE.memoriaCategorias`):** Consulta o aprendizado silencioso gravado automaticamente em edições manuais (e hidratado do histórico anterior via `hidratarMemoriaDoHistorico`) e busca transações similares no histórico por núcleo, marca específica e similaridade de tokens (Jaccard).
+3. **Camada 3 — Metadados Pluggy v2 (CNAE & CPF/CNPJ) + Dicionário BR:** Aproveita o código **CNAE**, dados do lojista (`merchantName`/`merchantCnpj`), proteção de Pix entre pessoas físicas (`#pessoa`), categorias nativas do Open Finance e Dicionário Brasileiro ampliado com correspondência segura por fronteira de palavra (`\b`).
+4. **Camada 4 — Fila `"A Classificar"`:** O que não for reconhecido com confiança vai para a fila **A Classificar** (badge âmbar), evitando misturar itens desconhecidos em *"Outros"*.
 
 ### Como treinar o motor sem esforço
-* **Aprendizado em 1 Clique:** Sempre que você trocar manualmente a categoria de um lançamento (no modal de edição ou na revisão de importação), aparece uma barra flutuante no rodapé perguntando: *"Sempre classificar `[nucleo]` como `[categoria]`?"* com os botões **Criar regra** e **Criar e aplicar em +N antigos**.
-* **Triagem Agrupada (Caixa de Entrada):** Na aba **Lançamentos**, clique em **Triagem (N)**. O modal agrupa todas as pendências por estabelecimento + tipo (do mais frequente para o menos frequente). Escolha a categoria, tag/apelido opcionais, deixe marcado **Salvar regra automática** e clique em **Aplicar** (ou **Aplicar todos os grupos preenchidos**).
-* **Gerenciar Regras e Reprocessar:** Em **Categorias & Contas → Regras de Auto-Categorização**, clique em **+ Nova Regra** (com prévia ao vivo mostrando quantos lançamentos existentes batem com a regra) ou use **Reprocessar Regras** para aplicar suas regras retroativamente sobre *"Apenas 'A Classificar' e 'Outros'"* ou *"Todos os lançamentos não-transferência"*.
+* **Aprendizado em 1 Clique & Silencioso:** Ao editar manualmente a categoria de um lançamento, o COFIN grava silenciosamente o padrão em `STATE.memoriaCategorias` e oferece a barra flutuante *"Sempre classificar `[nucleo]` como `[categoria]`?"* com os botões **Criar regra** e **Criar e aplicar em +N antigos**.
+* **Triagem Agrupada (Caixa de Entrada):** Na aba **Lançamentos**, clique em **Triagem (N)**. Use **Auto-Classificar Pendentes** para rodar o motor v2 + saneamento de tipo/PIX no Crédito com 1 clique, ou classifique em lote por estabelecimento + tipo salvando regras automáticas.
+* **Gerenciar Regras e Reprocessar:** Em **Categorias & Contas → Regras de Auto-Categorização**, clique em **+ Nova Regra** (com prévia ao vivo) ou use **Reprocessar Regras** para reaplicar retroativamente sobre *"Apenas 'A Classificar' e 'Outros'"* ou *"Todos os lançamentos não-transferência"*.
 
 ---
 
-## 5. Como Conectar no Pluggy (Open Finance)
+## 5. Cérebro de Categorias na Nuvem (GitHub Gist Privado)
+
+Se você usa o COFIN em mais de um computador (ex.: notebook e PC de casa), pode manter **Categorias, Subcategorias, Regras de Auto-Categorização e Memória Silenciosa** sincronizados automaticamente via um **GitHub Gist Privado** (`cofin-cerebro.json`) — sem expor credenciais no `localStorage` nem em backups `.json`.
+
+### Passo a Passo
+1. **Crie um Personal Access Token no GitHub:**
+   * Acesse **GitHub → Settings → Developer settings → Personal access tokens** e gere um token marcando apenas o escopo mínimo **`gist`**.
+2. **Configure no COFIN (PC 1):**
+   * Vá em **Categorias & Contas → Sincronização de Categorias (GitHub Gist Privado)** e clique em **Configurar Token (.env)**.
+   * Informe o token (deixe o campo `Gist ID` em branco na primeira vez) e clique em **Validar e Salvar**.
+   * O COFIN valida o token diretamente em `api.github.com/user`, salva `GITHUB_GIST_TOKEN` no `.env`, hidrata a memória a partir do histórico já classificado (`hidratarMemoriaDoHistorico`), cria o Gist estritamente **privado** (`public: false`) e salva o `GITHUB_GIST_ID` no `.env`.
+3. **Conecte no 2º computador (PC 2):**
+   * Basta informar o mesmo token no modal **Configurar Token (.env)** (o `Gist ID` é opcional, pois o COFIN localiza automaticamente seu Gist privado `cofin-cerebro.json`).
+   * O merge inteligente combina categorias, regras (remapeando `contaId` automaticamente pelo `contaNome`) e memória silenciosa respeitando tombstones de exclusão, e oferece um toast em 1 clique para reprocessar lançamentos pendentes recém-cobertos pelas regras recebidas.
+
+---
+
+## 6. Como Conectar no Pluggy (Open Finance)
 
 O COFIN possui integração nativa com a API **Pluggy v2** rodando no processo principal Node.js, mantendo suas chaves protegidas exclusivamente em um arquivo `.env` local (nunca expostas no `localStorage`).
 
@@ -160,7 +185,7 @@ O COFIN possui integração nativa com a API **Pluggy v2** rodando no processo p
 
 ---
 
-## 6. Como Conectar no Make.com (Gravação Automática em Planilha)
+## 7. Como Conectar no Make.com (Gravação Automática em Planilha)
 
 O Make.com permite que o COFIN envie automaticamente sua base atualizada em formato `.xlsx` (Excel) para o seu OneDrive/Google Drive sempre que você salvar ou editar lançamentos (com envio em segundo plano após `1,2s` de inatividade).
 
@@ -184,7 +209,7 @@ O Make.com permite que o COFIN envie automaticamente sua base atualizada em form
 
 ---
 
-## 7. Como Conectar no OneDrive (Leitura & Sincronização)
+## 8. Como Conectar no OneDrive (Leitura & Sincronização)
 
 Além da gravação via Make.com, você pode ler e mesclar sua planilha do OneDrive diretamente no COFIN de **duas formas** (na aba **Sincronizar OneDrive**):
 
@@ -204,7 +229,7 @@ Além da gravação via Make.com, você pode ler e mesclar sua planilha do OneDr
 
 ---
 
-## 8. Drag & Drop para Extratos (`.OFX`) e Comprovantes (OCR)
+## 9. Drag & Drop para Extratos (`.OFX`) e Comprovantes (OCR)
 
 O COFIN possui uma camada global inteligente de **Drag & Drop** ativa em qualquer tela do aplicativo — diferenciando automaticamente se você arrastou um **extrato bancário** ou uma **imagem/PDF de comprovante**:
 
@@ -226,19 +251,19 @@ O COFIN possui uma camada global inteligente de **Drag & Drop** ativa em qualque
 
 ---
 
-## 9. Sincronização Familiar P2P, Shadow Vault e Segurança
+## 10. Sincronização Familiar P2P, Shadow Vault e Segurança
 
 * **Sincronização Familiar P2P (Rede Local — Porta `45000`):**
   * Em **Categorias & Contas → Sincronização Familiar**, copie o **Seu IP na rede**, informe o **IP do Parceiro** (outro computador com COFIN na mesma rede Wi-Fi/LAN) e clique em **Sincronizar Agora**.
   * O **Merge Inteligente** combina lançamentos, contas, cofres, metas e `regrasCategoria` de ambos os lados sem duplicar nem apagar nada, bloqueando qualquer conexão fora de redes privadas RFC 1918.
 * **Shadow Vault (Auto-Backup Local):**
-  * Escolha uma pasta segura em **Categorias & Contas** para gerar snapshots `.json` automáticos (contendo todo o `STATE`, incluindo `regrasCategoria`), além de exportação e restauração manual de backup `.json`.
+  * Escolha uma pasta segura em **Categorias & Contas** para gerar snapshots `.json` automáticos (contendo todo o `STATE`, incluindo `regrasCategoria` e `memoriaCategorias`), além de exportação e restauração manual de backup `.json`.
 * **Privacidade e Hardening Electron:**
-  * Bloqueio por **PIN** local, **Modo Stealth (`Alt + P`)** para ocultar valores na tela, `contextIsolation: true`, `nodeIntegration: false`, allowlist estrita de canais IPC em [`preload.js`](preload.js) e credenciais Pluggy isoladas no `.env`.
+  * Bloqueio por **PIN** local, **Modo Stealth (`Alt + P`)** para ocultar valores na tela, `contextIsolation: true`, `nodeIntegration: false`, allowlist estrita de canais IPC em [`preload.js`](preload.js) e credenciais Pluggy e GitHub Gist isoladas no `.env`.
 
 ---
 
-## 10. Atalhos de Teclado
+## 11. Atalhos de Teclado
 
 | Atalho | Ação |
 | :--- | :--- |
@@ -252,29 +277,29 @@ O COFIN possui uma camada global inteligente de **Drag & Drop** ativa em qualque
 
 ---
 
-## 11. Desenvolvimento, Build e Publicação OTA
+## 12. Desenvolvimento, Build e Publicação OTA
 
 ### Scripts disponíveis
 ```bash
 npm start     # Inicia o COFIN em modo de desenvolvimento (Electron)
-npm run dist  # Gera o instalador Windows NSIS em dist/COFIN-Setup-1.6.0.exe
+npm run dist  # Gera o instalador Windows NSIS em dist/COFIN-Setup-1.7.0.exe
 ```
 
 ### Pipeline Automatizado CI/CD ([`.github/workflows/release.yml`](.github/workflows/release.yml))
-Todo push de tag semântica `v*` (ex.: `v1.6.0`) dispara o GitHub Actions em `windows-latest`:
+Todo push de tag semântica `v*` (ex.: `v1.7.0`) dispara o GitHub Actions em `windows-latest`:
 1. `npm ci` usando o `package-lock.json` versionado;
 2. Validação de sintaxe em `main.js`, `preload.js` e `app.js` via `node --check`;
-3. Empacotamento NSIS e publicação automática no **GitHub Releases** (`COFIN-Setup-1.6.0.exe`, `.blockmap` e `latest.yml`) para entrega **Auto-Update OTA**.
+3. Empacotamento NSIS e publicação automática no **GitHub Releases** (`COFIN-Setup-1.7.0.exe`, `.blockmap` e `latest.yml`) para entrega **Auto-Update OTA**.
 
 ### Estrutura do Repositório
 ```text
 COFIN/
 ├── .github/workflows/release.yml   # CI/CD Windows NSIS + publicação OTA
 ├── build/icon.ico                  # Ícone oficial do executável Windows
-├── app.js                          # Domínio, Auto-Categorização, Open Finance, OFX e UI
-├── index.html                      # Estrutura HTML, modais (Revisão, Triagem, Regras) e Patch Notes
-├── style.css                       # Design System Glassmorphism + Dark/Light Mode
-├── main.js                         # Main Process Electron (Pluggy v2 IPC, P2P :45000, OTA, Shadow Vault)
+├── app.js                          # Domínio, Auto-Categorização v2, Gist Sync, Open Finance, OFX e UI
+├── index.html                      # Estrutura HTML, modais (Revisão, Triagem, Regras, Gist) e Patch Notes
+├── style.css                       # Design System Flat Dark Precision + Light Mode
+├── main.js                         # Main Process Electron (Pluggy v2 IPC, GitHub Gist IPC, P2P :45000, OTA)
 ├── preload.js                      # contextBridge seguro com allowlist de canais IPC
 ├── Cenario_COFIN_Make.json         # Blueprint pronto para importação no Make.com
 ├── dev-app-update.yml              # Diagnóstico OTA em desenvolvimento
@@ -286,5 +311,5 @@ COFIN/
 ---
 
 <p align="center">
-  <strong>COFIN v1.6.0</strong> · Offline-First, Privacidade Local e Produtividade Financeira · Licença <strong>ISC</strong>
+  <strong>COFIN v1.7.0</strong> · Offline-First, Privacidade Local e Produtividade Financeira · Licença <strong>ISC</strong>
 </p>

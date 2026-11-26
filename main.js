@@ -750,6 +750,460 @@ function atualizarConteudoEnv(conteudoAtual, novasChaves) {
   return textoFinal;
 }
 
+function removerChavesDoConteudoEnv(conteudoAtual, chavesParaRemover) {
+  const alvo = new Set(chavesParaRemover || []);
+  const linhas = String(conteudoAtual || '').split(/\r?\n/);
+  const filtradas = linhas.filter((linha) => {
+    const match = linha.match(/^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=/);
+    if (!match) return true;
+    return !alvo.has(match[1]);
+  });
+  const texto = filtradas.join('\n').replace(/\n+$/, '');
+  return texto ? `${texto}\n` : '';
+}
+
+/* ================= CÉREBRO DE CATEGORIAS NA NUVEM (GITHUB GIST PRIVADO) ================= */
+const GIST_ARQUIVO_CEREBRO = 'cofin-cerebro.json';
+const GIST_DESCRICAO_CEREBRO = 'COFIN — Sincronização de Categorias e Auto-Categorização';
+const GITHUB_API_BASE = 'https://api.github.com';
+
+function mascararTokenGitHub(token) {
+  const t = sanitizarValorEnv(token);
+  if (!t) return null;
+  if (t.length <= 10) return '••••••••';
+  return `${t.slice(0, 6)}••••••${t.slice(-4)}`;
+}
+
+function extrairGistIdLimpo(valorBruto) {
+  const limpo = sanitizarValorEnv(valorBruto);
+  if (!limpo) return '';
+  const matchUrl = limpo.match(/gist\.github\.com\/(?:[^/\s]+\/)?([a-fA-F0-9]{8,64})/);
+  if (matchUrl) return matchUrl[1];
+  const matchId = limpo.match(/^([a-fA-F0-9]{8,64})$/);
+  return matchId ? matchId[1] : limpo.replace(/[^a-zA-Z0-9_-]/g, '');
+}
+
+function recarregarVariaveisEnvGist() {
+  const caminhoEnv = obterCaminhoArquivoEnv();
+  if (fs.existsSync(caminhoEnv)) {
+    dotenv.config({ path: caminhoEnv, override: true });
+  }
+  const token = sanitizarValorEnv(process.env.GITHUB_GIST_TOKEN);
+  const gistId = extrairGistIdLimpo(process.env.GITHUB_GIST_ID);
+  return {
+    caminhoEnv,
+    token,
+    gistId: gistId || null,
+    configurado: Boolean(token),
+    tokenMascarado: mascararTokenGitHub(token)
+  };
+}
+
+function persistirVariaveisGistNoEnv({ token, gistId }) {
+  const caminhoEnv = obterCaminhoArquivoEnv();
+  let conteudo = fs.existsSync(caminhoEnv) ? fs.readFileSync(caminhoEnv, 'utf8') : '';
+  const atualizacoes = {};
+  if (token !== undefined) atualizacoes.GITHUB_GIST_TOKEN = sanitizarValorEnv(token);
+  const gistLimpo = gistId !== undefined ? extrairGistIdLimpo(gistId) : undefined;
+  if (gistLimpo) {
+    atualizacoes.GITHUB_GIST_ID = gistLimpo;
+  } else if (gistId !== undefined) {
+    conteudo = removerChavesDoConteudoEnv(conteudo, ['GITHUB_GIST_ID']);
+  }
+
+  const novoConteudo = Object.keys(atualizacoes).length
+    ? atualizarConteudoEnv(conteudo, atualizacoes)
+    : conteudo;
+  fs.writeFileSync(caminhoEnv, novoConteudo, { encoding: 'utf8', mode: 0o600 });
+
+  if (token !== undefined) process.env.GITHUB_GIST_TOKEN = atualizacoes.GITHUB_GIST_TOKEN;
+  if (gistLimpo) process.env.GITHUB_GIST_ID = gistLimpo;
+  else if (gistId !== undefined) delete process.env.GITHUB_GIST_ID;
+  dotenv.config({ path: caminhoEnv, override: true });
+}
+
+function limparVariaveisGistDoEnv(apenasGistId = false) {
+  const caminhoEnv = obterCaminhoArquivoEnv();
+  const chaves = apenasGistId ? ['GITHUB_GIST_ID'] : ['GITHUB_GIST_TOKEN', 'GITHUB_GIST_ID'];
+  if (fs.existsSync(caminhoEnv)) {
+    const conteudoExistente = fs.readFileSync(caminhoEnv, 'utf8');
+    const novoConteudo = removerChavesDoConteudoEnv(conteudoExistente, chaves);
+    fs.writeFileSync(caminhoEnv, novoConteudo, { encoding: 'utf8', mode: 0o600 });
+  }
+  if (!apenasGistId) delete process.env.GITHUB_GIST_TOKEN;
+  delete process.env.GITHUB_GIST_ID;
+}
+
+function ehHostGitHubPermitido(hostname) {
+  const host = String(hostname || '').toLowerCase();
+  return host === 'api.github.com' || host === 'gist.githubusercontent.com';
+}
+
+async function githubGistFetch(urlPathOuAbsoluta, { method = 'GET', token, body = null, rawText = false, timeoutMs = 15000 } = {}) {
+  const urlFinal = urlPathOuAbsoluta.startsWith('https://')
+    ? urlPathOuAbsoluta
+    : `${GITHUB_API_BASE}${urlPathOuAbsoluta}`;
+
+  let parsedUrl;
+  try {
+    parsedUrl = new URL(urlFinal);
+  } catch (e) {
+    return { ok: false, status: 400, erro: 'URL inválida para a API do GitHub.' };
+  }
+  if (parsedUrl.protocol !== 'https:' || !ehHostGitHubPermitido(parsedUrl.hostname)) {
+    return { ok: false, status: 403, erro: 'Domínio não autorizado para sincronização GitHub Gist.' };
+  }
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  const headers = {
+    'Accept': rawText ? 'text/plain, application/json;q=0.9' : 'application/vnd.github+json',
+    'User-Agent': 'COFIN-App',
+    'X-GitHub-Api-Version': '2022-11-28'
+  };
+  if (token) headers.Authorization = `Bearer ${token}`;
+  if (body !== null && body !== undefined) headers['Content-Type'] = 'application/json; charset=utf-8';
+
+  try {
+    const resp = await fetch(parsedUrl.toString(), {
+      method,
+      headers,
+      body: body !== null && body !== undefined ? (typeof body === 'string' ? body : JSON.stringify(body)) : undefined,
+      signal: controller.signal
+    });
+    clearTimeout(timer);
+
+    const scopesHeader = resp.headers ? (resp.headers.get('x-oauth-scopes') || '') : '';
+    let data = null;
+    if (rawText) {
+      data = await resp.text();
+    } else {
+      const txt = await resp.text();
+      if (txt) {
+        try { data = JSON.parse(txt); } catch (e) { data = { raw: txt }; }
+      }
+    }
+
+    if (resp.status === 401) {
+      return {
+        ok: false,
+        status: 401,
+        authError: true,
+        erro: 'Token do GitHub inválido ou expirado (401). Reconfigure seu Personal Access Token.'
+      };
+    }
+    if (resp.status === 403) {
+      const msgGh = (data && data.message) ? ` (${data.message})` : '';
+      return {
+        ok: false,
+        status: 403,
+        authError: true,
+        erro: `Acesso negado pelo GitHub (403)${msgGh}. Verifique se o token possui permissão "gist".`
+      };
+    }
+    if (resp.status === 404) {
+      return {
+        ok: false,
+        status: 404,
+        notFound: true,
+        erro: 'Gist não encontrado no GitHub (404).'
+      };
+    }
+    if (!resp.ok) {
+      const msgGh = (data && data.message) ? `: ${data.message}` : '';
+      return {
+        ok: false,
+        status: resp.status,
+        erro: `Erro na API do GitHub (${resp.status})${msgGh}`
+      };
+    }
+
+    return { ok: true, status: resp.status, data, scopesHeader };
+  } catch (err) {
+    clearTimeout(timer);
+    const ehTimeout = err && err.name === 'AbortError';
+    return {
+      ok: false,
+      status: 0,
+      offline: true,
+      erro: ehTimeout
+        ? 'Tempo limite excedido ao conectar com o GitHub.'
+        : 'Sem conexão com o GitHub (offline ou rede indisponível).'
+    };
+  }
+}
+
+async function extrairConteudoCerebroDeGist(gistObj, token) {
+  if (!gistObj || typeof gistObj !== 'object' || !gistObj.files || typeof gistObj.files !== 'object') {
+    return { ok: true, encontrado: false, gistId: gistObj && gistObj.id ? String(gistObj.id) : null, payload: null };
+  }
+  const arquivo = gistObj.files[GIST_ARQUIVO_CEREBRO];
+  if (!arquivo) {
+    return { ok: true, encontrado: false, gistId: gistObj.id ? String(gistObj.id) : null, payload: null };
+  }
+
+  let conteudoTexto = typeof arquivo.content === 'string' ? arquivo.content : '';
+  if ((arquivo.truncated === true || !conteudoTexto) && arquivo.raw_url) {
+    const rawResp = await githubGistFetch(String(arquivo.raw_url), { method: 'GET', token, rawText: true });
+    if (!rawResp.ok) return rawResp;
+    conteudoTexto = String(rawResp.data || '');
+  }
+
+  if (!conteudoTexto.trim()) {
+    return {
+      ok: true,
+      encontrado: true,
+      gistId: String(gistObj.id || ''),
+      updatedAt: gistObj.updated_at || null,
+      payload: null
+    };
+  }
+
+  try {
+    const payload = JSON.parse(conteudoTexto);
+    return {
+      ok: true,
+      encontrado: true,
+      gistId: String(gistObj.id || ''),
+      updatedAt: gistObj.updated_at || null,
+      payload
+    };
+  } catch (errParse) {
+    return {
+      ok: false,
+      status: 422,
+      erro: `Arquivo ${GIST_ARQUIVO_CEREBRO} no Gist contém JSON inválido.`
+    };
+  }
+}
+
+async function autodescobrirGistCerebroPrivado(token) {
+  const listaResp = await githubGistFetch('/gists?per_page=100', { method: 'GET', token });
+  if (!listaResp.ok) return listaResp;
+
+  const gists = Array.isArray(listaResp.data) ? listaResp.data : [];
+  const encontradoLista = gists.find(g =>
+    g &&
+    g.public === false &&
+    g.files &&
+    Object.prototype.hasOwnProperty.call(g.files, GIST_ARQUIVO_CEREBRO)
+  );
+  if (!encontradoLista || !encontradoLista.id) {
+    return { ok: true, encontrado: false, gistId: null, payload: null };
+  }
+
+  const gistId = String(encontradoLista.id).trim();
+  const detalheResp = await githubGistFetch(`/gists/${encodeURIComponent(gistId)}`, { method: 'GET', token });
+  if (!detalheResp.ok) return detalheResp;
+
+  persistirVariaveisGistNoEnv({ gistId });
+  return extrairConteudoCerebroDeGist(detalheResp.data, token);
+}
+
+ipcMain.handle('gist:status', async () => {
+  try {
+    const { configurado, gistId, tokenMascarado } = recarregarVariaveisEnvGist();
+    return { ok: true, configurado, gistId, tokenMascarado };
+  } catch (err) {
+    console.error('[Gist] Erro ao consultar status:', err && err.message ? err.message : err);
+    return { ok: false, configurado: false, gistId: null, tokenMascarado: null, erro: 'Falha ao ler configuração no .env.' };
+  }
+});
+
+ipcMain.handle('gist:salvarCredenciais', async (_evento, params) => {
+  try {
+    const dados = (params && typeof params === 'object') ? params : {};
+    const atual = recarregarVariaveisEnvGist();
+    const tokenInformado = sanitizarValorEnv(dados.token);
+    const tokenFinal = tokenInformado || atual.token;
+    const gistIdInformado = dados.gistId !== undefined ? extrairGistIdLimpo(dados.gistId) : (atual.gistId || '');
+
+    if (!tokenFinal) {
+      return { ok: false, erro: 'Informe o Personal Access Token do GitHub (escopo "gist").' };
+    }
+
+    // Valida o token chamando GET /user
+    const userResp = await githubGistFetch('/user', { method: 'GET', token: tokenFinal });
+    if (!userResp.ok) {
+      return {
+        ok: false,
+        status: userResp.status,
+        authError: Boolean(userResp.authError),
+        offline: Boolean(userResp.offline),
+        erro: userResp.erro || 'Não foi possível validar o token no GitHub.'
+      };
+    }
+
+    // Para PAT clássico, verifica se o escopo 'gist' está presente quando o cabeçalho é retornado
+    if (userResp.scopesHeader && userResp.scopesHeader.trim()) {
+      const escopos = userResp.scopesHeader.split(',').map(s => s.trim().toLowerCase());
+      if (!escopos.includes('gist')) {
+        return {
+          ok: false,
+          status: 403,
+          authError: true,
+          erro: 'O token informado não possui a permissão "gist". Gere um novo token marcando o escopo "gist".'
+        };
+      }
+    }
+
+    // Se o usuário informou explicitamente um Gist ID, valida se ele existe e é acessível
+    if (gistIdInformado) {
+      const checkGist = await githubGistFetch(`/gists/${encodeURIComponent(gistIdInformado)}`, { method: 'GET', token: tokenFinal });
+      if (!checkGist.ok) {
+        return {
+          ok: false,
+          status: checkGist.status,
+          notFound: Boolean(checkGist.notFound),
+          offline: Boolean(checkGist.offline),
+          erro: checkGist.notFound
+            ? 'Gist ID não encontrado ou inacessível com este token (404). Deixe o campo em branco para localizar/criar automaticamente.'
+            : (checkGist.erro || 'Não foi possível acessar o Gist ID informado.')
+        };
+      }
+    }
+
+    persistirVariaveisGistNoEnv({
+      token: tokenFinal,
+      gistId: gistIdInformado
+    });
+
+    const atualizado = recarregarVariaveisEnvGist();
+    return {
+      ok: true,
+      configurado: atualizado.configurado,
+      gistId: atualizado.gistId,
+      tokenMascarado: atualizado.tokenMascarado,
+      usuario: (userResp.data && userResp.data.login) ? String(userResp.data.login) : null
+    };
+  } catch (err) {
+    console.error('[Gist] Erro ao salvar credenciais no .env:', err && err.message ? err.message : err);
+    return { ok: false, erro: 'Não foi possível gravar as credenciais do GitHub Gist no arquivo .env.' };
+  }
+});
+
+ipcMain.handle('gist:removerCredenciais', async () => {
+  try {
+    limparVariaveisGistDoEnv(false);
+    return { ok: true, configurado: false, gistId: null, tokenMascarado: null };
+  } catch (err) {
+    console.error('[Gist] Erro ao remover credenciais do .env:', err && err.message ? err.message : err);
+    return { ok: false, erro: 'Não foi possível remover as credenciais do arquivo .env.' };
+  }
+});
+
+ipcMain.handle('gist:pull', async () => {
+  try {
+    const { token, gistId, configurado } = recarregarVariaveisEnvGist();
+    if (!configurado || !token) {
+      return { ok: false, naoConfigurado: true, encontrado: false, payload: null, erro: 'GitHub Gist não configurado.' };
+    }
+
+    if (gistId) {
+      const resp = await githubGistFetch(`/gists/${encodeURIComponent(gistId)}`, { method: 'GET', token });
+      if (resp.ok) {
+        return await extrairConteudoCerebroDeGist(resp.data, token);
+      }
+      if (resp.notFound) {
+        // Gist foi apagado manualmente no GitHub: limpa ID obsoleto e tenta autodescoberta antes de sinalizar recriação
+        limparVariaveisGistDoEnv(true);
+        const descoberta = await autodescobrirGistCerebroPrivado(token);
+        if (descoberta.ok) {
+          return { ...descoberta, gistAnteriorApagado: true };
+        }
+        return descoberta;
+      }
+      return resp;
+    }
+
+    return await autodescobrirGistCerebroPrivado(token);
+  } catch (err) {
+    console.error('[Gist] Erro em gist:pull:', err && err.message ? err.message : err);
+    return { ok: false, status: 0, erro: 'Falha inesperada ao baixar dados do GitHub Gist.' };
+  }
+});
+
+ipcMain.handle('gist:push', async (_evento, payloadJson) => {
+  try {
+    const { token, gistId, configurado } = recarregarVariaveisEnvGist();
+    if (!configurado || !token) {
+      return { ok: false, naoConfigurado: true, erro: 'GitHub Gist não configurado.' };
+    }
+
+    let conteudoStr = '';
+    if (typeof payloadJson === 'string') {
+      const parsed = JSON.parse(payloadJson);
+      conteudoStr = JSON.stringify(parsed, null, 2);
+    } else if (payloadJson && typeof payloadJson === 'object') {
+      conteudoStr = JSON.stringify(payloadJson, null, 2);
+    } else {
+      return { ok: false, status: 400, erro: 'Payload inválido para envio ao GitHub Gist.' };
+    }
+
+    const criarNovoGistPrivado = async () => {
+      const createResp = await githubGistFetch('/gists', {
+        method: 'POST',
+        token,
+        body: {
+          description: GIST_DESCRICAO_CEREBRO,
+          public: false,
+          files: {
+            [GIST_ARQUIVO_CEREBRO]: {
+              content: conteudoStr
+            }
+          }
+        }
+      });
+      if (!createResp.ok) return createResp;
+      const novoId = createResp.data && createResp.data.id ? String(createResp.data.id).trim() : '';
+      if (!novoId) {
+        return { ok: false, status: 500, erro: 'GitHub não retornou o ID do Gist privado criado.' };
+      }
+      persistirVariaveisGistNoEnv({ gistId: novoId });
+      return {
+        ok: true,
+        criado: true,
+        gistId: novoId,
+        updatedAt: (createResp.data && createResp.data.updated_at) || new Date().toISOString()
+      };
+    };
+
+    if (gistId) {
+      const patchResp = await githubGistFetch(`/gists/${encodeURIComponent(gistId)}`, {
+        method: 'PATCH',
+        token,
+        body: {
+          description: GIST_DESCRICAO_CEREBRO,
+          files: {
+            [GIST_ARQUIVO_CEREBRO]: {
+              content: conteudoStr
+            }
+          }
+        }
+      });
+      if (patchResp.ok) {
+        return {
+          ok: true,
+          criado: false,
+          gistId,
+          updatedAt: (patchResp.data && patchResp.data.updated_at) || new Date().toISOString()
+        };
+      }
+      if (patchResp.notFound) {
+        // Gist foi apagado no GitHub: limpa ID obsoleto e recria como Gist privado
+        limparVariaveisGistDoEnv(true);
+        return await criarNovoGistPrivado();
+      }
+      return patchResp;
+    }
+
+    return await criarNovoGistPrivado();
+  } catch (err) {
+    console.error('[Gist] Erro em gist:push:', err && err.message ? err.message : err);
+    return { ok: false, status: 0, erro: 'Falha inesperada ao enviar dados para o GitHub Gist.' };
+  }
+});
+
 ipcMain.handle('pluggy:checkCredentials', async () => {
   try {
     const { configured } = recarregarVariaveisEnvPluggy();
@@ -1037,6 +1491,54 @@ function serializarContaPluggy(acc) {
   };
 }
 
+function extrairTipoDocumentoContrapartePluggy(docField) {
+  if (!docField) return null;
+  if (typeof docField === 'object') {
+    const tipoExplicito = String(docField.type || '').trim().toUpperCase();
+    if (tipoExplicito === 'CPF') return 'CPF';
+    if (tipoExplicito === 'CNPJ') return 'CNPJ';
+    const valorBruto = String(docField.value || docField.number || '').trim();
+    const digitos = valorBruto.replace(/\D/g, '');
+    if (digitos.length === 11) return 'CPF';
+    if (digitos.length === 14) return 'CNPJ';
+    return null;
+  }
+  const digitos = String(docField).trim().replace(/\D/g, '');
+  if (digitos.length === 11) return 'CPF';
+  if (digitos.length === 14) return 'CNPJ';
+  return null;
+}
+
+function extrairPluggyMetaTransacao(tx, tipoNormalizado) {
+  if (!tx || typeof tx !== 'object') return null;
+  const merchantObj = (tx.merchant && typeof tx.merchant === 'object') ? tx.merchant : null;
+  const paymentObj = (tx.paymentData && typeof tx.paymentData === 'object') ? tx.paymentData : null;
+  const ehSaida = String(tipoNormalizado || '').toUpperCase() === 'DEBIT'
+    || (String(tipoNormalizado || '').toUpperCase() !== 'CREDIT' && Number(tx.amount) < 0);
+  const docContraparte = ehSaida
+    ? (paymentObj && paymentObj.receiver ? paymentObj.receiver.documentNumber : null)
+    : (paymentObj && paymentObj.payer ? paymentObj.payer.documentNumber : null);
+
+  const cnae = (merchantObj && merchantObj.cnae) ? String(merchantObj.cnae).trim() : null;
+  const merchantNameRaw = merchantObj ? (merchantObj.businessName || merchantObj.name || null) : null;
+  const merchantName = merchantNameRaw ? String(merchantNameRaw).trim() : null;
+  const merchantCnpj = (merchantObj && merchantObj.cnpj) ? String(merchantObj.cnpj).trim() : null;
+  const pluggyCategory = tx.category ? String(tx.category).trim() : null;
+  const pluggyCategoryId = tx.categoryId ? String(tx.categoryId).trim() : null;
+  const paymentMethod = (paymentObj && paymentObj.paymentMethod) ? String(paymentObj.paymentMethod).trim() : null;
+  const contraparteTipo = extrairTipoDocumentoContrapartePluggy(docContraparte);
+
+  return {
+    cnae: cnae || null,
+    merchantName: merchantName || null,
+    merchantCnpj: merchantCnpj || null,
+    pluggyCategory: pluggyCategory || null,
+    pluggyCategoryId: pluggyCategoryId || null,
+    paymentMethod: paymentMethod || null,
+    contraparteTipo: contraparteTipo || null
+  };
+}
+
 function serializarTransacaoPluggy(tx, contaMeta) {
   if (!tx || typeof tx !== 'object') return null;
   const purchaseDateBruta = (tx.creditCardMetadata && typeof tx.creditCardMetadata === 'object')
@@ -1060,6 +1562,9 @@ function serializarTransacaoPluggy(tx, contaMeta) {
     });
   }
 
+  const tipoNormalizado = String(tx.type || (Number(tx.amount) < 0 ? 'DEBIT' : 'CREDIT'));
+  const pluggyMeta = extrairPluggyMetaTransacao(tx, tipoNormalizado);
+
   return {
     id: String(tx.id || tx.providerId || ''),
     providerId: tx.providerId ? String(tx.providerId) : null,
@@ -1077,7 +1582,7 @@ function serializarTransacaoPluggy(tx, contaMeta) {
     description: String(tx.description || tx.descriptionRaw || 'Transação Open Finance').trim(),
     descriptionRaw: tx.descriptionRaw ? String(tx.descriptionRaw).trim() : null,
     amount: typeof tx.amount === 'number' ? tx.amount : Number(tx.amount || 0),
-    type: String(tx.type || (Number(tx.amount) < 0 ? 'DEBIT' : 'CREDIT')),
+    type: tipoNormalizado,
     status: String(tx.status || 'POSTED'),
     category: tx.category ? String(tx.category) : null,
     categoryId: tx.categoryId ? String(tx.categoryId) : null,
@@ -1085,9 +1590,12 @@ function serializarTransacaoPluggy(tx, contaMeta) {
       ? {
           name: tx.merchant.name ? String(tx.merchant.name) : '',
           businessName: tx.merchant.businessName ? String(tx.merchant.businessName) : '',
-          category: tx.merchant.category ? String(tx.merchant.category) : ''
+          category: tx.merchant.category ? String(tx.merchant.category) : '',
+          cnae: tx.merchant.cnae ? String(tx.merchant.cnae) : '',
+          cnpj: tx.merchant.cnpj ? String(tx.merchant.cnpj) : ''
         }
-      : null
+      : null,
+    pluggyMeta
   };
 }
 
